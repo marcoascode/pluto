@@ -1,0 +1,81 @@
+# Pluto Mídia — produção (Hetzner)
+#   web  → Nginx com o build do React   host 127.0.0.1:8400 → 80
+#   api  → Node.js + Express            host 127.0.0.1:4000 → 4000
+#   db   → PostgreSQL 16                host 127.0.0.1:54321 → 5432
+# As portas ficam presas ao 127.0.0.1: só o Nginx principal do servidor fala com elas.
+# (O Docker passa por cima do UFW; com "8400:80" puro a porta abriria para a internet.)
+name: pluto
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pluto}
+      POSTGRES_USER: ${POSTGRES_USER:-pluto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      TZ: ${APP_TZ:-America/Sao_Paulo}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:54321:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [pluto_net]
+
+  api:
+    build:
+      context: ./server
+    image: pluto-api:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-pluto}
+      PGUSER: ${POSTGRES_USER:-pluto}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${APP_TZ:-America/Sao_Paulo}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    networks: [pluto_net]
+
+  web:
+    build:
+      context: ./client
+    image: pluto-web:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8400:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [pluto_net]
+
+networks:
+  pluto_net:
+    name: pluto_net
+    driver: bridge
+
+volumes:
+  pgdata:
+    name: pluto_pgdata
