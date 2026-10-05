@@ -13,7 +13,7 @@ import type { Metrics, ReportRow } from '@/types/api';
 
 const REPORT_MONTHS = 14;
 /** Colunas de dinheiro que ganham a barrinha proporcional ao maior valor da tabela. */
-const BAR = new Set<MetricKey>(['grossRevenue', 'spend', 'revenue', 'profit', 'googleSpend', 'metaSpend']);
+const BAR = new Set<MetricKey>(['spend', 'revenue', 'profit', 'googleSpend', 'metaSpend', 'iva']);
 
 const dayLabel = (iso: string) => iso.split('-').reverse().join('/');
 const monthTitle = (ym: string) => monthLabel(ym).replace(/^./, (c) => c.toUpperCase());
@@ -137,8 +137,8 @@ export default function ReportsPage() {
           : <ReportTable first="Mês" rows={monthly.data.months} total={monthly.data.total} totalLabel={`Total ${REPORT_MONTHS} meses`} label={monthTitle} ms={ms} onRowClick={goMonth} />}
       </Card>
       <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
-        Gross Revenue = receita bruta do Ad Manager · Retenção = parte retida pelo parceiro (rev share) · Revenue = Gross − Retenção · Meta % e Google % = participação no custo ·
-        Margem e ROI sobre o Revenue · Drop-off = respostas servidas que não viraram impressão.
+        Revenue = receita do Ad Manager já sem a parte da Network (revShare do domínio) · Spend = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o gasto da Meta ·
+        Meta % e Google % = participação na despesa · Margem e ROI sobre o Revenue · Drop-off = respostas servidas que não viraram impressão.
       </Typography>
     </>
   );

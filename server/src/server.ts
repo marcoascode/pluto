@@ -14,6 +14,7 @@ import { requireAuth } from './auth/session.js';
 import { authRouter } from './routes/auth.js';
 import { meRouter } from './routes/me.js';
 import { metricsRouter } from './routes/metrics.js';
+import { placementsRouter } from './routes/placements.js';
 import { adminRouter } from './routes/admin/index.js';
 import { backfillIfEmpty } from './services/fx.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
@@ -45,6 +46,7 @@ export function createApp() {
   app.use(requireAuth); // daqui para baixo, só com sessão válida
   app.use('/me', meRouter);
   app.use('/admin', adminRouter);
+  app.use('/placements', placementsRouter);
   app.use(metricsRouter);
 
   app.use(notFoundHandler);
@@ -59,10 +61,12 @@ async function seedAdmin() {
   const { email, password, name } = config.admin;
   if (!email || !password) { console.warn('[seed] nenhum usuário no banco e ADMIN_EMAIL/ADMIN_PASSWORD não definidos.'); return; }
   if (password.length < 10) throw new Error('ADMIN_PASSWORD precisa de 10+ caracteres.');
-  await q(`INSERT INTO users (name, email, password_hash, role, status, must_change_password, is_main_admin) VALUES ($1, lower($2), $3, 'total', 'active', false, true)`,
+  await q(`INSERT INTO users (name, email, password_hash, role, status, must_change_password, is_main_admin) VALUES ($1, lower($2), $3, 'superadmin', 'active', false, true)`,
     [name, email, await argon2.hash(password, { type: argon2.argon2id })]);
   console.log(`[seed] admin principal criado: ${email} (troque ADMIN_PASSWORD do .env depois do primeiro login)`);
 }
+
+console.log("Senha carregada:", config.db?.password || process.env.DATABASE_URL);
 
 async function main() {
   await migrate();

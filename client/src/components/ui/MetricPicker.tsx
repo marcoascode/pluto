@@ -2,12 +2,13 @@ import { Box, Button, Checkbox, FormControlLabel, FormGroup, Popover, Stack, Typ
 import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
 import { useState } from 'react';
 import { usePrefs } from '@/context/PrefsContext';
-import { METRIC_DEFS, PICKERS, type MetricKey } from '@/lib/metrics';
+import { METRIC_DEFS, PICKERS, roiLast, type MetricKey } from '@/lib/metrics';
 
 export function usePicked(screen: keyof typeof PICKERS): MetricKey[] {
   const { prefs } = usePrefs();
   const all = PICKERS[screen].all;
-  return ((prefs.metrics?.[screen] as MetricKey[] | undefined) ?? PICKERS[screen].def).filter((k) => all.includes(k));
+  // ROI e ROI D-x sempre na ponta direita, mesmo em escolhas salvas antes dessa regra
+  return roiLast(((prefs.metrics?.[screen] as MetricKey[] | undefined) ?? PICKERS[screen].def).filter((k) => all.includes(k)));
 }
 
 /** "Selecionar métricas" — a escolha fica salva por usuário no servidor. */

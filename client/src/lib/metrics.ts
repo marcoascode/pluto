@@ -34,7 +34,7 @@ export type MetricKey =
   | 'spend' | 'revenue' | 'profit' | 'roi' | 'margin' | 'rps' | 'ecpm' | 'trafficImpressions' | 'trafficClicks' | 'trafficCtr' | 'cpc'
   | 'sessions' | 'impressions' | 'adRequests' | 'fillRate' | 'ctr' | 'adClicks' | 'viewability' | 'attributionRate'
   | 'r0' | 'r1' | 'r2' | 'r3'
-  | 'grossRevenue' | 'retention' | 'googleSpend' | 'metaSpend' | 'googleShare' | 'metaShare' | 'unattributedRevenue' | 'responsesServed' | 'dropOffRate';
+  | 'iva' | 'googleSpend' | 'metaSpend' | 'googleShare' | 'metaShare' | 'unattributedRevenue' | 'responsesServed' | 'dropOffRate';
 type Kind = 'money' | 'profit' | 'chip' | 'pct' | 'pct0' | 'pct2' | 'int' | 'drop';
 export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind }> = {
   spend: { label: 'Spend', kind: 'money' }, revenue: { label: 'Revenue', kind: 'money' }, profit: { label: 'Profit', kind: 'profit' },
@@ -43,25 +43,38 @@ export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind }> = {
   cpc: { label: 'CPC', kind: 'money' }, sessions: { label: 'Sessions', kind: 'int' }, impressions: { label: 'Impressões', kind: 'int' },
   adRequests: { label: 'Ad Requests', kind: 'int' }, fillRate: { label: 'Fill Rate', kind: 'pct' }, ctr: { label: 'CTR', kind: 'pct2' },
   adClicks: { label: 'Clicks', kind: 'int' }, viewability: { label: 'Viewability', kind: 'pct' }, attributionRate: { label: 'Atribuição', kind: 'pct' },
-  grossRevenue: { label: 'Gross Revenue', kind: 'money' }, retention: { label: 'Retenção', kind: 'money' }, googleSpend: { label: 'Custo Google', kind: 'money' },
+  iva: { label: 'IVA', kind: 'money' }, googleSpend: { label: 'Custo Google', kind: 'money' },
   metaSpend: { label: 'Custo Meta', kind: 'money' }, googleShare: { label: 'Google %', kind: 'pct0' }, metaShare: { label: 'Meta %', kind: 'pct0' },
   unattributedRevenue: { label: 'Não atribuída', kind: 'money' }, responsesServed: { label: 'Respostas servidas', kind: 'int' }, dropOffRate: { label: 'Drop-off', kind: 'drop' },
   r0: { label: 'ROI Hoje', kind: 'chip' }, r1: { label: 'ROI D-1', kind: 'chip' }, r2: { label: 'ROI D-2', kind: 'chip' }, r3: { label: 'ROI D-3', kind: 'chip' },
 };
 
+/** ROI e ROI Hoje / D-1 / D-2 / D-3 ficam sempre por último, nesta ordem. Qualquer outra métrica (inclusive as
+ *  adicionadas em "Selecionar métricas") entra à esquerda do ROI, nunca à direita dele. */
+export const ROI_TAIL: MetricKey[] = ['roi', 'r0', 'r1', 'r2', 'r3'];
+export function roiLast(keys: MetricKey[]): MetricKey[] {
+  return [...keys.filter((k) => !ROI_TAIL.includes(k)), ...ROI_TAIL.filter((k) => keys.includes(k))];
+}
+
 /** Conjuntos por tela: todas as opções + o padrão. */
-export const PICKERS: Record<string, { all: MetricKey[]; def: MetricKey[] }> = {
+const PICKERS_RAW: Record<string, { all: MetricKey[]; def: MetricKey[] }> = {
   home: { all: ['rps', 'ecpm', 'dropOffRate', 'impressions', 'adRequests', 'responsesServed', 'fillRate', 'ctr', 'adClicks', 'viewability', 'sessions'], def: ['rps', 'ecpm', 'dropOffRate', 'impressions', 'ctr'] },
   reports: {
-    all: ['grossRevenue', 'spend', 'googleSpend', 'metaSpend', 'metaShare', 'googleShare', 'margin', 'revenue', 'retention', 'unattributedRevenue', 'profit', 'roi', 'rps', 'ecpm', 'sessions', 'impressions', 'responsesServed', 'dropOffRate', 'fillRate', 'ctr', 'viewability', 'trafficClicks', 'cpc', 'attributionRate'],
-    def: ['grossRevenue', 'spend', 'metaShare', 'googleShare', 'margin', 'revenue', 'retention', 'profit', 'roi', 'rps', 'sessions', 'dropOffRate'],
+    all: ['revenue', 'spend', 'googleSpend', 'metaSpend', 'iva', 'metaShare', 'googleShare', 'profit', 'margin', 'roi', 'unattributedRevenue', 'rps', 'ecpm', 'sessions', 'impressions', 'responsesServed', 'dropOffRate', 'fillRate', 'ctr', 'viewability', 'trafficClicks', 'cpc', 'attributionRate'],
+    def: ['revenue', 'spend', 'googleSpend', 'metaSpend', 'iva', 'metaShare', 'googleShare', 'profit', 'margin', 'roi', 'rps', 'sessions', 'dropOffRate'],
   },
   google: { all: ['spend', 'revenue', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'rps', 'r1', 'r2', 'r3'] },
-  meta: { all: ['spend', 'revenue', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'trafficCtr', 'cpc', 'rps'] },
+  meta: { all: ['spend', 'metaSpend', 'iva', 'revenue', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'trafficCtr', 'cpc', 'rps'] },
   domain: { all: ['spend', 'revenue', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'rps', 'ecpm'] },
   urls: { all: ['revenue', 'spend', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'dropOffRate', 'sessions', 'ctr', 'viewability', 'impressions', 'responsesServed', 'adRequests', 'fillRate', 'attributionRate'], def: ['revenue', 'spend', 'profit', 'roi', 'rps', 'ecpm', 'dropOffRate', 'sessions'] },
-  gam: { all: ['grossRevenue', 'retention', 'revenue', 'ecpm', 'rps', 'dropOffRate', 'impressions', 'responsesServed', 'adRequests', 'fillRate', 'ctr', 'adClicks', 'viewability', 'sessions', 'attributionRate'], def: ['revenue', 'ecpm', 'rps', 'dropOffRate', 'impressions', 'fillRate', 'viewability'] },
+  gam: { all: ['revenue', 'ecpm', 'rps', 'dropOffRate', 'impressions', 'responsesServed', 'adRequests', 'fillRate', 'ctr', 'adClicks', 'viewability', 'sessions', 'attributionRate'], def: ['revenue', 'ecpm', 'rps', 'dropOffRate', 'impressions', 'fillRate', 'viewability'] },
+  placements: {
+    all: ['spend', 'revenue', 'sessions', 'rps', 'profit', 'margin', 'trafficClicks', 'cpc', 'trafficImpressions', 'trafficCtr', 'ecpm', 'impressions', 'dropOffRate', 'roi', 'r0', 'r1', 'r2', 'r3'],
+    def: ['spend', 'revenue', 'sessions', 'rps', 'profit', 'margin', 'roi', 'r1', 'r2', 'r3'],
+  },
 };
+export const PICKERS: Record<string, { all: MetricKey[]; def: MetricKey[] }> = Object.fromEntries(
+  Object.entries(PICKERS_RAW).map(([k, v]) => [k, { all: roiLast(v.all), def: roiLast(v.def) }]));
 
 export function metricValue(m: Metrics, roiDays: RoiDays | undefined, k: MetricKey): number | null {
   if (k === 'r0') return roiDays?.today ?? null;

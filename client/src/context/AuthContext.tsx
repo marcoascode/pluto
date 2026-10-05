@@ -8,8 +8,11 @@ import type { Capability, User } from '@/types/api';
 interface AuthCtx {
   user: User | null;
   loading: boolean;
+  /** Admin ou SuperAdmin (área de administração). */
   isAdmin: boolean;
-  /** Pode abrir o módulo? Acesso Total sempre pode. O servidor também confere (403). */
+  /** Único que conecta integrações e muda a frequência do sync. */
+  isSuperAdmin: boolean;
+  /** Pode usar o módulo? Vem de user.permissions (o servidor também confere e responde 403). */
   can: (cap: Capability) => boolean;
   login: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
@@ -36,8 +39,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string, password: string) => { const { user } = await authApi.login({ email, password }); setUser(user); return user; };
   const logout = async () => { await authApi.logout().catch(() => {}); setUser(null); qc.clear(); navigate('/login', { replace: true }); };
 
-  const can = (cap: Capability) => !!user && (user.role === 'total' || !!user.permissions?.includes(cap));
-  return <Ctx.Provider value={{ user, loading, isAdmin: user?.role === 'total', can, login, logout, refresh }}>{children}</Ctx.Provider>;
+  const can = (cap: Capability) => !!user && (user.role === 'superadmin' || !!user.permissions?.includes(cap));
+  const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
+  return <Ctx.Provider value={{ user, loading, isAdmin, isSuperAdmin: user?.role === 'superadmin', can, login, logout, refresh }}>{children}</Ctx.Provider>;
 }
 export function useAuth() {
   const c = useContext(Ctx);

@@ -14,6 +14,7 @@ const DomainDetail = lazy(() => import('@/pages/DomainDetail'));
 const Urls = lazy(() => import('@/pages/Urls'));
 const Campaigns = lazy(() => import('@/components/campaigns/CampaignsView').then((m) => ({ default: m.CampaignsView })));
 const AdManager = lazy(() => import('@/pages/AdManager'));
+const Placements = lazy(() => import('@/pages/Placements'));
 const AttributionHealth = lazy(() => import('@/pages/AttributionHealth'));
 const UtmDebugger = lazy(() => import('@/pages/UtmDebugger'));
 const Accounts = lazy(() => import('@/pages/admin/Accounts'));
@@ -28,7 +29,7 @@ const IntegrationGam = lazy(() => import('@/pages/admin/IntegrationGam'));
 /** Esconde as telas de admin do Gestor. O servidor também responde 403 em /admin/*. */
 function RequireAdmin({ children }: { children: ReactNode }) {
   const { isAdmin } = useAuth();
-  return isAdmin ? <>{children}</> : <NoAccess msg="Esta área é exclusiva de usuários com Acesso Total." />;
+  return isAdmin ? <>{children}</> : <NoAccess msg="Esta área é exclusiva de Admin e SuperAdmin." />;
 }
 /** Módulo desligado para o Gestor em Permissões. O servidor responde 403 nas rotas dele. */
 function RequireCap({ cap, children }: { cap: Capability; children: ReactNode }) {
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="urls" element={C('urls.view', <Urls />)} />
         <Route path="google-ads" element={C('campaigns.google.view', <Campaigns key="google" platform="google" />)} />
         <Route path="meta-ads" element={C('campaigns.meta.view', <Campaigns key="meta" platform="meta" />)} />
+        <Route path="placements" element={C('campaigns.google.view', <Placements />)} />
         <Route path="ad-manager" element={C('gam.view', <AdManager />)} />
         <Route path="atribuicao" element={C('attribution.view', <AttributionHealth />)} />
         <Route path="utm-debugger" element={C('utm.debug', <UtmDebugger />)} />

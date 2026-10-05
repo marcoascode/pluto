@@ -1,5 +1,5 @@
 /** Chaves de cache do TanStack Query. Mudou o filtro, muda a chave, busca de novo. */
-import type { PeriodQuery, Platform, ReportQuery } from '@/types/api';
+import type { PeriodQuery, PlacementQuery, Platform, ReportQuery } from '@/types/api';
 export const qk = {
   me: ['me'] as const,
   prefs: ['prefs'] as const,
@@ -12,6 +12,9 @@ export const qk = {
   children: (p: Platform, id: string, q: PeriodQuery) => ['children', p, id, q] as const,
   countries: (p: Platform, id: string, q: PeriodQuery) => ['countries', p, id, q] as const,
   urls: (q: PeriodQuery) => ['urls', q] as const,
+  placementFilters: (d: string) => ['placementFilters', d] as const,
+  placements: (q: PlacementQuery) => ['placements', q] as const,
+  placementCampaigns: (q: PlacementQuery, p: string, level: string) => ['placementCampaigns', q, p, level] as const,
   gam: (q: PeriodQuery) => ['gam', q] as const,
   reportDaily: (month: string, q: ReportQuery) => ['reportDaily', month, q] as const,
   reportMonthly: (months: number, q: ReportQuery) => ['reportMonthly', months, q] as const,

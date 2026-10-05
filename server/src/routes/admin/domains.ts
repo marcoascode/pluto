@@ -2,14 +2,20 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { one, q, tx } from '../../db.js';
 import { conflict, notFound, parse } from '../../lib/http.js';
+import { today } from '../../lib/dates.js';
+import { config } from '../../config.js';
 
 export const domainsRouter = Router();
 
 const HOST = z.string().trim().toLowerCase().transform((v) => v.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, ''))
   .pipe(z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, 'domínio inválido').max(190));
 
+/** "Hoje" no fuso da organização (o banco pode estar em UTC). */
+const TODAY_SQL = `(now() AT TIME ZONE '${config.appTz.replace(/[^A-Za-z0-9_/+-]/g, '')}')::date`;
 const DOMAIN_SQL = `
-  SELECT d.hostname, d.active, sd.squad_id::text AS "squadId", d.last_data_at AS "lastDataAt",
+  SELECT d.hostname, d.active, sd.squad_id::text AS "squadId", d.last_data_at AS "lastDataAt", d.created_by_sync AS "createdBySync",
+         COALESCE((SELECT round(rs.rev_share * 100, 3) FROM domain_rev_shares rs WHERE rs.domain_id = d.id AND rs.valid_from <= ${TODAY_SQL} ORDER BY rs.valid_from DESC LIMIT 1), 0)::float AS "revShare",
+         (SELECT rs.valid_from::text FROM domain_rev_shares rs WHERE rs.domain_id = d.id AND rs.valid_from <= ${TODAY_SQL} ORDER BY rs.valid_from DESC LIMIT 1) AS "revShareFrom",
          COALESCE(array_agg(a.id::text ORDER BY a.name) FILTER (WHERE a.provider = 'google-ads'), '{}') AS "googleAccounts",
          COALESCE(array_agg(a.id::text ORDER BY a.name) FILTER (WHERE a.provider = 'meta'), '{}') AS "metaAccounts"
     FROM domains d
@@ -21,10 +27,27 @@ const get = (host: string) => one(`${DOMAIN_SQL} WHERE d.hostname = $1${GROUP}`,
 
 domainsRouter.get('/domains', async (_req, res) => { res.json({ domains: await q(`${DOMAIN_SQL}${GROUP} ORDER BY d.active DESC, d.hostname`) }); });
 
+const revShare = z.number().min(0).max(99.999);   // percentual (20 = 20%)
+const ISO = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
+
+/** Grava o revShare vigente a partir de uma data (histórico em domain_rev_shares). */
+async function setRevShare(c: Parameters<Parameters<typeof tx>[0]>[0], domainId: string, pct: number, from: string, userId: string) {
+  await c.query(`INSERT INTO domain_rev_shares (domain_id, valid_from, rev_share, created_by) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (domain_id, valid_from) DO UPDATE SET rev_share = EXCLUDED.rev_share, created_by = EXCLUDED.created_by, created_at = now()`,
+    [domainId, from, pct / 100, userId]);
+}
+
 domainsRouter.post('/domains', async (req, res) => {
-  const b = parse(z.object({ hostname: HOST }), req.body);
-  if (await one('SELECT 1 FROM domains WHERE hostname = $1', [b.hostname])) throw conflict('domain_exists', 'Esse domínio já está cadastrado.');
-  await q('INSERT INTO domains (hostname) VALUES ($1)', [b.hostname]);
+  const b = parse(z.object({ hostname: HOST, revShare: revShare.optional() }), req.body);
+  const existing = await one<{ id: string; created_by_sync: boolean }>('SELECT id::text, created_by_sync FROM domains WHERE hostname = $1', [b.hostname]);
+  if (existing && !existing.created_by_sync) throw conflict('domain_exists', 'Esse domínio já está cadastrado.');
+  await tx(async (c) => {
+    // site que o Ad Manager já tinha mostrado: só ativa o registro que o sync criou
+    const id = existing
+      ? (await c.query(`UPDATE domains SET active = true, created_by_sync = false WHERE id = $1 RETURNING id::text`, [existing.id])).rows[0].id
+      : (await c.query(`INSERT INTO domains (hostname) VALUES ($1) RETURNING id::text`, [b.hostname])).rows[0].id;
+    if (b.revShare !== undefined) await setRevShare(c, id, b.revShare, '2000-01-01', req.user!.id);
+  });
   res.status(201).json(await get(b.hostname));
 });
 
@@ -33,6 +56,7 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
   const b = parse(z.object({
     hostname: HOST.optional(), active: z.boolean().optional(), squadId: z.string().regex(/^\d+$/).nullable().optional(),
     googleAccounts: z.array(z.string().regex(/^\d+$/)).max(200).optional(), metaAccounts: z.array(z.string().regex(/^\d+$/)).max(200).optional(),
+    revShare: revShare.optional(), revShareFrom: ISO.optional(),
   }), req.body);
   const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
   if (!d) throw notFound('Domínio não encontrado.');
@@ -41,7 +65,12 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
       if (await one('SELECT 1 FROM domains WHERE hostname = $1', [b.hostname], c)) throw conflict('domain_exists', 'Já existe um domínio com esse nome.');
       await c.query('UPDATE domains SET hostname = $2 WHERE id = $1', [d.id, b.hostname]);
     }
-    if (b.active !== undefined) await c.query('UPDATE domains SET active = $2 WHERE id = $1', [d.id, b.active]);
+    if (b.active !== undefined) await c.query('UPDATE domains SET active = $2, created_by_sync = false WHERE id = $1', [d.id, b.active]);
+    // revShare: vale a partir de revShareFrom (padrão: hoje). Dias anteriores continuam com o percentual antigo.
+    if (b.revShare !== undefined) {
+      const first = !(await one('SELECT 1 FROM domain_rev_shares WHERE domain_id = $1', [d.id], c));
+      await setRevShare(c, d.id, b.revShare, b.revShareFrom ?? (first ? '2000-01-01' : today()), req.user!.id);
+    }
     if (b.squadId !== undefined) {
       await c.query('DELETE FROM squad_domains WHERE domain_id = $1', [d.id]);
       if (b.squadId) {

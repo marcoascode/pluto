@@ -42,7 +42,7 @@ export default function DashboardPage() {
   const dml = DAILY.find((x) => x[0] === dm)?.[1] ?? 'Lucro';
   const isMoney = ['profit', 'revenue', 'rps', 'ecpm'].includes(dm);
   const yM = (v: number) => compactMoney(v, f.currency);
-  const fullTip = (i: number): [string, ReactNode][] => { const x = win[i].metrics; return [['Revenue', money(x.revenue, f.currency)], ['Spend', money(x.spend, f.currency)], ['Profit', money(x.profit, f.currency)], ['ROI', pct(x.roi)], ['Margem', pct(x.margin)], ['RPS', money(x.rps, f.currency)], ['eCPM', money(x.ecpm, f.currency)], ['Viewability', pct(x.viewability)], ['CPC', money(x.cpc, f.currency)], ['CTR', pct(x.trafficCtr, 2)], ['Fill Rate', pct(x.fillRate)], ['Drop-off', pct(x.dropOffRate)]]; };
+  const fullTip = (i: number): [string, ReactNode][] => { const x = win[i].metrics; return [['Revenue', money(x.revenue, f.currency)], ['Spend (c/ IVA)', money(x.spend, f.currency)], ['IVA', money(x.iva, f.currency)], ['Profit', money(x.profit, f.currency)], ['ROI', pct(x.roi)], ['Margem', pct(x.margin)], ['RPS', money(x.rps, f.currency)], ['eCPM', money(x.ecpm, f.currency)], ['Viewability', pct(x.viewability)], ['CPC', money(x.cpc, f.currency)], ['CTR', pct(x.trafficCtr, 2)], ['Fill Rate', pct(x.fillRate)], ['Drop-off', pct(x.dropOffRate)]]; };
   const sub = mobile ? (f.from === f.to ? 'Dia selecionado e os 3 anteriores' : 'Mesmo período da data selecionada') + ' · hoje (parcial) fica fora' : 'Por dia · hoje (parcial) fica fora';
   return (
     <>
@@ -51,7 +51,7 @@ export default function DashboardPage() {
       <KpiRow m={data.metrics} cmp={data.comparison} />
       <Box sx={{ mt: 1.75 }}><AttributionStrip m={data.metrics} /></Box>
       <Box sx={{ mt: 1.75 }}><MetricsCard title="Métricas Monetização" screen="home" m={data.metrics} /></Box>
-      <Grid container spacing={1.75} sx={{ mt: 0.25 }}>
+      <Grid container spacing={1.75} sx={{ mt: 1.75 }}>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card><CardHeader title="Spend vs Revenue" subheader={sub} />
             <CardContent><SpendRevenueChart height={h} labels={labels} yfmt={yM} revenue={win.map((d) => d.metrics.revenue)} spend={win.map((d) => d.metrics.spend)}

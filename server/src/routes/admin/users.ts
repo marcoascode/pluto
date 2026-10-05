@@ -5,13 +5,22 @@ import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { tempPassword } from '../../lib/crypto.js';
 import { inviteEmail, sendMail } from '../../lib/mailer.js';
-import { killSessions, loadUser, USER_SQL } from '../../auth/session.js';
-import { CAPABILITIES, clearPermCache, GESTOR_ALLOWED, gestorCaps, type Capability } from '../../auth/permissions.js';
+import { killSessions, loadUser, USER_SQL, type SessionUser } from '../../auth/session.js';
+import { CAPABILITIES, clearPermCache, GESTOR_ALLOWED, rolesMatrix, type Capability } from '../../auth/permissions.js';
 
 export const usersRouter = Router();
 
+/* Admin e SuperAdmin chegam aqui (requireAdmin). As regras de SuperAdmin estão em guardSuper(). */
+
 const id = z.string().regex(/^\d+$/, 'id inválido');
-const role = z.enum(['gestor', 'total']);
+const role = z.enum(['gestor', 'admin', 'superadmin']);
+
+/** Só o SuperAdmin cria, edita, exclui ou promove alguém a SuperAdmin. */
+function guardSuper(actor: SessionUser, target: { role: string } | null, newRole?: string) {
+  if (actor.role === 'superadmin') return;
+  if (target?.role === 'superadmin') throw new HttpError(403, 'superadmin_only', 'Só um SuperAdmin pode alterar outro SuperAdmin.');
+  if (newRole === 'superadmin') throw new HttpError(403, 'superadmin_only', 'Só um SuperAdmin pode dar a permissão SuperAdmin.');
+}
 
 async function squadExists(sid: string | null | undefined) {
   if (!sid) return false;
@@ -26,6 +35,7 @@ usersRouter.get('/users', async (_req, res) => {
 /** Cria com senha temporária (hash argon2id) e envia o convite por e-mail. A senha nunca volta na resposta. */
 usersRouter.post('/users', async (req, res) => {
   const b = parse(z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().toLowerCase().email().max(200), role, squadId: z.string().nullable().optional() }), req.body);
+  guardSuper(req.user!, null, b.role);
   if (b.role === 'gestor' && !(await squadExists(b.squadId))) throw new HttpError(422, 'squad_required', 'Gestor precisa de um Squad válido.');
   if (await one('SELECT 1 FROM users WHERE lower(email) = $1', [b.email])) throw conflict('email_taken', 'Já existe um usuário com esse e-mail.');
   const pw = tempPassword();
@@ -45,12 +55,13 @@ usersRouter.patch('/users/:id', async (req, res) => {
   const b = parse(z.object({ name: z.string().trim().min(2).max(120).optional(), role: role.optional(), squadId: z.string().nullable().optional(), status: z.enum(['active', 'disabled']).optional() }), req.body);
   const t = await loadUser(uid);
   if (!t) throw notFound('Usuário não encontrado.');
+  guardSuper(req.user!, t, b.role);
   const self = t.id === req.user!.id;
   if (self && ((b.role && b.role !== t.role) || b.status === 'disabled')) throw conflict('self', 'Você não pode mudar a sua própria permissão ou se desativar.');
-  if (t.isMainAdmin && ((b.role && b.role !== 'total') || b.status === 'disabled')) throw conflict('main_admin', 'O admin principal sempre tem Acesso Total e fica ativo.');
+  if (t.isMainAdmin && ((b.role && b.role !== 'superadmin') || b.status === 'disabled')) throw conflict('main_admin', 'O admin principal é sempre SuperAdmin e fica ativo.');
   if (b.status && t.status === 'invited') throw conflict('invited', 'O usuário ainda não ativou o convite.');
   const newRole = b.role ?? t.role;
-  const newSquad = newRole === 'total' ? null : b.squadId !== undefined ? b.squadId : t.squadId;
+  const newSquad = newRole !== 'gestor' ? null : b.squadId !== undefined ? b.squadId : t.squadId;
   if (newRole === 'gestor' && !(await squadExists(newSquad))) throw new HttpError(422, 'squad_required', 'Gestor precisa de um Squad válido.');
   await tx(async (c) => {
     await c.query(`UPDATE users SET name = COALESCE($2, name), role = $3, status = COALESCE($4, status), updated_at = now() WHERE id = $1`, [uid, b.name ?? null, newRole, b.status ?? null]);
@@ -65,6 +76,7 @@ usersRouter.delete('/users/:id', async (req, res) => {
   const uid = parse(id, req.params.id);
   const t = await loadUser(uid);
   if (!t) throw notFound('Usuário não encontrado.');
+  guardSuper(req.user!, t);
   if (t.isMainAdmin) throw conflict('main_admin', 'O admin principal não pode ser excluído.');
   if (t.id === req.user!.id) throw conflict('self', 'Você não pode excluir a si mesmo.');
   await q('DELETE FROM users WHERE id = $1', [uid]); // sessões e squad_users saem em cascata
@@ -76,6 +88,7 @@ usersRouter.post('/users/:id/resend-invite', async (req, res) => {
   const uid = parse(id, req.params.id);
   const t = await loadUser(uid);
   if (!t) throw notFound('Usuário não encontrado.');
+  guardSuper(req.user!, t);
   if (t.status !== 'invited') throw conflict('not_invited', 'Esse usuário já ativou o acesso.');
   const pw = tempPassword();
   await q('UPDATE users SET password_hash = $2, must_change_password = true, updated_at = now() WHERE id = $1', [uid, await argon2.hash(pw, { type: argon2.argon2id })]);
@@ -86,7 +99,7 @@ usersRouter.post('/users/:id/resend-invite', async (req, res) => {
 
 /* ---------------- permissões por papel ---------------- */
 usersRouter.get('/permissions', async (_req, res) => {
-  res.json({ capabilities: CAPABILITIES, roles: { gestor: await gestorCaps(), total: CAPABILITIES.map((c) => c.key) } });
+  res.json({ capabilities: CAPABILITIES, roles: await rolesMatrix() });
 });
 
 /** Só módulos de visualização podem ir para o Gestor; os de administração são ignorados por segurança. */
@@ -98,5 +111,5 @@ usersRouter.put('/permissions', async (req, res) => {
     for (const cap of caps) await c.query(`INSERT INTO role_permissions (role, capability) VALUES ('gestor', $1)`, [cap]);
   });
   clearPermCache();
-  res.json({ capabilities: CAPABILITIES, roles: { gestor: await gestorCaps(), total: CAPABILITIES.map((c) => c.key) } });
+  res.json({ capabilities: CAPABILITIES, roles: await rolesMatrix() });
 });

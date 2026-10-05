@@ -23,7 +23,7 @@ export function CampaignsView({ platform }: { platform: Platform }) {
   const isG = platform === 'google';
   return (
     <>
-      <PageHead title={isG ? 'Google Ads' : 'Meta Ads'} sub={`Campanhas · ${longDate(f.from)} – ${longDate(f.to)}`} />
+      <PageHead title={isG ? 'Google Ads' : 'Meta Ads'} sub={`Campanhas · ${longDate(f.from)} – ${longDate(f.to)}${isG ? '' : ' · Spend inclui IVA de 13,83%'}`} />
       <Provisional show={f.to >= addDays(todayISO(), -3)} />
       {isLoading && !data ? <PageSkeleton /> : error && !data ? <ErrorBox error={error} retry={() => refetch()} /> : data && (
         <>

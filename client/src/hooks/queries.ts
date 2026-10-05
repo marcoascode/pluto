@@ -1,9 +1,9 @@
 /** Todos os hooks de dados. Cada tela usa só estes, nunca fetch direto. */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { meApi, searchApi, adminApi, attributionApi, campaignsApi, dashboardApi, domainsApi, fxApi, gamApi, integrationsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
+import { meApi, searchApi, adminApi, attributionApi, campaignsApi, dashboardApi, domainsApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
 import { qk } from '@/lib/api/keys';
 import { useFilters } from '@/context/FiltersContext';
-import type { Platform, Provider } from '@/types/api';
+import type { Platform, PlacementQuery, Provider } from '@/types/api';
 
 const opts = { placeholderData: keepPreviousData, staleTime: 60_000 } as const;
 
@@ -23,6 +23,21 @@ export function useCampaignChildren(platform: Platform, id: string, enabled: boo
 export function useCampaignCountries(platform: Platform, id: string | null) {
   const { query } = useFilters(); const q = { ...query, domain: undefined };
   return useQuery({ queryKey: qk.countries(platform, id ?? '', q), queryFn: () => campaignsApi.countries(platform, id!, q), enabled: !!id });
+}
+/** Placements: o domínio vem do filtro da própria tela (não do topo). sel = pesquisa aplicada; null = ainda não pesquisou. */
+export interface PlacementSel { domain: string; accounts: string[]; campaigns: string[] }
+function usePlacementQuery(sel: PlacementSel | null): PlacementQuery | null {
+  const { from, to, currency } = useFilters();
+  return sel ? { from, to, currency, domain: sel.domain, accounts: sel.accounts.join(',') || undefined, campaigns: sel.campaigns.join(',') || undefined } : null;
+}
+export function usePlacementFilters(domain: string) { return useQuery({ queryKey: qk.placementFilters(domain), queryFn: () => placementsApi.filters(domain), enabled: !!domain, staleTime: 5 * 60_000 }); }
+export function usePlacements(sel: PlacementSel | null) {
+  const q = usePlacementQuery(sel);
+  return useQuery({ queryKey: qk.placements(q!), queryFn: () => placementsApi.list(q!), enabled: !!q, ...opts });
+}
+export function usePlacementCampaigns(sel: PlacementSel | null, placement: string | null, level: 'root' | 'host') {
+  const q = usePlacementQuery(sel);
+  return useQuery({ queryKey: qk.placementCampaigns(q!, placement ?? '', level), queryFn: () => placementsApi.campaigns({ ...q!, placement: placement!, level }), enabled: !!q && !!placement });
 }
 export function useUrls(domain: string) { const { query } = useFilters(); const q = { ...query, domain: domain || undefined }; return useQuery({ queryKey: qk.urls(q), queryFn: () => urlsApi.list(q), ...opts }); }
 export function useGam() { const { query } = useFilters(); return useQuery({ queryKey: qk.gam(query), queryFn: () => gamApi.summary(query), ...opts }); }

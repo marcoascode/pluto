@@ -27,7 +27,8 @@ Usuários do modo mock (só existem no navegador, senhas de exemplo):
 
 | E-mail | Senha | Perfil |
 |---|---|---|
-| `admin@exemplo.com` | `admin123` | Acesso Total (admin principal — vê o ícone de prévia mobile) |
+| `admin@exemplo.com` | `admin123` | SuperAdmin (admin principal — conecta integrações, muda a frequência do sync, vê o ícone de prévia mobile) |
+| `ops@exemplo.com` | `admin123` | Admin (CRUD de tudo, inclusive contas; sem conectar integrações nem mudar frequência) |
 | `gestor@exemplo.com` | `gestor123` | Gestor, Squad 01 — sem acesso a dominioZ.com |
 
 ## Variáveis (`.env`)

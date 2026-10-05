@@ -1,22 +1,32 @@
 import { q, type Db } from '../db.js';
 
-/** Mesma lista do front (src/types/api.ts → Capability). adminOnly nunca pode ir para o Gestor. */
+export type Role = 'gestor' | 'admin' | 'superadmin';
+export const ROLES: Role[] = ['gestor', 'admin', 'superadmin'];
+export const isAdminRole = (r: string) => r === 'admin' || r === 'superadmin';
+
+/**
+ * Mesma lista do front (src/types/api.ts → Capability).
+ * - adminOnly: nunca vai para o Gestor.
+ * - superAdminOnly: só o SuperAdmin (conectar integrações e mudar a frequência do sync).
+ */
 export const CAPABILITIES = [
-  { key: 'reports.view', label: 'Relatórios (dia e mês)', group: 'Visualização', adminOnly: false },
-  { key: 'urls.view', label: 'URLs e Drop-off', group: 'Visualização', adminOnly: false },
-  { key: 'campaigns.google.view', label: 'Google Ads', group: 'Visualização', adminOnly: false },
-  { key: 'campaigns.meta.view', label: 'Meta Ads', group: 'Visualização', adminOnly: false },
-  { key: 'gam.view', label: 'Google Ad Manager', group: 'Visualização', adminOnly: false },
-  { key: 'attribution.view', label: 'Attribution Health', group: 'Visualização', adminOnly: false },
-  { key: 'utm.debug', label: 'UTM Debugger', group: 'Visualização', adminOnly: false },
-  { key: 'admin.integrations', label: 'Conectar APIs e contas / frequência do sync', group: 'Administração', adminOnly: true },
-  { key: 'admin.users', label: 'Usuários, Squads e permissões', group: 'Administração', adminOnly: true },
-  { key: 'admin.domains', label: 'Domínios', group: 'Administração', adminOnly: true },
-  { key: 'admin.utms', label: 'UTMs globais', group: 'Administração', adminOnly: true },
-  { key: 'admin.currency', label: 'Moedas e câmbio', group: 'Administração', adminOnly: true },
+  { key: 'reports.view', label: 'Relatórios (dia e mês)', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'urls.view', label: 'URLs e Drop-off', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'campaigns.google.view', label: 'Google Ads', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'campaigns.meta.view', label: 'Meta Ads', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'gam.view', label: 'Google Ad Manager', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'attribution.view', label: 'Attribution Health', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'utm.debug', label: 'UTM Debugger', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'admin.integrations', label: 'Contas das integrações (cadastrar, editar, importar, excluir)', group: 'Administração', adminOnly: true, superAdminOnly: false },
+  { key: 'admin.integrations.connect', label: 'Conectar integrações (OAuth) e editar a frequência do sync', group: 'Administração', adminOnly: true, superAdminOnly: true },
+  { key: 'admin.users', label: 'Usuários, Squads e permissões', group: 'Administração', adminOnly: true, superAdminOnly: false },
+  { key: 'admin.domains', label: 'Domínios e revShare', group: 'Administração', adminOnly: true, superAdminOnly: false },
+  { key: 'admin.utms', label: 'UTMs globais', group: 'Administração', adminOnly: true, superAdminOnly: false },
+  { key: 'admin.currency', label: 'Moedas e câmbio', group: 'Administração', adminOnly: true, superAdminOnly: false },
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number]['key'];
 export const ALL_CAPS = CAPABILITIES.map((c) => c.key) as Capability[];
+export const ADMIN_CAPS = CAPABILITIES.filter((c) => !c.superAdminOnly).map((c) => c.key) as Capability[];
 export const GESTOR_ALLOWED = new Set<Capability>(CAPABILITIES.filter((c) => !c.adminOnly).map((c) => c.key));
 
 let cache: { at: number; gestor: Capability[] } | null = null;
@@ -28,6 +38,13 @@ export async function gestorCaps(db?: Db): Promise<Capability[]> {
   return gestor;
 }
 export const clearPermCache = () => { cache = null; };
+
 export async function capsOf(role: string): Promise<Capability[]> {
-  return role === 'total' ? ALL_CAPS : gestorCaps();
+  if (role === 'superadmin') return ALL_CAPS;
+  if (role === 'admin') return ADMIN_CAPS;
+  return gestorCaps();
 }
+export async function rolesMatrix() {
+  return { gestor: await gestorCaps(), admin: ADMIN_CAPS, superadmin: ALL_CAPS };
+}
+export const ROLE_LABEL: Record<Role, string> = { gestor: 'Gestor', admin: 'Admin', superadmin: 'SuperAdmin' };

@@ -47,19 +47,20 @@ export const MACC: AccountStatus[] = [
 export const accName = (id: string) => [...GACC, ...MACC].find((a) => a.id === id)?.name ?? id;
 
 export const DOMAINS: Domain[] = [
-  { hostname: 'dominioX.com', active: true, squadId: 's1', googleAccounts: ['g1', 'g2'], metaAccounts: ['m1'], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
-  { hostname: 'dominioY.com', active: true, squadId: 's1', googleAccounts: ['g3'], metaAccounts: [], lastDataAt: new Date(Date.now() - 5 * 60000).toISOString() },
-  { hostname: 'dominioZ.com', active: true, squadId: 's2', googleAccounts: ['g1'], metaAccounts: ['m1'], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
-  { hostname: 'dominioA.com', active: true, squadId: 's2', googleAccounts: ['g4'], metaAccounts: ['m2'], lastDataAt: new Date(Date.now() - 52 * 60000).toISOString() },
-  { hostname: 'dominioB.com', active: true, squadId: null, googleAccounts: ['g5'], metaAccounts: ['m3'], lastDataAt: new Date(Date.now() - 22 * 60000).toISOString() },
-  { hostname: 'dominioC.com', active: false, squadId: null, googleAccounts: [], metaAccounts: [], lastDataAt: null },
+  { hostname: 'dominioX.com', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g1', 'g2'], metaAccounts: ['m1'], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
+  { hostname: 'dominioY.com', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g3'], metaAccounts: [], lastDataAt: new Date(Date.now() - 5 * 60000).toISOString() },
+  { hostname: 'dominioZ.com', revShare: 10, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g1'], metaAccounts: ['m1'], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
+  { hostname: 'dominioA.com', revShare: 7, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g4'], metaAccounts: ['m2'], lastDataAt: new Date(Date.now() - 52 * 60000).toISOString() },
+  { hostname: 'dominioB.com', revShare: 12, revShareFrom: null, active: true, squadId: null, googleAccounts: ['g5'], metaAccounts: ['m3'], lastDataAt: new Date(Date.now() - 22 * 60000).toISOString() },
+  { hostname: 'dominioC.com', revShare: 0, revShareFrom: null, active: false, squadId: null, googleAccounts: [], metaAccounts: [], lastDataAt: null },
 ];
 export const SQUADS: Squad[] = [
   { id: 's1', name: 'Squad 01', domains: ['dominioX.com', 'dominioY.com'], userIds: ['u2'] },
   { id: 's2', name: 'Squad 02', domains: ['dominioZ.com', 'dominioA.com'], userIds: ['u3'] },
 ];
 export const USERS: (User & { password?: string })[] = [
-  { id: 'u1', name: 'Lucas Hirsch', email: 'admin@exemplo.com', role: 'total', squadId: null, status: 'active', mustChangePassword: false, isMainAdmin: true, password: 'admin123' },
+  { id: 'u1', name: 'Lucas Hirsch', email: 'admin@exemplo.com', role: 'superadmin', squadId: null, status: 'active', mustChangePassword: false, isMainAdmin: true, password: 'admin123' },
+  { id: 'u4', name: 'Admin Exemplo', email: 'ops@exemplo.com', role: 'admin', squadId: null, status: 'active', mustChangePassword: false, password: 'admin123' },
   { id: 'u2', name: 'Gestor Exemplo', email: 'gestor@exemplo.com', role: 'gestor', squadId: 's1', status: 'active', mustChangePassword: false, password: 'gestor123' },
   { id: 'u3', name: 'Ana Exemplo', email: 'ana@exemplo.com', role: 'gestor', squadId: 's2', status: 'invited', mustChangePassword: true },
 ];
@@ -107,7 +108,9 @@ export const ROWS: Row[] = [];
 const DROP_HOT: Record<string, number> = { 'dominioX.com|/cw/url-03/': 0.27, 'dominioB.com|/quiz/url-02/': 0.31, 'dominioZ.com|/fin/url-02/': 0.19 };
 const URLDROP = new Map<string, number>();
 const urlDrop = (d: string, u: string) => { const k = d + '|' + u; if (!URLDROP.has(k)) URLDROP.set(k, DROP_HOT[k] ?? rn(0.05, 0.12)); return URLDROP.get(k)!; };
-const DOMSHARE: Record<string, number> = { 'dominioX.com': 0.07, 'dominioY.com': 0.07, 'dominioZ.com': 0.1, 'dominioA.com': 0.07, 'dominioB.com': 0.12 };
+export const META_IVA = 0.1383;
+/** revShare (fração) de cada domínio — a receita do mock já é a líquida. */
+export const DOMSHARE: Record<string, number> = { 'dominioX.com': 0.07, 'dominioY.com': 0.07, 'dominioZ.com': 0.1, 'dominioA.com': 0.07, 'dominioB.com': 0.12 };
 /** Volume menor no passado + sazonalidade, para o relatório mensal não ficar plano. */
 const volOf = (di: number) => (0.58 + 0.42 * Math.cos((di / DAYS) * (Math.PI / 1.6))) * (1 + 0.16 * Math.sin(di / 23));
 function served(domain: string, url: string, adImps: number) { const drop = Math.min(0.6, Math.max(0.01, urlDrop(domain, url) * Math.exp(gauss() * 0.12))); return Math.round(adImps / (1 - drop)); }
@@ -142,11 +145,12 @@ function pushUn(di: number, domain: string, url: string, country: string, rev: n
 
 /** Mesma agregação que o servidor faz em SQL (SUM + fórmulas). */
 export function agg(rows: Row[], cur: Currency): Metrics {
-  const s = { spend: 0, gs: 0, ms: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0 };
-  for (const r of rows) { const f = FX[cur][r.di] ?? 1; const sp = r.spendUSD * f, rv = r.revUSD * f; s.spend += sp; if (r.src === 'google') s.gs += sp; else if (r.src === 'meta') s.ms += sp;
+  // spend = Google + Meta + IVA (13,83% sobre a Meta) · revenue = bruta × (1 − revShare do domínio)
+  const s = { spend: 0, gs: 0, ms: 0, iva: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0 };
+  for (const r of rows) { const f = FX[cur][r.di] ?? 1; const sp = r.spendUSD * f, rv = r.revUSD * f, iv = r.src === 'meta' ? sp * META_IVA : 0; s.spend += sp + iv; s.iva += iv; if (r.src === 'google') s.gs += sp; else if (r.src === 'meta') s.ms += sp;
     s.rev += rv; s.gross += r.grossUSD * f; s.rsv += r.rsv; if (r.src === 'unatt') s.un += rv; else s.att += rv; s.sess += r.sess; s.ai += r.adImps; s.ar += r.adReq; s.ac += r.adClk; s.vw += r.view; s.clk += r.clk; s.ti += r.tImps; }
   const profit = s.rev - s.spend;
-  return { revenue: s.rev, grossRevenue: s.gross, retention: s.gross - s.rev, spend: s.spend, googleSpend: s.gs, metaSpend: s.ms,
+  return { revenue: s.rev, grossRevenue: s.gross, spend: s.spend, googleSpend: s.gs, metaSpend: s.ms, iva: s.iva,
     googleShare: s.spend > 0 ? (s.gs / s.spend) * 100 : null, metaShare: s.spend > 0 ? (s.ms / s.spend) * 100 : null, profit, roi: s.spend > 0 ? (profit / s.spend) * 100 : null, margin: s.rev > 0 ? (profit / s.rev) * 100 : null,
     rps: s.sess ? (s.rev / s.sess) * 1000 : null, ecpm: s.ai ? (s.rev / s.ai) * 1000 : null, impressions: s.ai, adRequests: s.ar, responsesServed: s.rsv, dropOffRate: s.rsv ? ((s.rsv - s.ai) / s.rsv) * 100 : null, fillRate: s.ar ? (s.ai / s.ar) * 100 : null,
     ctr: s.ai ? (s.ac / s.ai) * 100 : null, adClicks: s.ac, viewability: s.ai ? (s.vw / s.ai) * 100 : null, sessions: s.sess, trafficClicks: s.clk, trafficImpressions: s.ti,

@@ -6,27 +6,31 @@ import { ApiError } from '@/lib/api/client';
 import type * as T from '@/types/api';
 import { addDays, lastMonths } from '@/lib/period';
 import { agg, CAMPS, CT, DATES, DAYS, DOMAINS, FX, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, type Row } from './db';
+import { PL_LABEL, placementRows, typeOf, type PRow } from './placements';
 
 const LS = { get: <V,>(k: string): V | null => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } }, set: (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const me = (): (typeof USERS)[number] | null => USERS.find((u) => u.id === LS.get<string>('pluto_mock_session')) ?? null;
 /* ---- permissões (mesma regra do servidor) ---- */
 const CAPS: T.CapabilityDef[] = [
-  { key: 'reports.view', label: 'Relatórios (dia e mês)', group: 'Visualização', adminOnly: false },
-  { key: 'urls.view', label: 'URLs e Drop-off', group: 'Visualização', adminOnly: false },
-  { key: 'campaigns.google.view', label: 'Google Ads', group: 'Visualização', adminOnly: false },
-  { key: 'campaigns.meta.view', label: 'Meta Ads', group: 'Visualização', adminOnly: false },
-  { key: 'gam.view', label: 'Google Ad Manager', group: 'Visualização', adminOnly: false },
-  { key: 'attribution.view', label: 'Attribution Health', group: 'Visualização', adminOnly: false },
-  { key: 'utm.debug', label: 'UTM Debugger', group: 'Visualização', adminOnly: false },
-  { key: 'admin.integrations', label: 'Conectar APIs e contas / frequência do sync', group: 'Administração', adminOnly: true },
-  { key: 'admin.users', label: 'Usuários, Squads e permissões', group: 'Administração', adminOnly: true },
-  { key: 'admin.domains', label: 'Domínios', group: 'Administração', adminOnly: true },
-  { key: 'admin.utms', label: 'UTMs globais', group: 'Administração', adminOnly: true },
-  { key: 'admin.currency', label: 'Moedas e câmbio', group: 'Administração', adminOnly: true },
+  { key: 'reports.view', label: 'Relatórios (dia e mês)', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'urls.view', label: 'URLs e Drop-off', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'campaigns.google.view', label: 'Google Ads', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'campaigns.meta.view', label: 'Meta Ads', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'gam.view', label: 'Google Ad Manager', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'attribution.view', label: 'Attribution Health', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'utm.debug', label: 'UTM Debugger', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'admin.integrations', label: 'Contas das integrações (cadastrar, editar, importar, excluir)', group: 'Administração', adminOnly: true, superAdminOnly: false },
+  { key: 'admin.integrations.connect', label: 'Conectar integrações (OAuth) e editar a frequência do sync', group: 'Administração', adminOnly: true, superAdminOnly: true },
+  { key: 'admin.users', label: 'Usuários, Squads e permissões', group: 'Administração', adminOnly: true, superAdminOnly: false },
+  { key: 'admin.domains', label: 'Domínios e revShare', group: 'Administração', adminOnly: true, superAdminOnly: false },
+  { key: 'admin.utms', label: 'UTMs globais', group: 'Administração', adminOnly: true, superAdminOnly: false },
+  { key: 'admin.currency', label: 'Moedas e câmbio', group: 'Administração', adminOnly: true, superAdminOnly: false },
 ];
 let GESTOR_CAPS: T.Capability[] = CAPS.filter((c) => !c.adminOnly).map((c) => c.key);
-const capsOf = (u: T.User): T.Capability[] => (u.role === 'total' ? CAPS.map((c) => c.key) : GESTOR_CAPS);
+const isAdm = (u: T.User) => u.role === 'admin' || u.role === 'superadmin';
+const capsOf = (u: T.User): T.Capability[] => (u.role === 'superadmin' ? CAPS.map((c) => c.key) : u.role === 'admin' ? CAPS.filter((c) => !c.superAdminOnly).map((c) => c.key) : GESTOR_CAPS);
+const onlySuper = (u: T.User) => { if (u.role !== 'superadmin') throw new ApiError(403, 'superadmin_only', 'Só o SuperAdmin pode conectar integrações e mudar a frequência de sincronização.'); };
 const need = (u: T.User, cap: T.Capability) => { if (!capsOf(u).includes(cap)) throw new ApiError(403, 'forbidden_module', 'Este módulo não está liberado para o seu usuário.'); };
 const pub = (u: (typeof USERS)[number]): T.User => { const { password: _p, ...rest } = u; return { ...rest, permissions: capsOf(u) }; };
 
@@ -49,12 +53,13 @@ const SYNC: T.SyncSetting[] = ([
   ['google-ads.metrics', 'google-ads', 'Custo por campanha × país', 'incremental · D-3 → hoje', 30], ['google-ads.structure', 'google-ads', 'Estrutura: campanhas, grupos, anúncios', 'incremental', 120],
   ['meta.metrics', 'meta', 'Insights por anúncio × país', 'incremental · D-3 → hoje', 30], ['meta.structure', 'meta', 'Estrutura: campanha, conjunto, anúncio', 'incremental', 120],
   ['gam.revenue', 'gam', 'Receita e delivery por key-values × país × URL', 'reprocessa hoje e D-1 a D-3', 60], ['gam.close', 'gam', 'Fechamento de receita', 'reprocessa D-4 a D-7', 1440],
+  ['google-ads.placements', 'google-ads', 'Custo por placement (onde o anúncio apareceu)', 'incremental · D-3 → hoje', 60], ['gam.placements', 'gam', 'Receita por placement (key-value placement)', 'reprocessa hoje e D-1 a D-3', 60],
   ['fx.rates', 'fx', 'Cotações USD → BRL e EUR (Frankfurter)', 'hoje + dias que faltarem', 360],
 ] as const).map(([id, provider, label, window, every]) => ({ id, provider, label, window, everyMinutes: every, enabled: true, lastRunAt: new Date(now - 7 * 60000).toISOString(), nextRunAt: new Date(now + (every - 7) * 60000).toISOString(), lastStatus: 'success' as const }));
 void PROV_OF;
 
 function allowed(u: T.User): Set<string> {
-  if (u.role === 'total') return new Set([...DOMAINS.map((d) => d.hostname), UNKNOWN_DOMAIN]);
+  if (isAdm(u)) return new Set([...DOMAINS.map((d) => d.hostname), UNKNOWN_DOMAIN]);
   const s = SQUADS.find((x) => x.id === u.squadId);
   return new Set((s?.domains ?? []).filter((d) => DOMAINS.find((x) => x.hostname === d)?.active));
 }
@@ -75,7 +80,7 @@ function roiDays(rows: Row[], cur: T.Currency): T.RoiDays {
   const by = (d: number) => { const x = rows.filter((r) => r.di === d); return x.length ? agg(x, cur).roi : null; };
   return { today: by(0), d1: by(1), d2: by(2), d3: by(3) };
 }
-function group<K>(rows: Row[], fn: (r: Row) => K) { const m = new Map<K, Row[]>(); for (const r of rows) { const k = fn(r); if (!m.has(k)) m.set(k, []); m.get(k)!.push(r); } return m; }
+function group<K, X extends Row = Row>(rows: X[], fn: (r: X) => K) { const m = new Map<K, X[]>(); for (const r of rows) { const k = fn(r); if (!m.has(k)) m.set(k, []); m.get(k)!.push(r); } return m; }
 
 const TITLES: Record<T.IssueType, [string, string, string]> = {
   missing_campaign_id: ['Missing Campaign ID', 'utm_campaign não contém o Campaign ID.', 'Verificar o tracking template / sufixo do URL final da campanha.'],
@@ -119,7 +124,7 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     DOMAINS.filter((d) => al.has(d.hostname) && d.active && d.hostname.toLowerCase().includes(t)).forEach((d) => results.push({ kind: 'domain', label: d.hostname, domain: d.hostname }));
     return out({ results });
   }
-  if (path.startsWith('/admin') && u.role !== 'total') throw new ApiError(403, 'forbidden', 'Área exclusiva de Acesso Total.');
+  if (path.startsWith('/admin') && !isAdm(u)) throw new ApiError(403, 'forbidden', 'Área exclusiva de Admin.');
 
   /* ---- métricas ---- */
   if (path === '/dashboard') {
@@ -153,6 +158,41 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     return out<T.CampaignCountriesResponse>({ campaign: { id: c.id, name: c.name, platform: c.platform, domain: c.domain }, totals: agg(rows, cur),
       countries: [...group(rows, (r) => r.country)].map(([k, rs]) => ({ country: k, name: CT[k].n, metrics: agg(rs, cur) })) });
   }
+  /* ---- placements: domínio → contas → campanhas ---- */
+  if (path.startsWith('/placements')) {
+    need(u, 'campaigns.google.view');
+    const dom = String(q.domain || ''); if (!dom) throw new ApiError(422, 'domain_required', 'Escolha um domínio.');
+    if (!allowed(u).has(dom)) throw new ApiError(403, 'forbidden_domain', 'Você não tem acesso a este domínio.');
+    const camps = CAMPS.filter((c) => c.platform === 'google' && c.domain === dom);
+    if (path === '/placements/filters') {
+      const accs = [...new Set(camps.map((c) => c.acc))];
+      return out<T.PlacementFiltersResponse>({ domain: dom, accounts: accs.map((id) => ({ id, name: accName(id), externalId: GACC.find((g) => g.id === id)?.externalId ?? id, campaigns: camps.filter((c) => c.acc === id).length })),
+        campaigns: camps.map((c) => ({ id: c.id, name: c.name, accountId: c.acc, status: c.status })) });
+    }
+    const accs = String(q.accounts || '').split(',').filter(Boolean); const ids = String(q.campaigns || '').split(',').filter(Boolean);
+    const inAcc = camps.filter((c) => !accs.length || accs.includes(c.acc)); const use = inAcc.filter((c) => !ids.length || ids.includes(c.id));
+    const [a, bb] = range(q); const useIds = use.map((c) => c.id);
+    const cur_ = placementRows(useIds, a, bb); const rec = placementRows(useIds, 0, 3);
+    const label = (k: string) => PL_LABEL[k] ?? (k.startsWith('mobileapp::') ? k.slice(11) : k);
+    const recent = (rs: PRow[]) => [0, 1, 2, 3].map((d) => { const x = rs.filter((r) => r.di === d); const m = agg(x, cur); return [m.spend, m.revenue] as [number, number]; });
+    if (path === '/placements/campaigns') {
+      const key = String(q.placement || ''); const lvl = q.level === 'host' ? 'host' : 'root';
+      const rows = cur_.filter((r) => (lvl === 'host' ? r.host : r.root) === key);
+      return out<T.PlacementCampaignsResponse>({ placement: key, level: lvl, totals: agg(rows, cur),
+        hosts: lvl === 'root' ? [...group(rows, (r) => (r as PRow).host)].map(([k, rs]) => ({ key: k, metrics: agg(rs, cur) })) : [],
+        campaigns: use.filter((c) => rows.some((r) => r.camp === c.id)).map((c) => ({ id: c.id, name: c.name, accountName: accName(c.acc), status: c.status, metrics: agg(rows.filter((r) => r.camp === c.id), cur) })) });
+    }
+    const byRoot = group(cur_, (r) => (r as PRow).root); const recRoot = group(rec, (r) => (r as PRow).root);
+    const groups: T.PlacementGroup[] = [...byRoot].map(([rt, rs]) => {
+      const rr = (recRoot.get(rt) ?? []) as PRow[]; const byHost = group(rs as PRow[], (r) => r.host);
+      return { key: rt, label: label(rt), type: typeOf(rt), metrics: agg(rs, cur), roiDays: roiDays(rr, cur), recent: recent(rr),
+        children: [...byHost].map(([h, hs]) => { const hr = rr.filter((r) => r.host === h); return { key: h, label: label(h), type: typeOf(h), metrics: agg(hs, cur), roiDays: roiDays(hr, cur), recent: recent(hr) }; }) };
+    });
+    let cmp: T.Comparison | null = null;
+    { const [a0, b] = [a, bb]; if (!(a0 === 0 && b === 0)) { const s0 = a0 === 0 ? 1 : a0; const len = b - s0 + 1; const pa = b + 1, pb = b + len; if (pb < DAYS) cmp = { from: DATES[pb], to: DATES[pa], metrics: agg(placementRows(useIds, pa, pb), cur) }; } }
+    return out<T.PlacementsResponse>({ domain: dom, selection: { accounts: accs.length, accountsTotal: new Set(camps.map((c) => c.acc)).size, campaigns: use.length, campaignsTotal: inAcc.length },
+      comparison: cmp, totals: agg(cur_, cur), totalsRoiDays: roiDays(rec, cur), groups });
+  }
   if (path === '/urls') { need(u, 'urls.view'); const rows = rowsFor(u, q, (r) => !!DOMAINS.find((d) => d.hostname === r.domain)); return out<T.UrlsResponse>({ urls: [...group(rows, (r) => r.domain + '|' + r.url)].map(([k, rs]) => { const [d, p] = k.split('|'); return { domain: d, path: p, metrics: agg(rs, cur) }; }) }); }
   if (path.startsWith('/reports/')) need(u, 'reports.view');
   if (path === '/reports/daily') {
@@ -185,6 +225,7 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     google: { connected: true, googleAccount: 'midia@exemplo.com', mccName: 'Pluto Media MCC', mccCustomerId: '123-456-7890', accountsFound: GACC.length, lastSyncAt: new Date(Date.now() - 4 * 60000).toISOString(), accounts: GACC },
     meta: { connected: true, business: 'Pluto Media BM', user: 'midia@exemplo.com', lastSyncAt: new Date(Date.now() - 7 * 60000).toISOString(), accounts: MACC },
     gam: { connected: true, googleAccount: 'financeiro@exemplo.com', networkName: 'Minha Rede GAM', networkCode: '12345678', currency: 'USD', timezone: 'America/Sao_Paulo', status: 'ok', lastSyncAt: new Date(Date.now() - 6 * 60000).toISOString() } });
+  if (/\/oauth\/start$/.test(path)) onlySuper(u);
   if (/\/oauth\/start$/.test(path)) return out<T.OAuthStartResponse>({ authorizeUrl: '#oauth-mock' });
   m = path.match(/^\/admin\/integrations\/(google-ads|meta|gam)\/accounts(?:\/([^/]+))?$/);
   if (m) {
@@ -203,18 +244,18 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   }
   if (path === '/admin/sync-settings') return out({ settings: SYNC });
   m = path.match(/^\/admin\/sync-settings\/(.+)$/);
-  if (m) { const st = SYNC.find((x) => x.id === decodeURIComponent(m![1])); if (!st) throw new ApiError(404, 'not_found', 'Job não encontrado.');
+  if (m) { onlySuper(u); const st = SYNC.find((x) => x.id === decodeURIComponent(m![1])); if (!st) throw new ApiError(404, 'not_found', 'Job não encontrado.');
     if (b.everyMinutes !== undefined) { const v = Number(b.everyMinutes); if (!(v >= 15 && v <= 1440)) throw new ApiError(422, 'invalid_frequency', 'Frequência entre 15 min e 24 h.'); st.everyMinutes = v; }
     if (b.enabled !== undefined) st.enabled = !!b.enabled;
     st.nextRunAt = st.enabled ? new Date(Date.parse(st.lastRunAt ?? new Date().toISOString()) + st.everyMinutes * 60000).toISOString() : null; return out(st); }
   if (path === '/admin/fx/refresh') { FX.BRL[0] = +(FX.BRL[0] + (Math.random() - 0.5) * 0.01).toFixed(4); return out<T.FxLatest>({ base: 'USD', rates: { USD: 1, BRL: FX.BRL[0], EUR: FX.EUR[0] }, fetchedAt: new Date().toISOString(), source: 'Frankfurter (mock)' }); }
   if (path === '/admin/permissions') {
     if (method === 'PUT') { const want = (b.gestor ?? []) as T.Capability[]; GESTOR_CAPS = CAPS.filter((c) => !c.adminOnly && want.includes(c.key)).map((c) => c.key); }
-    return out<T.PermissionsResponse>({ capabilities: CAPS, roles: { gestor: GESTOR_CAPS, total: CAPS.map((c) => c.key) } });
+    return out<T.PermissionsResponse>({ capabilities: CAPS, roles: { gestor: GESTOR_CAPS, admin: CAPS.filter((c) => !c.superAdminOnly).map((c) => c.key), superadmin: CAPS.map((c) => c.key) } });
   }
   if (/\/sync$/.test(path)) return out(undefined);
   if (path === '/admin/domains' && method === 'GET') return out({ domains: DOMAINS.map((d) => ({ ...d, squadId: SQUADS.find((s) => s.domains.includes(d.hostname))?.id ?? null })) });
-  if (path === '/admin/domains' && method === 'POST') { const d: T.Domain = { hostname: String(b.hostname), active: true, squadId: null, googleAccounts: [], metaAccounts: [], lastDataAt: null }; DOMAINS.push(d); return out(d); }
+  if (path === '/admin/domains' && method === 'POST') { const d: T.Domain = { hostname: String(b.hostname), revShare: Number(b.revShare ?? 0), revShareFrom: null, active: true, squadId: null, googleAccounts: [], metaAccounts: [], lastDataAt: null }; DOMAINS.push(d); return out(d); }
   m = path.match(/^\/admin\/domains\/(.+)$/);
   if (m) {
     const d = DOMAINS.find((x) => x.hostname === decodeURIComponent(m![1])); if (!d) throw new ApiError(404, 'not_found', 'Domínio não encontrado.');
@@ -222,6 +263,7 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     if (b.hostname && b.hostname !== d.hostname) { if (DOMAINS.find((x) => x.hostname === b.hostname)) throw new ApiError(409, 'domain_exists', 'Já existe um domínio com esse nome.'); if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'rename_mock', 'No modo mock não dá para renomear domínios com dados.'); SQUADS.forEach((s) => (s.domains = s.domains.map((x) => (x === d.hostname ? b.hostname : x)))); d.hostname = b.hostname; }
     if (b.squadId !== undefined) { SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); const s = SQUADS.find((x) => x.id === b.squadId); if (s) s.domains.push(d.hostname); d.squadId = s?.id ?? null; }
     for (const k of ['active', 'googleAccounts', 'metaAccounts'] as const) if (b[k] !== undefined) (d as any)[k] = b[k];
+    if (b.revShare !== undefined) { const v = Number(b.revShare); if (!(v >= 0 && v < 100)) throw new ApiError(422, 'invalid_input', 'revShare entre 0 e 99,999%.'); d.revShare = v; d.revShareFrom = b.revShareFrom ?? TODAY; }
     return out(d);
   }
   if (path === '/admin/squads' && method === 'GET') return out({ squads: SQUADS.map((s) => ({ ...s, userIds: USERS.filter((x) => x.squadId === s.id).map((x) => x.id) })) });
@@ -230,6 +272,7 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path.startsWith('/admin/squads')) { let s = SQUADS.find((x) => x.id === b.id); if (!s) { s = { id: 's' + Date.now(), name: b.name, domains: [], userIds: [] }; SQUADS.push(s); } s.name = b.name; s.domains = b.domains ?? []; SQUADS.forEach((x) => { if (x !== s) x.domains = x.domains.filter((d) => !s!.domains.includes(d)); }); return out(s); }
   if (path === '/admin/users' && method === 'GET') return out({ users: USERS.map(pub) });
   if (path === '/admin/users' && method === 'POST') {
+    if (b.role === 'superadmin' && u.role !== 'superadmin') throw new ApiError(403, 'superadmin_only', 'Só um SuperAdmin pode dar a permissão SuperAdmin.');
     if (USERS.find((x) => x.email === String(b.email).toLowerCase())) throw new ApiError(409, 'email_taken', 'Já existe um usuário com esse e-mail.');
     const nu = { id: 'u' + Date.now(), name: b.name, email: String(b.email).toLowerCase(), role: b.role, squadId: b.squadId ?? null, status: 'invited' as const, mustChangePassword: true, password: 'temp1234' };
     USERS.push(nu); return out<T.CreateUserResponse>({ user: pub(nu), inviteSent: true });
@@ -237,11 +280,12 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   m = path.match(/^\/admin\/users\/([^/]+)(\/resend-invite)?$/);
   if (m) {
     const t = USERS.find((x) => x.id === m![1]); if (!t) throw new ApiError(404, 'not_found', 'Usuário não encontrado.');
+    if (u.role !== 'superadmin' && (t.role === 'superadmin' || b.role === 'superadmin')) throw new ApiError(403, 'superadmin_only', 'Só um SuperAdmin pode alterar outro SuperAdmin.');
     if (m[2]) { if (t.status !== 'invited') throw new ApiError(409, 'not_invited', 'Esse usuário já ativou o acesso.'); return out({ inviteSent: true }); }
     if (method === 'DELETE') { if (t.isMainAdmin) throw new ApiError(409, 'main_admin', 'O admin principal não pode ser excluído.'); if (t.id === u.id) throw new ApiError(409, 'self', 'Você não pode excluir a si mesmo.'); USERS.splice(USERS.indexOf(t), 1); return out(undefined); }
     if (method === 'PATCH') {
       if (t.id === u.id && (b.role && b.role !== t.role || b.status === 'disabled')) throw new ApiError(409, 'self', 'Você não pode mudar a sua própria permissão ou se desativar.');
-      if (t.isMainAdmin && b.role === 'gestor') throw new ApiError(409, 'main_admin', 'O admin principal sempre tem Acesso Total.');
+      if (t.isMainAdmin && b.role && b.role !== 'superadmin') throw new ApiError(409, 'main_admin', 'O admin principal é sempre SuperAdmin.');
       if (b.name !== undefined) t.name = String(b.name).trim(); if (b.role) t.role = b.role; if (b.squadId !== undefined) t.squadId = t.role === 'gestor' ? b.squadId : null; if (b.status) t.status = b.status;
       if (t.role === 'gestor' && !t.squadId) throw new ApiError(422, 'squad_required', 'Gestor precisa de um Squad.');
       return out(pub(t));

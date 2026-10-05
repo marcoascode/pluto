@@ -2,6 +2,9 @@ import { Alert, Box, Button, Card, CardHeader, Checkbox, Chip, Dialog, DialogAct
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import PowerOutlinedIcon from '@mui/icons-material/PowerOutlined';
+import type { ReactNode } from 'react';
+import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
 import { useAdminDomains, useAdminMutation, useIntegrationAccounts, useSyncSettings } from '@/hooks/queries';
 import { integrationsApi } from '@/lib/api/endpoints';
@@ -25,6 +28,17 @@ export function useConnect() {
   };
   const snack = <Snackbar open={!!msg} autoHideDuration={3500} onClose={() => setMsg('')} message={msg} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />;
   return { connect, snack };
+}
+
+/** Botão "Conectar": só SuperAdmin conecta integrações (o servidor também bloqueia). */
+export function ConnectButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  const { can } = useAuth();
+  const ok = can('admin.integrations.connect');
+  return (
+    <Tooltip title={ok ? '' : 'Só o SuperAdmin conecta integrações'}>
+      <span><Button variant="contained" startIcon={<PowerOutlinedIcon />} onClick={onClick} disabled={!ok}>{children}</Button></span>
+    </Tooltip>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -134,6 +148,8 @@ const fmtWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pt-
 
 export function SyncPanel({ provider }: { provider: Provider | 'fx' }) {
   const { data } = useSyncSettings();
+  const { can } = useAuth();
+  const locked = !can('admin.integrations.connect');   // frequência e liga/desliga: só SuperAdmin
   const [msg, setMsg] = useState('');
   const upd = useAdminMutation(({ id, ...b }: { id: string; everyMinutes?: number; enabled?: boolean }) => integrationsApi.updateSyncSetting(id, b), [qk.syncSettings]);
   const rows = data?.settings.filter((s) => s.provider === provider) ?? [];
@@ -143,7 +159,7 @@ export function SyncPanel({ provider }: { provider: Provider | 'fx' }) {
   };
   return (
     <Card sx={{ mt: 1.75 }}>
-      <CardHeader title="Sincronização" subheader="Fila com retry e backoff exponencial. Só a janela incremental é baixada de novo."
+      <CardHeader title="Sincronização" subheader={locked ? 'Frequência definida pelo SuperAdmin. Só a janela incremental é baixada de novo.' : 'Fila com retry e backoff exponencial. Só a janela incremental é baixada de novo.'}
         action={provider !== 'fx' ? <Button size="small" variant="outlined" onClick={syncNow}>Sincronizar agora</Button> : undefined} />
       <TableContainer><Table size="small">
         <TableHead><TableRow>{['Job', 'Janela', 'Frequência', 'Ativo', 'Última execução', 'Próxima'].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
@@ -151,10 +167,10 @@ export function SyncPanel({ provider }: { provider: Provider | 'fx' }) {
           <TableRow key={j.id}>
             <TableCell>{j.label}</TableCell>
             <TableCell sx={{ color: 'text.secondary' }}>{j.window}</TableCell>
-            <TableCell><Select size="small" value={j.everyMinutes} onChange={(e) => upd.mutate({ id: j.id, everyMinutes: Number(e.target.value) })} inputProps={{ 'aria-label': `Frequência de ${j.label}` }}>
+            <TableCell><Select size="small" disabled={locked} value={j.everyMinutes} onChange={(e) => upd.mutate({ id: j.id, everyMinutes: Number(e.target.value) })} inputProps={{ 'aria-label': `Frequência de ${j.label}` }}>
               {(FREQ.some(([v]) => v === j.everyMinutes) ? FREQ : [...FREQ, [j.everyMinutes, `a cada ${j.everyMinutes} min`] as [number, string]]).map(([v, l]) => <MenuItem key={v} value={v}>{l}</MenuItem>)}
             </Select></TableCell>
-            <TableCell><Switch size="small" checked={j.enabled} onChange={(e) => upd.mutate({ id: j.id, enabled: e.target.checked })} slotProps={{ input: { 'aria-label': `Ativar ${j.label}` } }} /></TableCell>
+            <TableCell><Switch size="small" disabled={locked} checked={j.enabled} onChange={(e) => upd.mutate({ id: j.id, enabled: e.target.checked })} slotProps={{ input: { 'aria-label': `Ativar ${j.label}` } }} /></TableCell>
             <TableCell>{fmtWhen(j.lastRunAt)}{j.lastStatus === 'failed' && <Chip size="small" color="error" label="falhou" sx={{ ml: 0.75, height: 18 }} />}</TableCell>
             <TableCell>{j.enabled ? fmtWhen(j.nextRunAt) : 'pausado'}</TableCell>
           </TableRow>

@@ -8,7 +8,8 @@
 
 export type Currency = 'USD' | 'BRL' | 'EUR';
 export type Platform = 'google' | 'meta';
-export type Role = 'gestor' | 'total';
+/** gestor: só o Squad · admin: tudo menos conectar integrações/frequência do sync · superadmin: tudo */
+export type Role = 'gestor' | 'admin' | 'superadmin';
 
 /* ---------- filtros comuns ---------- */
 export interface PeriodQuery {
@@ -20,12 +21,12 @@ export interface PeriodQuery {
 
 /* ---------- métricas ---------- */
 export interface Metrics {
-  revenue: number; // receita líquida (o que fica para você) = grossRevenue − retention
-  grossRevenue: number; // receita bruta reportada pelo Ad Manager
-  retention: number; // parte retida pelo parceiro (rev share) = grossRevenue − revenue
-  spend: number;
+  revenue: number; // receita líquida = receita bruta do Ad Manager × (1 − revShare do domínio). É a que aparece nas telas.
+  grossRevenue: number; // receita bruta do Ad Manager (uso interno; não aparece nos relatórios)
+  spend: number; // despesa total = googleSpend + metaSpend + iva
   googleSpend: number;
-  metaSpend: number;
+  metaSpend: number; // sem IVA
+  iva: number; // IVA sobre a Meta = metaSpend × 13,83%
   googleShare: number | null; // googleSpend / spend × 100
   metaShare: number | null; // metaSpend / spend × 100
   profit: number;
@@ -73,25 +74,27 @@ export interface User {
   status: 'active' | 'invited' | 'disabled';
   mustChangePassword: boolean;
   isMainAdmin?: boolean;
-  /** Módulos que o usuário pode abrir (ver Capability). Acesso Total recebe todos. */
+  /** Módulos que o usuário pode abrir (ver Capability). SuperAdmin recebe todos. */
   permissions?: Capability[];
 }
 
 /* ---------- permissões ---------- */
-/** Módulos de visualização (podem ser ligados/desligados para Gestor) e de administração (só Acesso Total). */
+/** Módulos de visualização (podem ser ligados/desligados para Gestor) e de administração (Admin; conectar/frequência só SuperAdmin). */
 export type Capability =
   | 'reports.view' | 'urls.view' | 'campaigns.google.view' | 'campaigns.meta.view' | 'gam.view' | 'attribution.view' | 'utm.debug'
-  | 'admin.integrations' | 'admin.users' | 'admin.domains' | 'admin.utms' | 'admin.currency';
+  | 'admin.integrations' | 'admin.integrations.connect' | 'admin.users' | 'admin.domains' | 'admin.utms' | 'admin.currency';
 export interface CapabilityDef {
   key: Capability;
   label: string;
   group: 'Visualização' | 'Administração';
   /** true = não pode ser dado ao Gestor (segurança) */
   adminOnly: boolean;
+  /** true = só SuperAdmin (conectar integrações e mudar a frequência do sync) */
+  superAdminOnly: boolean;
 }
 export interface PermissionsResponse {
   capabilities: CapabilityDef[];
-  roles: Record<Role, Capability[]>; // total sempre tem todas
+  roles: Record<Role, Capability[]>; // superadmin sempre tem todas; admin todas menos superAdminOnly
 }
 export interface LoginRequest {
   email: string;
@@ -175,6 +178,46 @@ export interface CampaignCountriesResponse {
   campaign: Pick<CampaignRow, 'id' | 'name' | 'platform' | 'domain'>;
   totals: Metrics;
   countries: CountryRow[];
+}
+
+/* ---------- placements (Google Ads × Ad Manager) ---------- */
+/** website: site (host sem www) · app: mobileapp::… · youtube: vídeos/canais · google: produtos do Google (Gmail…) */
+export type PlacementType = 'website' | 'app' | 'youtube' | 'google' | 'other';
+export interface PlacementFiltersResponse {
+  domain: string;
+  accounts: { id: string; name: string; externalId: string; campaigns: number }[];
+  campaigns: { id: string; name: string; accountId: string; status: 'ENABLED' | 'PAUSED' }[]; // só Google Ads do domínio
+}
+export interface PlacementQuery extends PeriodQuery {
+  domain: string; // obrigatório
+  accounts?: string; // ids separados por vírgula · vazio = todas as contas do domínio
+  campaigns?: string; // IDs das campanhas separados por vírgula · vazio = todas
+}
+export interface PlacementRow {
+  key: string; // host (lp.site.com), "youtube.com" ou "mobileapp::…"
+  label: string;
+  type: PlacementType;
+  metrics: Metrics;
+  roiDays: RoiDays;
+  recent: [number, number][]; // [spend, revenue] de hoje, D-1, D-2, D-3 (soma do ROI D-x quando a lista é filtrada)
+}
+export interface PlacementGroup extends PlacementRow {
+  children: PlacementRow[]; // subdomínios agrupados no domínio principal (inclui o próprio domínio)
+}
+export interface PlacementsResponse {
+  domain: string;
+  selection: { accounts: number; accountsTotal: number; campaigns: number; campaignsTotal: number }; // accounts 0 = todas
+  comparison: Comparison | null;
+  totals: Metrics;
+  totalsRoiDays: RoiDays;
+  groups: PlacementGroup[];
+}
+export interface PlacementCampaignsResponse {
+  placement: string;
+  level: 'root' | 'host';
+  totals: Metrics;
+  hosts: { key: string; metrics: Metrics }[]; // só no nível root
+  campaigns: { id: string; name: string; accountName: string; status: 'ENABLED' | 'PAUSED'; metrics: Metrics }[];
 }
 
 /* ---------- URLs / Ad Manager ---------- */
@@ -305,6 +348,8 @@ export interface OAuthStartResponse {
 /* ---------- admin ---------- */
 export interface DomainInput {
   hostname?: string; // renomear
+  revShare?: number; // % retido pela Network (ex.: 20 = 20%)
+  revShareFrom?: string; // YYYY-MM-DD a partir de quando vale (padrão: hoje; o primeiro vale para todo o histórico)
   active?: boolean;
   squadId?: string | null;
   googleAccounts?: string[]; // ids de IntegrationAccount
@@ -312,6 +357,9 @@ export interface DomainInput {
 }
 export interface Domain {
   hostname: string;
+  revShare: number; // % vigente hoje (só configuração; nunca aparece em relatório)
+  revShareFrom: string | null;
+  createdBySync?: boolean; // site que apareceu no Ad Manager e ainda não foi cadastrado
   active: boolean;
   squadId: string | null;
   googleAccounts: string[];

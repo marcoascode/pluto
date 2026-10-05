@@ -7,6 +7,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { usePrefs } from '@/context/PrefsContext';
 import { initials } from '@/lib/format';
+import { ROLE_LABEL } from '@/lib/roles';
 import { Logo } from '@/components/ui/Logo';
 import { NAV_ADMIN, NAV_MAIN, isActive, type NavItem } from './nav';
 
@@ -46,7 +47,7 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
       {user && (
         <Stack direction={mini ? 'column' : 'row'} spacing={1.25} sx={{ alignItems: 'center', borderTop: 1, borderColor: 'divider', p: 1.5 }}>
           <Avatar sx={{ width: 30, height: 30, fontSize: 12, fontWeight: 600, background: 'linear-gradient(135deg,#2f6fe0,#1b3f86)', color: '#fff' }}>{initials(user.name)}</Avatar>
-          {!mini && <Box sx={{ flex: 1, minWidth: 0 }}><Typography noWrap sx={{ fontSize: 12.5 }}>{user.name}</Typography><Typography variant="caption" noWrap component="div">{isAdmin ? 'Acesso Total' : 'Gestor'}</Typography></Box>}
+          {!mini && <Box sx={{ flex: 1, minWidth: 0 }}><Typography noWrap sx={{ fontSize: 12.5 }}>{user.name}</Typography><Typography variant="caption" noWrap component="div">{ROLE_LABEL[user.role] ?? user.role}</Typography></Box>}
           {onNavigate === undefined && <IconButton size="small" onClick={() => update({ sideMini: !prefs.sideMini })} aria-label={mini ? 'Expandir menu' : 'Recolher menu'}>{mini ? <ChevronRightRoundedIcon fontSize="small" /> : <ChevronLeftRoundedIcon fontSize="small" />}</IconButton>}
         </Stack>
       )}

@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { config } from '../../config.js';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
-import { decrypt, encrypt } from '../../lib/crypto.js';
+import { encrypt } from '../../lib/crypto.js';
+import { requireSuperAdmin } from '../../auth/session.js';
 import { refreshRates, latest } from '../../services/fx.js';
 import { runProvider } from '../../services/sync/index.js';
 
@@ -115,7 +116,8 @@ integrationsRouter.delete('/integrations/:provider/accounts/:id', async (req, re
 const SYNC_SQL = `SELECT id, provider, label, window_desc AS "window", every_minutes AS "everyMinutes", enabled, last_run_at AS "lastRunAt", next_run_at AS "nextRunAt", last_status AS "lastStatus" FROM sync_settings`;
 integrationsRouter.get('/sync-settings', async (_req, res) => { res.json({ settings: await q(`${SYNC_SQL} ORDER BY provider, id`) }); });
 
-integrationsRouter.patch('/sync-settings/:id', async (req, res) => {
+/** Frequência e liga/desliga dos jobs: só SuperAdmin. */
+integrationsRouter.patch('/sync-settings/:id', requireSuperAdmin, async (req, res) => {
   const b = parse(z.object({ everyMinutes: z.number().int().min(15).max(1440).optional(), enabled: z.boolean().optional() }), req.body);
   const r = await one(`UPDATE sync_settings SET every_minutes = COALESCE($2, every_minutes), enabled = COALESCE($3, enabled),
       next_run_at = CASE WHEN COALESCE($3, enabled) THEN COALESCE(last_run_at, now()) + make_interval(mins => COALESCE($2, every_minutes)) ELSE NULL END
@@ -152,7 +154,8 @@ function checkState(state: string, p: Provider, userId: string) {
 }
 const GOOGLE_SCOPES: Record<'google-ads' | 'gam', string> = { 'google-ads': 'https://www.googleapis.com/auth/adwords', gam: 'https://www.googleapis.com/auth/admanager' };
 
-integrationsRouter.post('/integrations/:provider/oauth/start', async (req, res) => {
+/** Conectar (OAuth): só SuperAdmin. */
+integrationsRouter.post('/integrations/:provider/oauth/start', requireSuperAdmin, async (req, res) => {
   const p = parse(provider, req.params.provider);
   const state = makeState(p, req.user!.id);
   if (p === 'meta') {
@@ -181,7 +184,7 @@ async function getJson(url: string, headers: Record<string, string> = {}) {
 }
 
 /** O Google/Meta redireciona o navegador para cá (cookie de sessão vai junto: SameSite=Lax em GET de navegação). */
-integrationsRouter.get('/integrations/:provider/oauth/callback', async (req, res) => {
+integrationsRouter.get('/integrations/:provider/oauth/callback', requireSuperAdmin, async (req, res) => {
   const p = parse(provider, req.params.provider);
   const back = (qs: string) => res.redirect(`${config.appUrl}/admin/integracoes/${PAGE[p]}?${qs}`);
   if (req.query.error) return back(`oauth_error=${encodeURIComponent(String(req.query.error))}`);
@@ -190,14 +193,14 @@ integrationsRouter.get('/integrations/:provider/oauth/callback', async (req, res
   try {
     if (p === 'meta') {
       const v = config.oauth.metaApiVersion;
-      const short = await getJson(`https://graph.facebook.com/${v}/oauth/access_token?${new URLSearchParams({ client_id: config.oauth.metaAppId!, client_secret: config.oauth.metaAppSecret!, redirect_uri: redirectUri(p), code })}`);
-      const long = await getJson(`https://graph.facebook.com/${v}/oauth/access_token?${new URLSearchParams({ grant_type: 'fb_exchange_token', client_id: config.oauth.metaAppId!, client_secret: config.oauth.metaAppSecret!, fb_exchange_token: short.access_token })}`);
-      const me = await getJson(`https://graph.facebook.com/${v}/me?fields=name,email&access_token=${encodeURIComponent(long.access_token)}`);
+      const short = await getJson(`${config.api.metaGraph}/${v}/oauth/access_token?${new URLSearchParams({ client_id: config.oauth.metaAppId!, client_secret: config.oauth.metaAppSecret!, redirect_uri: redirectUri(p), code })}`);
+      const long = await getJson(`${config.api.metaGraph}/${v}/oauth/access_token?${new URLSearchParams({ grant_type: 'fb_exchange_token', client_id: config.oauth.metaAppId!, client_secret: config.oauth.metaAppSecret!, fb_exchange_token: short.access_token })}`);
+      const me = await getJson(`${config.api.metaGraph}/${v}/me?fields=name,email&access_token=${encodeURIComponent(long.access_token)}`);
       await q(`UPDATE integration_connections SET access_token_enc = $2, token_expires_at = now() + make_interval(secs => $3), account_email = $4, status = 'ok', connected_at = now() WHERE provider = $1`,
         [p, encrypt(long.access_token), Number(long.expires_in ?? 60 * 86400), me.email ?? me.name ?? null]);
       await discoverMetaAccounts(long.access_token).catch((e) => console.warn('[oauth] meta adaccounts:', e.message));
     } else {
-      const t = await postForm('https://oauth2.googleapis.com/token', { code, client_id: config.oauth.googleClientId!, client_secret: config.oauth.googleClientSecret!, redirect_uri: redirectUri(p), grant_type: 'authorization_code' });
+      const t = await postForm(config.api.googleToken, { code, client_id: config.oauth.googleClientId!, client_secret: config.oauth.googleClientSecret!, redirect_uri: redirectUri(p), grant_type: 'authorization_code' });
       const email = t.id_token ? JSON.parse(Buffer.from(String(t.id_token).split('.')[1], 'base64url').toString()).email : null;
       if (!t.refresh_token) throw new Error('o Google não devolveu refresh_token (remova o acesso do app na conta Google e conecte de novo)');
       await q(`UPDATE integration_connections SET refresh_token_enc = $2, access_token_enc = $3, token_expires_at = now() + make_interval(secs => $4), account_email = $5, status = 'ok', connected_at = now() WHERE provider = $1`,
@@ -214,7 +217,7 @@ integrationsRouter.get('/integrations/:provider/oauth/callback', async (req, res
 /** Meta: cadastra as contas de anúncio visíveis para o usuário que autorizou. */
 async function discoverMetaAccounts(token: string) {
   const v = config.oauth.metaApiVersion;
-  const j = await getJson(`https://graph.facebook.com/${v}/me/adaccounts?fields=name,account_id,currency,timezone_name&limit=200&access_token=${encodeURIComponent(token)}`);
+  const j = await getJson(`${config.api.metaGraph}/${v}/me/adaccounts?fields=name,account_id,currency,timezone_name&limit=200&access_token=${encodeURIComponent(token)}`);
   for (const a of (j.data ?? []) as { name: string; account_id: string; currency: string; timezone_name: string }[]) {
     const cur = ['USD', 'BRL', 'EUR'].includes(a.currency) ? a.currency : 'USD';
     await q(`INSERT INTO integration_accounts (provider, external_id, name, currency, timezone, imported, status) VALUES ('meta', $1, $2, $3, $4, true, 'ok')
@@ -223,21 +226,11 @@ async function discoverMetaAccounts(token: string) {
 }
 /** GAM: Ad Manager API v1 → networks do usuário. */
 async function discoverGamNetworks(accessToken: string) {
-  const j = await getJson('https://admanager.googleapis.com/v1/networks', { Authorization: `Bearer ${accessToken}` });
+  const j = await getJson(`${config.api.gam}/v1/networks`, { Authorization: `Bearer ${accessToken}` });
   for (const n of (j.networks ?? []) as { networkCode: string; displayName: string; currencyCode: string; timeZone: string }[]) {
     const cur = ['USD', 'BRL', 'EUR'].includes(n.currencyCode) ? n.currencyCode : 'USD';
     await q(`INSERT INTO integration_accounts (provider, external_id, name, currency, timezone, imported, status) VALUES ('gam', $1, $2, $3, $4, true, 'ok')
              ON CONFLICT (provider, external_id) DO UPDATE SET name = EXCLUDED.name, currency = EXCLUDED.currency, timezone = EXCLUDED.timezone`, [n.networkCode, n.displayName, cur, n.timeZone]);
     await q(`UPDATE integration_connections SET display_name = $1, external_id = $2 WHERE provider = 'gam'`, [n.displayName, n.networkCode]);
   }
-}
-
-/** Para os workers: devolve um access token válido do Google (renova com o refresh token). */
-export async function googleAccessToken(p: 'google-ads' | 'gam'): Promise<string> {
-  const c = await one<{ refresh_token_enc: Buffer | null; access_token_enc: Buffer | null; token_expires_at: string | null }>('SELECT refresh_token_enc, access_token_enc, token_expires_at FROM integration_connections WHERE provider = $1', [p]);
-  if (!c?.refresh_token_enc) throw new Error(`${p} não conectado`);
-  if (c.access_token_enc && c.token_expires_at && Date.parse(c.token_expires_at) > Date.now() + 60_000) return decrypt(c.access_token_enc);
-  const t = await postForm('https://oauth2.googleapis.com/token', { client_id: config.oauth.googleClientId!, client_secret: config.oauth.googleClientSecret!, refresh_token: decrypt(c.refresh_token_enc), grant_type: 'refresh_token' });
-  await q('UPDATE integration_connections SET access_token_enc = $2, token_expires_at = now() + make_interval(secs => $3) WHERE provider = $1', [p, encrypt(t.access_token), Number(t.expires_in ?? 3600)]);
-  return t.access_token;
 }

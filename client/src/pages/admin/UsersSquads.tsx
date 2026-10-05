@@ -5,6 +5,7 @@ import ForwardToInboxOutlinedIcon from '@mui/icons-material/ForwardToInboxOutlin
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { ROLE_HELP, ROLE_LABEL, roleTone } from '@/lib/roles';
 import { useAdminDomains, useAdminMutation, usePermissions, useSquads, useUsers } from '@/hooks/queries';
 import { adminApi } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
@@ -41,7 +42,7 @@ function UsersTab() {
   const [edit, setEdit] = useState<User | null>(null);
   const [del, setDel] = useState<User | null>(null);
   const [toast, setToast] = useState('');
-  const { user: me } = useAuth();
+  const { user: me, isSuperAdmin } = useAuth();
   const create = useAdminMutation(adminApi.createUser, [qk.users, qk.squads]);
   const remove = useAdminMutation(adminApi.deleteUser, [qk.users, qk.squads]);
   const resend = useAdminMutation(adminApi.resendInvite, [qk.users]);
@@ -66,13 +67,13 @@ function UsersTab() {
             <TableRow key={u.id}>
               <TableCell><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }} ><Avatar sx={avatarSx}>{initials(u.name)}</Avatar><span>{u.name}</span></Stack></TableCell>
               <TableCell>{u.email}</TableCell>
-              <TableCell><Tag tone={u.role === 'total' ? 'accent' : 'na'}>{u.role === 'total' ? 'Acesso Total' : 'Gestor'}</Tag></TableCell>
+              <TableCell><Tag tone={roleTone(u.role)}>{ROLE_LABEL[u.role] ?? u.role}</Tag></TableCell>
               <TableCell>{u.squadId ? sq?.squads.find((s) => s.id === u.squadId)?.name : <Typography variant="caption">Todos os domínios</Typography>}</TableCell>
               <TableCell>{u.status === 'active' ? <Tag tone="pos">Ativo</Tag> : <Tag tone="warn">{u.status === 'invited' ? 'Convite enviado' : 'Desativado'}</Tag>}</TableCell>
               <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                 {u.status === 'invited' && <Tooltip title="Reenviar convite"><IconButton size="small" aria-label={`Reenviar convite para ${u.name}`} onClick={() => resend.mutate(u.id, { onSuccess: () => setToast(`Convite reenviado para ${u.email}`), onError: (e) => setToast(e instanceof ApiError ? e.message : 'Falhou') })}><ForwardToInboxOutlinedIcon fontSize="small" /></IconButton></Tooltip>}{' '}
-                <Tooltip title="Editar"><span><IconButton size="small" aria-label={`Editar ${u.name}`} disabled={!!u.isMainAdmin && u.id !== me?.id} onClick={() => setEdit(u)}><EditOutlinedIcon fontSize="small" /></IconButton></span></Tooltip>{' '}
-                <Tooltip title={u.isMainAdmin ? 'O admin principal não pode ser excluído' : u.id === me?.id ? 'Você não pode excluir a si mesmo' : 'Excluir'}><span><IconButton size="small" aria-label={`Excluir ${u.name}`} disabled={!!u.isMainAdmin || u.id === me?.id} onClick={() => setDel(u)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></span></Tooltip>
+                <Tooltip title="Editar"><span><IconButton size="small" aria-label={`Editar ${u.name}`} disabled={(!!u.isMainAdmin && u.id !== me?.id) || (u.role === 'superadmin' && !isSuperAdmin)} onClick={() => setEdit(u)}><EditOutlinedIcon fontSize="small" /></IconButton></span></Tooltip>{' '}
+                <Tooltip title={u.isMainAdmin ? 'O admin principal não pode ser excluído' : u.id === me?.id ? 'Você não pode excluir a si mesmo' : 'Excluir'}><span><IconButton size="small" aria-label={`Excluir ${u.name}`} disabled={!!u.isMainAdmin || u.id === me?.id || (u.role === 'superadmin' && !isSuperAdmin)} onClick={() => setDel(u)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></span></Tooltip>
               </TableCell>
             </TableRow>
           ))}</TableBody>
@@ -82,12 +83,12 @@ function UsersTab() {
         <Card><CardHeader title="Adicionar usuário" /><CardContent><Stack spacing={1.75}>
           <TextField label="Nome" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Lucas Exemplo" fullWidth />
           <TextField label="E-mail" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="gestor@exemplo.com" fullWidth />
-          <TextField select label="Permissão" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as Role })} fullWidth><MenuItem value="gestor">Gestor</MenuItem><MenuItem value="total">Acesso Total</MenuItem></TextField>
+          <TextField select label="Permissão" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as Role })} fullWidth><MenuItem value="gestor">Gestor</MenuItem><MenuItem value="admin">Admin</MenuItem>{isSuperAdmin && <MenuItem value="superadmin">SuperAdmin</MenuItem>}</TextField>
           {f.role === 'gestor' ? (
             <TextField select label="Squad" value={squadId} onChange={(e) => setF({ ...f, squadId: e.target.value })} fullWidth helperText={`Vai ver: ${sq?.squads.find((s) => s.id === squadId)?.domains.join(', ') || 'nenhum domínio'}`}>
               {sq?.squads.map((s) => <MenuItem key={s.id} value={s.id}>{s.name} · {s.domains.length} domínios</MenuItem>)}
             </TextField>
-          ) : <Typography variant="caption">Acesso Total vê e edita tudo, incluindo integrações e usuários.</Typography>}
+          ) : <Typography variant="caption">{ROLE_HELP[f.role]}</Typography>}
           {err && <Alert severity="error" variant="outlined">{err}</Alert>}
           <Button variant="contained" onClick={submit} disabled={create.isPending}>{create.isPending ? 'Criando…' : 'Criar usuário e enviar convite'}</Button>
         </Stack></CardContent></Card>
@@ -122,6 +123,7 @@ function UsersTab() {
 
 function UserDialog({ u, self, onClose }: { u: User; self: boolean; onClose: () => void }) {
   const { data: sq } = useSquads();
+  const { isSuperAdmin } = useAuth();
   const [f, setF] = useState<Required<UpdateUserRequest>>({ name: u.name, role: u.role, squadId: u.squadId, status: u.status === 'disabled' ? 'disabled' : 'active' });
   const [err, setErr] = useState('');
   const save = useAdminMutation((b: UpdateUserRequest) => adminApi.updateUser(u.id, b), [qk.users, qk.squads]);
@@ -139,8 +141,9 @@ function UserDialog({ u, self, onClose }: { u: User; self: boolean; onClose: () 
       <DialogContent><Stack spacing={1.75} sx={{ pt: 1 }}>
         <TextField label="Nome" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} fullWidth />
         <TextField select label="Permissão" value={f.role} disabled={self} helperText={self ? 'Você não pode mudar a sua própria permissão.' : undefined} onChange={(e) => setF({ ...f, role: e.target.value as Role, squadId: e.target.value === 'gestor' ? f.squadId ?? sq?.squads[0]?.id ?? null : null })} fullWidth>
-          <MenuItem value="gestor">Gestor</MenuItem><MenuItem value="total">Acesso Total</MenuItem>
+          <MenuItem value="gestor">Gestor</MenuItem><MenuItem value="admin">Admin</MenuItem>{(isSuperAdmin || u.role === 'superadmin') && <MenuItem value="superadmin" disabled={!isSuperAdmin}>SuperAdmin</MenuItem>}
         </TextField>
+        <Typography variant="caption" sx={{ mt: -0.75 }}>{ROLE_HELP[f.role]}</Typography>
         {f.role === 'gestor' && (
           <TextField select label="Squad" value={f.squadId ?? ''} onChange={(e) => setF({ ...f, squadId: e.target.value })} fullWidth>
             {sq?.squads.map((s) => <MenuItem key={s.id} value={s.id}>{s.name} · {s.domains.length} domínios</MenuItem>)}
@@ -199,7 +202,7 @@ function SquadsTab() {
         ))}
       </Grid>
       <ConfirmDialog open={!!del} title="Excluir Squad?" busy={remove.isPending} onClose={() => { setDel(null); remove.reset(); }} onConfirm={() => del && remove.mutate(del.id, { onSuccess: () => setDel(null) })}>
-        Os domínios de <b>{del?.name}</b> ficam sem Squad (só Acesso Total vê). Squads com gestores não podem ser excluídos: mova os gestores antes.
+        Os domínios de <b>{del?.name}</b> ficam sem Squad (só Admin e SuperAdmin veem). Squads com gestores não podem ser excluídos: mova os gestores antes.
         {remove.error && <Alert severity="error" variant="outlined" sx={{ mt: 1.5 }}>{remove.error instanceof ApiError ? remove.error.message : 'Não foi possível excluir.'}</Alert>}
       </ConfirmDialog>
     </>
@@ -218,16 +221,17 @@ function PermsTab() {
   return (
     <>
       <TableContainer component={Card}><Table>
-        <TableHead><TableRow><TableCell>Permissão</TableCell><TableCell align="center">Gestor</TableCell><TableCell align="center">Acesso Total</TableCell></TableRow></TableHead>
+        <TableHead><TableRow><TableCell>Permissão</TableCell><TableCell align="center">Gestor</TableCell><TableCell align="center">Admin</TableCell><TableCell align="center">SuperAdmin</TableCell></TableRow></TableHead>
         <TableBody>
-          <TableRow><TableCell>Dashboard e Domínios</TableCell><TableCell align="center"><Checkbox size="small" checked disabled /></TableCell><TableCell align="center"><Checkbox size="small" checked disabled /></TableCell></TableRow>
-          <TableRow><TableCell>Vê só os domínios do próprio Squad <LockOutlinedIcon sx={{ fontSize: 14, verticalAlign: -2, color: 'text.disabled' }} /></TableCell><TableCell align="center"><Checkbox size="small" checked disabled /></TableCell><TableCell align="center"><Checkbox size="small" disabled /></TableCell></TableRow>
+          <TableRow><TableCell>Dashboard e Domínios</TableCell>{[0, 1, 2].map((i) => <TableCell key={i} align="center"><Checkbox size="small" checked disabled /></TableCell>)}</TableRow>
+          <TableRow><TableCell>Vê só os domínios do próprio Squad <LockOutlinedIcon sx={{ fontSize: 14, verticalAlign: -2, color: 'text.disabled' }} /></TableCell><TableCell align="center"><Checkbox size="small" checked disabled /></TableCell><TableCell align="center"><Checkbox size="small" disabled /></TableCell><TableCell align="center"><Checkbox size="small" disabled /></TableCell></TableRow>
           {groups.map((g) => [
-            <TableRow key={g}><TableCell colSpan={3} sx={{ bgcolor: 'action.hover', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'text.secondary' }}>{g}</TableCell></TableRow>,
+            <TableRow key={g}><TableCell colSpan={4} sx={{ bgcolor: 'action.hover', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'text.secondary' }}>{g}</TableCell></TableRow>,
             ...data.capabilities.filter((c) => c.group === g).map((c) => (
               <TableRow key={c.key}>
-                <TableCell>{c.label}{c.adminOnly && <Tooltip title="Por segurança, só Acesso Total"><LockOutlinedIcon sx={{ fontSize: 14, verticalAlign: -2, ml: 0.75, color: 'text.disabled' }} /></Tooltip>}</TableCell>
+                <TableCell>{c.label}{c.adminOnly && <Tooltip title={c.superAdminOnly ? 'Só SuperAdmin' : 'Por segurança, só Admin e SuperAdmin'}><LockOutlinedIcon sx={{ fontSize: 14, verticalAlign: -2, ml: 0.75, color: 'text.disabled' }} /></Tooltip>}</TableCell>
                 <TableCell align="center"><Checkbox size="small" disabled={c.adminOnly} checked={!c.adminOnly && sel.includes(c.key)} onChange={(e) => setSel(e.target.checked ? [...sel, c.key] : sel.filter((x) => x !== c.key))} slotProps={{ input: { 'aria-label': `Gestor: ${c.label}` } }} /></TableCell>
+                <TableCell align="center"><Checkbox size="small" checked={data.roles.admin.includes(c.key)} disabled /></TableCell>
                 <TableCell align="center"><Checkbox size="small" checked disabled /></TableCell>
               </TableRow>
             )),

@@ -59,17 +59,17 @@ export function CountryDrawer({ c, onClose }: { c: CampaignRow; onClose: () => v
             ) : (
               <TableContainer component={Card}>
                 <Table size="small">
-                  <TableHead><TableRow>{head('name', 'País', false)}{head('spend', 'Spend')}{head('revenue', 'Revenue')}{head('profit', 'Profit')}{head('roi', 'ROI')}{head('rps', 'RPS')}</TableRow></TableHead>
+                  <TableHead><TableRow>{head('name', 'País', false)}{head('spend', 'Spend')}{head('revenue', 'Revenue')}{head('profit', 'Profit')}{head('rps', 'RPS')}{head('roi', 'ROI')}</TableRow></TableHead>
                   <TableBody>
                     {rows.map((x) => (
                       <TableRow key={x.country}>
                         <TableCell sx={{ boxShadow: `inset 3px 0 0 ${x.metrics.profit < 0 ? p.neg : p.pos}` }}><CountryCode c={x.country} />{x.name}<Typography variant="caption" component="div">{share(x)} do spend</Typography></TableCell>
                         <TableCell align="right"><Money v={x.metrics.spend} /></TableCell><TableCell align="right"><Money v={x.metrics.revenue} /></TableCell>
                         <TableCell align="right"><Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }} ><Profit v={x.metrics.profit} /><LinearProgress variant="determinate" value={(Math.abs(x.metrics.profit) / mxP) * 100} color={x.metrics.profit < 0 ? 'error' : 'success'} sx={{ width: 40, bgcolor: 'transparent' }} /></Stack></TableCell>
-                        <TableCell align="right"><RoiChip v={x.metrics.roi} /></TableCell><TableCell align="right"><Money v={x.metrics.rps} /></TableCell>
+                        <TableCell align="right"><Money v={x.metrics.rps} /></TableCell><TableCell align="right"><RoiChip v={x.metrics.roi} /></TableCell>
                       </TableRow>
                     ))}
-                    <TableRow sx={{ '& td': { bgcolor: p.panel2, fontWeight: 600 } }}><TableCell>Total · {rows.length} países</TableCell><TableCell align="right"><Money v={tot.spend} /></TableCell><TableCell align="right"><Money v={tot.revenue} /></TableCell><TableCell align="right"><Profit v={tot.profit} /></TableCell><TableCell align="right"><RoiChip v={tot.roi} /></TableCell><TableCell align="right"><Money v={tot.rps} /></TableCell></TableRow>
+                    <TableRow sx={{ '& td': { bgcolor: p.panel2, fontWeight: 600 } }}><TableCell>Total · {rows.length} países</TableCell><TableCell align="right"><Money v={tot.spend} /></TableCell><TableCell align="right"><Money v={tot.revenue} /></TableCell><TableCell align="right"><Profit v={tot.profit} /></TableCell><TableCell align="right"><Money v={tot.rps} /></TableCell><TableCell align="right"><RoiChip v={tot.roi} /></TableCell></TableRow>
                   </TableBody>
                 </Table>
               </TableContainer>

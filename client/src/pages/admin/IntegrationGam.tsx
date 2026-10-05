@@ -1,12 +1,11 @@
-import { Box, Button, Card, CardContent, CardHeader, Chip, Grid, List, ListItem, ListItemText, Stack, Step, StepLabel, Stepper, Typography } from '@mui/material';
-import PowerOutlinedIcon from '@mui/icons-material/PowerOutlined';
+import { Alert, Box, Card, CardContent, CardHeader, Chip, Grid, List, ListItem, ListItemText, Stack, Step, StepLabel, Stepper, Typography } from '@mui/material';
 import { useIntegrations } from '@/hooks/queries';
 import { ErrorBox, PageHead, PageSkeleton, Stat, StatusChip, Tag } from '@/components/ui/States';
 import { relTime } from '@/lib/format';
-import { AccountsCard, SyncPanel, useConnect } from './shared';
+import { AccountsCard, ConnectButton, SyncPanel, useConnect } from './shared';
 
 const GROUPS: [string, [string, 'GAM' | 'Pluto' | 'GAM + atribuição' | 'a definir'][]][] = [
-  ['Receita', [['Revenue / Estimated revenue', 'GAM'], ['Gross Revenue e Retenção (rev share)', 'a definir'], ['Por data, domínio e país', 'GAM'], ['Por URL e por campanha', 'GAM + atribuição']]],
+  ['Receita', [['Revenue / Estimated revenue', 'GAM'], ['Receita líquida = bruta × (1 − revShare do domínio)', 'Pluto'], ['Por data, domínio e país', 'GAM'], ['Por URL e por campanha', 'GAM + atribuição']]],
   ['Delivery', [['Ad Requests', 'GAM'], ['Matched Requests', 'GAM'], ['Responses served (Total code served)', 'GAM'], ['Impressions', 'GAM'], ['Unfilled Impressions', 'GAM'], ['Fill Rate', 'Pluto'], ['Drop-off = (Responses served − Impressions) / Responses served', 'Pluto']]],
   ['Performance', [['Clicks', 'GAM'], ['CTR', 'GAM'], ['eCPM / CPM', 'GAM'], ['Active View measurable / viewable', 'GAM'], ['Active View viewable %', 'GAM']]],
   ['Dimensões', [['Date · Domain · Country · Device', 'GAM'], ['Ad Unit · Placement', 'GAM'], ['Custom targeting (key-values)', 'GAM'], ['URL / landing page', 'GAM + atribuição']]],
@@ -22,7 +21,7 @@ export default function IntegrationGamPage() {
   const g = data.gam;
   return (
     <>
-      <PageHead title="Integração · Google Ad Manager" sub="Uma rede principal. A conta Google é autenticada via OAuth." right={<Button variant="contained" startIcon={<PowerOutlinedIcon />} onClick={() => connect('gam')}>Conectar conta Google</Button>} />
+      <PageHead title="Integração · Google Ad Manager" sub="Uma rede principal. A conta Google é autenticada via OAuth." right={<ConnectButton onClick={() => connect('gam')}>Conectar conta Google</ConnectButton>} />
       <Card><CardContent>
         <Stepper activeStep={g.connected ? STEPS.length : 0} alternativeLabel sx={{ mb: 3, display: { xs: 'none', md: 'flex' } }}>{STEPS.map((s) => <Step key={s}><StepLabel>{s}</StepLabel></Step>)}</Stepper>
         <Grid container spacing={1.5}>{([['Conta Google', g.googleAccount], ['Network', g.networkName], ['Network Code', g.networkCode], ['Status', <StatusChip key="s" status={g.status} />], ['Última sincronização', relTime(g.lastSyncAt)]] as const).map(([l, v]) => <Grid key={l} size={{ xs: 6, md: 'grow' }}><Stat label={l}>{v}</Stat></Grid>)}</Grid>
@@ -39,6 +38,11 @@ export default function IntegrationGamPage() {
         </CardContent>
       </Card>
       <AccountsCard provider="gam" title="Redes do Ad Manager" />
+      <Alert severity="info" variant="outlined" sx={{ mt: 1.75 }}>
+        Para a receita entrar por campanha, o site precisa mandar no GPT os key-values <b>utm_campaign</b> e <b>utm_content</b> (e, se quiser, utm_source),
+        e no Ad Manager esses keys precisam estar como <b>dimensão personalizada</b> (Inventário → Key-values → “Report on values”). Sem isso a receita entra como “não atribuída”.
+        Para a tela <b>Placements</b>, o site também manda o key-value <b>placement</b> com o valor do <b>{'{placement}'}</b> da URL do anúncio (mesma configuração de dimensão personalizada).
+      </Alert>
       <SyncPanel provider="gam" />{snack}
     </>
   );

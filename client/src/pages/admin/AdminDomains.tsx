@@ -8,6 +8,7 @@ import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
 import { relTime } from '@/lib/format';
+import { todayISO } from '@/lib/period';
 import type { Domain, DomainInput } from '@/types/api';
 
 const HOST_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
@@ -18,7 +19,10 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const { data: sq } = useSquads();
   const { data: ga } = useIntegrationAccounts('google-ads');
   const { data: ma } = useIntegrationAccounts('meta');
-  const [f, setF] = useState<Required<DomainInput>>({ hostname: d.hostname, active: d.active, squadId: d.squadId, googleAccounts: d.googleAccounts, metaAccounts: d.metaAccounts });
+  const today = todayISO();   // data no fuso da organização (não UTC)
+  const [f, setF] = useState<Omit<Required<DomainInput>, 'revShare' | 'revShareFrom'>>({ hostname: d.hostname, active: d.active, squadId: d.squadId, googleAccounts: d.googleAccounts, metaAccounts: d.metaAccounts });
+  const [rs, setRs] = useState(String(d.revShare ?? 0).replace('.', ','));
+  const [rsFrom, setRsFrom] = useState(today);
   const [err, setErr] = useState('');
   const save = useAdminMutation((b: DomainInput) => adminApi.updateDomain(d.hostname, b), INV);
   const multi = (label: string, key: 'googleAccounts' | 'metaAccounts', opts: { id: string; name: string }[]) => (
@@ -30,16 +34,26 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const submit = () => {
     const h = clean(f.hostname);
     if (!HOST_RE.test(h)) return setErr('Digite um domínio válido, ex.: novodominio.com');
+    const share = Number(rs.replace(',', '.'));
+    if (!Number.isFinite(share) || share < 0 || share >= 100) return setErr('revShare precisa ser um percentual entre 0 e 99,999.');
     setErr('');
-    save.mutate({ ...f, hostname: h }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
+    const changed = Math.abs(share - (d.revShare ?? 0)) > 1e-9;
+    save.mutate({ ...f, hostname: h, ...(changed ? { revShare: share, revShareFrom: rsFrom } : {}) }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
   };
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Editar domínio</DialogTitle>
       <DialogContent><Stack spacing={1.75} sx={{ pt: 1 }}>
         <TextField label="Domínio" value={f.hostname} onChange={(e) => setF({ ...f, hostname: e.target.value })} fullWidth helperText="Renomear mantém o histórico de dados." />
+        <Stack direction="row" spacing={1.5}>
+          <TextField label="revShare da Network (%)" value={rs} onChange={(e) => setRs(e.target.value)} sx={{ flex: 1 }} slotProps={{ htmlInput: { inputMode: 'decimal' } }}
+            helperText={`Hoje: ${String(d.revShare ?? 0).replace('.', ',')}%${d.revShareFrom && d.revShareFrom > '2000-01-01' ? ` desde ${d.revShareFrom.split('-').reverse().join('/')}` : ''}`} />
+          <TextField label="Vale a partir de" type="date" value={rsFrom} onChange={(e) => setRsFrom(e.target.value)} sx={{ flex: 1 }} slotProps={{ inputLabel: { shrink: true } }}
+            helperText="Dias anteriores mantêm o percentual antigo" />
+        </Stack>
+        <Typography variant="caption" sx={{ mt: -0.75 }}>Parte da receita do Ad Manager que a Network (ex.: Publeno) retém. A receita exibida já vem descontada; o revShare não aparece nos relatórios.</Typography>
         <TextField select label="Squad" value={f.squadId ?? ''} onChange={(e) => setF({ ...f, squadId: e.target.value || null })} fullWidth>
-          <MenuItem value="">Sem Squad (só Acesso Total vê)</MenuItem>
+          <MenuItem value="">Sem Squad (só Admin e SuperAdmin veem)</MenuItem>
           {sq?.squads.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
         </TextField>
         {multi('Contas Google Ads', 'googleAccounts', (ga?.accounts ?? []).map((a) => ({ id: a.id, name: `${a.name} · ${a.externalId}` })))}
@@ -83,13 +97,14 @@ export default function AdminDomainsPage() {
       <Card>
         <CardHeader title="Domínios" action={<Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}><TextField size="small" placeholder="novodominio.com" value={host} onChange={(e) => setHost(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} error={!!msg} helperText={msg || undefined} /><Button variant="contained" size="small" onClick={add} disabled={create.isPending}>Adicionar domínio</Button></Stack>} />
         <TableContainer><Table>
-          <TableHead><TableRow>{['Domínio', 'Squad', 'Google Ads', 'Meta Ads', 'Status', 'Último dado recebido', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
+          <TableHead><TableRow>{['Domínio', 'Squad', 'Google Ads', 'Meta Ads', 'revShare', 'Status', 'Último dado recebido', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
           <TableBody>{d.map((x) => (
             <TableRow key={x.hostname}>
-              <TableCell><b>{x.hostname}</b></TableCell>
+              <TableCell><b>{x.hostname}</b>{x.createdBySync && <Typography variant="caption" component="div" sx={{ color: 'warning.main' }}>Visto no Ad Manager · ative para cadastrar</Typography>}</TableCell>
               <TableCell>{sq?.squads.find((s) => s.id === x.squadId)?.name ?? <Tag tone="warn">Sem Squad</Tag>}</TableCell>
               <TableCell sx={{ whiteSpace: 'normal' }}>{x.googleAccounts.map(accName).join(', ') || '—'}</TableCell>
               <TableCell sx={{ whiteSpace: 'normal' }}>{x.metaAccounts.map(accName).join(', ') || '—'}</TableCell>
+              <TableCell>{String(x.revShare ?? 0).replace('.', ',')}%</TableCell>
               <TableCell>{x.active ? <Tag tone="pos">Ativo</Tag> : <Tag>Inativo</Tag>}</TableCell><TableCell>{relTime(x.lastDataAt)}</TableCell>
               <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                 <Button size="small" variant="outlined" onClick={() => toggle.mutate({ h: x.hostname, active: !x.active })}>{x.active ? 'Desativar' : 'Ativar'}</Button>{' '}

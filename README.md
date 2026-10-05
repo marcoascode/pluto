@@ -12,7 +12,8 @@ Dashboard de compra de mídia (Google Ads + Meta Ads) × monetização (Google A
 - **Subir no servidor:** `docs/DEPLOY.md`
 - **Contrato da API:** `client/docs/API.md` (tipos em `client/src/types/api.ts`)
 - **Integração e regras (sessão, Squads, câmbio, sync):** `client/docs/INTEGRACAO.md`
-- **Banco:** `server/migrations/001_init.sql`
+- **Banco:** `server/migrations/` (`001_init.sql`, `002_superadmin_iva_revshare.sql`, `003_placements.sql`)
+- **Protótipo HTML** (todas as telas, dados de exemplo): `docs/prototipo/pluto-dash.html`
 
 ## Rodar local
 
@@ -31,20 +32,15 @@ cd client && cp .env.example .env && npm install && npm run dev     # front :517
 - Todas as telas de métricas lendo `daily_metrics` (dashboard, domínios, campanhas, países, URLs com drop-off, Ad Manager, relatórios dia/mês, atribuição, busca, UTM Debugger).
 - Câmbio real USD/BRL/EUR (Frankfurter, sem chave) com histórico e taxa por dia.
 - OAuth do Google (Ads e Ad Manager) e da Meta: início, callback, tokens criptografados, descoberta de contas Meta e redes GAM.
+- **Workers de sincronização** (`server/src/services/sync/`): Meta (`meta.ts`), Google Ads (`googleAds.ts`) e Ad Manager (`gam.ts`) → `daily_metrics`, idempotentes, com conversão para USD pela taxa do dia.
+- **IVA** de 13,83% sobre o spend da Meta, somado às despesas (Spend = Google + Meta + IVA) e exibido como despesa nos relatórios. Alíquota em `app_settings.meta_iva_rate`.
+- **revShare por domínio** (participação da Network) com data de vigência: Revenue exibida = bruta − bruta × revShare. Não aparece nos relatórios.
+- **Placements** (Campanhas → Placements): domínio → contas → campanhas, custo do Google Ads por placement × receita do Ad Manager, subdomínios agrupados no domínio principal, ranking de ROI e campanhas por placement.
+- ROI e ROI D-1/D-2/D-3 sempre na ponta direita das tabelas; métricas adicionais entram à esquerda.
+- Papéis **Gestor**, **Admin** (antigo "Acesso Total": todo o CRUD, inclusive contas) e **SuperAdmin** (único que conecta integrações e muda a frequência do sync).
 
 ## O que falta
 
-- Os **workers** que baixam os dados de Google Ads, Meta e Ad Manager para `daily_metrics` (`server/src/services/sync/index.ts` tem a interface e as consultas indicadas). Até lá os jobs ficam como `skipped` e as telas mostram zero.
-
-## DEPLOY
-
-cd /var/www/dash-chatpluto
-sudo git pull
-sudo docker compose down --remove-orphans
-sudo docker compose build --no-cache
-sudo docker compose up -d --build
-sudo docker exec nginx nginx -t
-sudo docker exec nginx nginx -s reload
-sudo sh -c 'truncate -s 0 /var/lib/docker/containers/*/*-json.log'
-sudo docker builder prune -a -f
-sudo docker image prune -a -f
+- **Google Ads:** preencher `GOOGLE_ADS_DEVELOPER_TOKEN` e `GOOGLE_ADS_LOGIN_CUSTOMER_ID` quando a API for liberada (o worker já está pronto; até lá fica `skipped`).
+- **Placements:** o site precisa mandar o key-value `placement` no GPT (ver `client/docs/INTEGRACAO.md`).
+- **Sessões / RPS:** não vêm de nenhuma das APIs; dependem de um tracking no próprio site.

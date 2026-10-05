@@ -16,7 +16,7 @@ export const metricsRouter = Router();
 
 /* ---------- filtros comuns ---------- */
 const MAX_DAYS = 400;
-function period(req: Request) {
+export function period(req: Request) {
   const t = today();
   const from = isIsoDate(req.query.from) ? req.query.from : t;
   const to = isIsoDate(req.query.to) ? req.query.to : t;
@@ -26,13 +26,13 @@ function period(req: Request) {
   return { from, to, currency: cur, today: t };
 }
 /** Período anterior de mesmo tamanho. Se inclui hoje (e tem mais de 1 dia), compara sem hoje. Só hoje → null. */
-function previous(from: string, to: string, t: string) {
+export function previous(from: string, to: string, t: string) {
   if (from === t && to === t) return null;
   const end = to === t ? addDays(to, -1) : to;
   const len = Math.round((Date.parse(end) - Date.parse(from)) / 864e5) + 1;
   return { from: addDays(from, -len), to: addDays(from, -1) };
 }
-const d3 = (t: string) => addDays(t, -3);
+export const d3 = (t: string) => addDays(t, -3);
 
 /* ---------- dashboard ---------- */
 metricsRouter.get('/dashboard', async (req, res) => {
@@ -219,6 +219,7 @@ const ISSUES: Record<string, [string, string, string]> = {
   campaign_not_found: ['Campanha não localizada', 'O Campaign ID não existe nas contas importadas.', 'Importar a conta dona da campanha na MCC.'],
   meta_ad_not_found: ['Meta Ad não localizado', 'O Ad ID não está nas contas Meta conectadas.', 'Reconectar a conta Meta e conferir {{ad.id}}.'],
   gads_creative_not_found: ['Google Ads Creative não localizado', 'O Creative ID não tem correspondência na estrutura.', 'Rodar o sync de estrutura.'],
+  gam_kv_not_configured: ['Key-values sem dimensão no Ad Manager', 'O Ad Manager não está devolvendo utm_campaign/utm_content no relatório.', 'No Ad Manager: Inventário → Key-values → utm_campaign e utm_content → "Report on values" = Custom dimension.'],
 };
 metricsRouter.get('/attribution/health', requireCap('attribution.view'), async (req, res) => {
   const p = period(req);

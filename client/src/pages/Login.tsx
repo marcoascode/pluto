@@ -15,12 +15,8 @@ export default function LoginPage() {
   const resetToken = params.get('reset');
   const [view, setView] = useState<View>(resetToken ? 'reset' : params.get('change') ? 'change' : 'login');
   const [done, setDone] = useState('');
-  const [email, setEmail] = useState('');
-  const [pw, setPw] = useState('');
-  const [pw2, setPw2] = useState('');
-  const [err, setErr] = useState('');
-  const [sent, setSent] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState(''); const [pw, setPw] = useState(''); const [pw2, setPw2] = useState('');
+  const [err, setErr] = useState(''); const [sent, setSent] = useState(false); const [busy, setBusy] = useState(false);
   const { login, refresh } = useAuth();
   const navigate = useNavigate();
   const run = (fn: () => Promise<void>) => async (e: FormEvent) => {
@@ -67,7 +63,8 @@ export default function LoginPage() {
           {IS_MOCK && view === 'login' && (<>
             <Divider />
             <Typography variant="overline">Modo demonstração (mock)</Typography>
-            <Button variant="outlined" onClick={() => { setEmail('admin@exemplo.com'); setPw('admin123'); }} sx={{ justifyContent: 'space-between' }}>Acesso Total<Typography variant="caption">admin@exemplo.com · admin123</Typography></Button>
+            <Button variant="outlined" onClick={() => { setEmail('admin@exemplo.com'); setPw('admin123'); }} sx={{ justifyContent: 'space-between' }}>SuperAdmin<Typography variant="caption">admin@exemplo.com · admin123</Typography></Button>
+            <Button variant="outlined" onClick={() => { setEmail('ops@exemplo.com'); setPw('admin123'); }} sx={{ justifyContent: 'space-between' }}>Admin<Typography variant="caption">ops@exemplo.com · admin123</Typography></Button>
             <Button variant="outlined" onClick={() => { setEmail('gestor@exemplo.com'); setPw('gestor123'); }} sx={{ justifyContent: 'space-between' }}>Gestor · Squad 01<Typography variant="caption">gestor@exemplo.com · gestor123</Typography></Button>
           </>)}
         </Stack>

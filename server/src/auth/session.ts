@@ -3,13 +3,13 @@ import { config } from '../config.js';
 import { one, q } from '../db.js';
 import { HttpError } from '../lib/http.js';
 import { randomToken, sha256 } from '../lib/crypto.js';
-import { capsOf, type Capability } from './permissions.js';
+import { capsOf, isAdminRole, type Capability, type Role } from './permissions.js';
 
 export interface SessionUser {
   id: string;
   name: string;
   email: string;
-  role: 'gestor' | 'total';
+  role: Role;
   squadId: string | null;
   status: 'active' | 'invited' | 'disabled';
   mustChangePassword: boolean;
@@ -66,9 +66,13 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
 export const requireCap = (cap: Capability) => (req: Request, _res: Response, next: NextFunction) =>
   req.user?.permissions.includes(cap) ? next() : next(new HttpError(403, 'forbidden_module', 'Este módulo não está liberado para o seu usuário.'));
 
-/** /admin/* é só Acesso Total, sempre. */
+/** /admin/* é só Admin ou SuperAdmin, sempre. */
 export const requireAdmin = (req: Request, _res: Response, next: NextFunction) =>
-  req.user?.role === 'total' ? next() : next(new HttpError(403, 'forbidden', 'Área exclusiva de Acesso Total.'));
+  req.user && isAdminRole(req.user.role) ? next() : next(new HttpError(403, 'forbidden', 'Área exclusiva de Admin.'));
+
+/** Conectar integrações e mudar a frequência do sync: só SuperAdmin. */
+export const requireSuperAdmin = (req: Request, _res: Response, next: NextFunction) =>
+  req.user?.role === 'superadmin' ? next() : next(new HttpError(403, 'superadmin_only', 'Só o SuperAdmin pode conectar integrações e mudar a frequência de sincronização.'));
 
 /** Senha nova precisa: 10+ caracteres, letra e número. */
 export function checkPasswordStrength(p: string) {

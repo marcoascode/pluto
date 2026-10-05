@@ -17,7 +17,7 @@ export const authApi = {
 };
 
 export const meApi = {
-  /** Domínios que o usuário pode ver (todos para Acesso Total; os do Squad para Gestor). */
+  /** Domínios que o usuário pode ver (todos para Admin/SuperAdmin; os do Squad para Gestor). */
   domains: () => api.get<{ domains: string[] }>('/me/domains'),
 };
 
@@ -43,6 +43,14 @@ export const campaignsApi = {
   list: (q: P & { platform: T.Platform; accountId?: string; includePaused?: boolean }) => api.get<T.CampaignsResponse>('/campaigns', { ...q }),
   children: (platform: T.Platform, id: string, q: P) => api.get<T.CampaignChildrenResponse>(`/campaigns/${platform}/${id}/children`, { ...q }),
   countries: (platform: T.Platform, id: string, q: P) => api.get<T.CampaignCountriesResponse>(`/campaigns/${platform}/${id}/countries`, { ...q }),
+};
+
+export const placementsApi = {
+  /** Contas e campanhas Google Ads do domínio (seletores da tela). */
+  filters: (domain: string) => api.get<T.PlacementFiltersResponse>('/placements/filters', { domain }),
+  list: (q: T.PlacementQuery) => api.get<T.PlacementsResponse>('/placements', { ...q }),
+  /** Campanhas que gastaram no placement (level=root agrupa os subdomínios). */
+  campaigns: (q: T.PlacementQuery & { placement: string; level: 'root' | 'host' }) => api.get<T.PlacementCampaignsResponse>('/placements/campaigns', { ...q }),
 };
 
 export const urlsApi = {
@@ -71,7 +79,7 @@ export const fxApi = {
   history: (days = 10) => api.get<{ rows: T.FxHistoryRow[] }>('/fx/history', { days }),
 };
 
-/* ----- somente Acesso Total (o servidor devolve 403 para Gestor) ----- */
+/* ----- somente Admin/SuperAdmin (o servidor devolve 403 para Gestor; conectar e frequência só SuperAdmin) ----- */
 export const integrationsApi = {
   status: () => api.get<T.IntegrationsResponse>('/admin/integrations'),
   startOAuth: (provider: 'google-ads' | 'meta' | 'gam') => api.post<T.OAuthStartResponse>(`/admin/integrations/${provider}/oauth/start`),

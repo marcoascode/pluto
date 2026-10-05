@@ -1,6 +1,6 @@
 {
   "name": "pluto-web",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Front-end do Pluto M\u00eddia (React + Vite + TypeScript + MUI) integrado \u00e0 API Node.js/MySQL",
   "scripts": {
     "dev": "vite",

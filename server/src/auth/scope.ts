@@ -1,16 +1,17 @@
 import type { Request } from 'express';
 import { q } from '../db.js';
 import { HttpError } from '../lib/http.js';
+import { isAdminRole } from './permissions.js';
 
 /**
  * Regra de Squad (o Postgres não faz isso sozinho aqui, então TODA consulta de métricas passa por aqui):
- * - Acesso Total: todos os domínios ativos (+ receita de domínio não cadastrado na Attribution Health).
+ * - Admin / SuperAdmin: todos os domínios ativos.
  * - Gestor: só os domínios ativos do Squad dele.
  * Devolve ids de domains para usar em `domain_id = ANY($n)`.
  */
 export async function allowedDomains(req: Request): Promise<{ ids: string[]; hosts: string[] }> {
   const u = req.user!;
-  const rows = u.role === 'total'
+  const rows = isAdminRole(u.role)
     ? await q<{ id: string; hostname: string }>('SELECT id::text, hostname FROM domains WHERE active ORDER BY hostname')
     : await q<{ id: string; hostname: string }>(
       `SELECT d.id::text, d.hostname FROM squad_users su

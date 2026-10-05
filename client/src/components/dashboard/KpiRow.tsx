@@ -13,7 +13,8 @@ export function KpiRow({ m, cmp, split = true }: { m: Metrics; cmp: Comparison |
   const roiCol = useRoiColors()(roiClass(m.roi));
   const prev = cmp?.metrics;
   const title = cmp ? `vs ${longDate(cmp.from)} – ${longDate(cmp.to)}` : 'Dia em andamento: sem comparação';
-  const gp = m.spend ? (m.googleSpend / m.spend) * 100 : 0;
+  // despesa = Google + Meta + IVA
+  const gp = m.spend ? (m.googleSpend / m.spend) * 100 : 0, mp = m.spend ? (m.metaSpend / m.spend) * 100 : 0, ip = m.spend ? (m.iva / m.spend) * 100 : 0;
   const glow = (c: string) => `radial-gradient(260px 140px at 100% 0%, ${c}, transparent 70%), linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0) 140px), ${p.panel}`;
   const card = (label: string, value: string, delta: ReactNode, o: { bg?: string; color?: string; extra?: ReactNode; first?: boolean } = {}) => (
     <Grid size={{ xs: o.first ? 12 : 6, md: 4, lg: 'grow' }}>
@@ -30,8 +31,8 @@ export function KpiRow({ m, cmp, split = true }: { m: Metrics; cmp: Comparison |
       {card('Spend', money(m.spend, currency), <Delta cur={m.spend} prev={prev?.spend} neutral title={title} />, {
         extra: split && m.spend > 0 && (
           <Box sx={{ mt: 0.5 }}>
-            <Typography variant="caption">Google <b style={{ color: p.fg2 }}>{money(m.googleSpend, currency, 0)}</b> · Meta <b style={{ color: p.fg2 }}>{money(m.metaSpend, currency, 0)}</b></Typography>
-            <Tooltip title={`Google ${pct0(gp)} · Meta ${pct0(100 - gp)}`}><Stack direction="row" spacing={0.25} sx={{ height: 5, mt: 0.75, borderRadius: 1, overflow: 'hidden' }}><Box sx={{ width: `${gp}%`, bgcolor: p.rev }} /><Box sx={{ flex: 1, bgcolor: p.spend }} /></Stack></Tooltip>
+            <Typography variant="caption">Google <b style={{ color: p.fg2 }}>{money(m.googleSpend, currency, 0)}</b> · Meta <b style={{ color: p.fg2 }}>{money(m.metaSpend, currency, 0)}</b> · IVA <b style={{ color: p.fg2 }}>{money(m.iva, currency, 0)}</b></Typography>
+            <Tooltip title={`Google ${pct0(gp)} · Meta ${pct0(mp)} · IVA ${pct0(ip)} (13,83% sobre a Meta)`}><Stack direction="row" spacing={0.25} sx={{ height: 5, mt: 0.75, borderRadius: 1, overflow: 'hidden' }}><Box sx={{ width: `${gp}%`, bgcolor: p.rev }} /><Box sx={{ width: `${mp}%`, bgcolor: p.spend }} /><Box sx={{ flex: 1, bgcolor: p.warn }} /></Stack></Tooltip>
           </Box>),
       })}
       {card('Profit', money(m.profit, currency), <Delta cur={m.profit} prev={prev?.profit} title={title} />, { bg: glow(m.profit < 0 ? 'rgba(255,107,122,.16)' : 'rgba(52,211,153,.16)'), color: m.profit > 0 ? p.pos : m.profit < 0 ? p.neg : undefined })}
