@@ -8,8 +8,9 @@
 
 export type Currency = 'USD' | 'BRL' | 'EUR';
 export type Platform = 'google' | 'meta';
-/** gestor: só o Squad · admin: tudo menos conectar integrações/frequência do sync · superadmin: tudo */
-export type Role = 'gestor' | 'admin' | 'superadmin';
+/** gestor: os domínios dele, só as campanhas das contas dele · gerente: vários Squads, sem administração ·
+ *  admin: tudo menos conectar integrações/sync · superadmin: tudo */
+export type Role = 'gestor' | 'gerente' | 'admin' | 'superadmin';
 
 /* ---------- filtros comuns ---------- */
 export interface PeriodQuery {
@@ -17,6 +18,7 @@ export interface PeriodQuery {
   to: string; // YYYY-MM-DD (inclusive)
   domain?: string; // hostname; vazio = todos os domínios do usuário
   currency: Currency;
+  company?: string; // id da Empresa (seletor do topo); vazio = todas as Empresas que o usuário vê
 }
 
 /* ---------- métricas ---------- */
@@ -70,7 +72,9 @@ export interface User {
   name: string;
   email: string;
   role: Role;
-  squadId: string | null;
+  squadIds: string[]; // Gerente: Squads que ele vê
+  companyIds: string[]; // Empresas em que é sócio (sócio vê a Empresa inteira)
+  domains: DomainLink[]; // Gestor: domínio + contas que ele usa ali
   status: 'active' | 'invited' | 'disabled';
   mustChangePassword: boolean;
   isMainAdmin?: boolean;
@@ -94,8 +98,33 @@ export interface CapabilityDef {
 }
 export interface PermissionsResponse {
   capabilities: CapabilityDef[];
-  roles: Record<Role, Capability[]>; // superadmin sempre tem todas; admin todas menos superAdminOnly
+  roles: Record<Role, Capability[]>; // gestor e gerente configuráveis · superadmin todas · admin todas menos superAdminOnly
 }
+/** Gestor: um domínio que ele gere e as contas Google Ads / Meta Ads que usa nesse domínio (ids de IntegrationAccount). */
+export interface DomainLink { domain: string; googleAccounts: string[]; metaAccounts: string[] }
+
+/* ---------- Empresas (sociedades) ---------- */
+export interface CompanyPartner { id: string; name: string; role: Role }
+/** Seletor "Empresa" do topo. Só os domínios que o usuário vê. */
+export interface MyCompany {
+  id: string;
+  name: string;
+  partners: CompanyPartner[];
+  squads: { id: string; name: string; domains: string[] }[];
+  domains: string[];
+}
+export interface CompanyOverviewResponse {
+  company: { id: string; name: string; partners: CompanyPartner[] };
+  period: { from: string; to: string };
+  comparison: Comparison | null;
+  totals: Metrics;
+  daily: DailyPoint[];
+  squads: { id: string; name: string; metrics: Metrics; domains: { domain: string; metrics: Metrics; gestores: { id: string; name: string }[] }[] }[];
+}
+/** Admin → Empresas */
+export interface Company { id: string; name: string; partnerIds: string[]; squadIds: string[] }
+export type CompanyInput = Omit<Company, 'id'>;
+
 export interface LoginRequest {
   email: string;
   password: string;
@@ -239,6 +268,7 @@ export interface GamSummaryResponse {
 export interface ReportQuery {
   domain?: string;
   currency: Currency;
+  company?: string;
 }
 export interface ReportRow {
   key: string; // dia: YYYY-MM-DD · mês: YYYY-MM
@@ -333,7 +363,13 @@ export interface SyncSetting {
   id: string; // ex.: google-ads.metrics
   provider: Provider | 'fx';
   label: string;
-  window: string; // descrição da janela baixada
+  window: string; // descrição da janela baixada (ex.: "D-3 → hoje")
+  windowMode: 'days' | 'incremental' | 'fixed'; // fixed = sem janela (estrutura, câmbio, limpeza)
+  windowDays: number | null; // X de D-X
+  windowEditable: boolean;
+  hasRetention: boolean; // jobs de limpeza
+  retentionDays: number | null; // "Excluir dados com mais de X dias" (null = desligado)
+  lastMessage: string | null;
   everyMinutes: number; // frequência
   enabled: boolean;
   lastRunAt: string | null;
@@ -349,6 +385,7 @@ export interface OAuthStartResponse {
 export interface DomainInput {
   hostname?: string; // renomear
   revShare?: number; // % retido pela Network (ex.: 20 = 20%)
+  gamAccountId?: string | null; // conta do Ad Manager do domínio (uma só)
   revShareFrom?: string; // YYYY-MM-DD a partir de quando vale (padrão: hoje; o primeiro vale para todo o histórico)
   active?: boolean;
   squadId?: string | null;
@@ -364,24 +401,32 @@ export interface Domain {
   squadId: string | null;
   googleAccounts: string[];
   metaAccounts: string[];
+  gamAccountId: string | null;
+  /** Gestores do domínio e as contas de cada um (editado em Usuários). */
+  managers: { userId: string; name: string; googleAccounts: string[]; metaAccounts: string[] }[];
   lastDataAt: string | null;
 }
 export interface Squad {
   id: string;
   name: string;
+  companyId: string | null;
   domains: string[];
-  userIds: string[];
+  userIds: string[]; // Gerentes que veem este Squad
 }
 export interface CreateUserRequest {
   name: string;
   email: string;
   role: Role;
-  squadId: string | null;
+  squadIds?: string[]; // só Gerente
+  companyIds?: string[];
+  domains?: DomainLink[]; // só Gestor
 }
 export interface UpdateUserRequest {
   name?: string;
   role?: Role;
-  squadId?: string | null;
+  squadIds?: string[];
+  companyIds?: string[];
+  domains?: DomainLink[];
   status?: 'active' | 'disabled';
 }
 export interface CreateUserResponse {
@@ -393,6 +438,13 @@ export interface FxLatest {
   rates: Record<Currency, number>;
   fetchedAt: string;
   source: string;
+  brlDiscount: number; // deságio vigente (R$)
+  brlDiscountFrom: string | null;
+  brlRevenueRate: number | null; // USD/BRL usado na receita do Ad Manager = cotação − deságio
+}
+export interface FxDiscountResponse {
+  current: { amount: number; validFrom: string } | null;
+  history: { amount: number; validFrom: string; createdAt: string; createdBy: string | null }[];
 }
 export interface FxHistoryRow {
   date: string;

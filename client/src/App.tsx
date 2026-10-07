@@ -15,6 +15,7 @@ const Urls = lazy(() => import('@/pages/Urls'));
 const Campaigns = lazy(() => import('@/components/campaigns/CampaignsView').then((m) => ({ default: m.CampaignsView })));
 const AdManager = lazy(() => import('@/pages/AdManager'));
 const Placements = lazy(() => import('@/pages/Placements'));
+const CompanyOverview = lazy(() => import('@/pages/CompanyOverview'));
 const AttributionHealth = lazy(() => import('@/pages/AttributionHealth'));
 const UtmDebugger = lazy(() => import('@/pages/UtmDebugger'));
 const Accounts = lazy(() => import('@/pages/admin/Accounts'));
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="urls" element={C('urls.view', <Urls />)} />
         <Route path="google-ads" element={C('campaigns.google.view', <Campaigns key="google" platform="google" />)} />
         <Route path="meta-ads" element={C('campaigns.meta.view', <Campaigns key="meta" platform="meta" />)} />
+        <Route path="empresas/:id" element={S(<CompanyOverview />)} />
         <Route path="placements" element={C('campaigns.google.view', <Placements />)} />
         <Route path="ad-manager" element={C('gam.view', <AdManager />)} />
         <Route path="atribuicao" element={C('attribution.view', <AttributionHealth />)} />

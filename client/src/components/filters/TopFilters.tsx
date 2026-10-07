@@ -5,8 +5,9 @@ import { useFx, useMyDomains } from '@/hooks/queries';
 import { relTime } from '@/lib/format';
 import type { Currency } from '@/types/api';
 import { DateFilter } from './DateFilter';
+import { CompanyPicker } from './CompanyPicker';
 
-/** Data · Domínio · Moeda · cotação USD/BRL. Em Relatórios a Data some (o mês é escolhido na própria tela).
+/** Data · Domínio · Moeda · Empresa · cotação USD/BRL (com deságio, quando houver). Em Relatórios a Data some (o mês é escolhido na própria tela).
  *  Em Placements o Domínio some (é o passo 1 do filtro da própria tela). */
 export function TopFilters() {
   const f = useFilters();
@@ -23,9 +24,10 @@ export function TopFilters() {
       <Select size="small" value={f.currency} onChange={(e) => f.setCurrency(e.target.value as Currency)} inputProps={{ 'aria-label': 'Moeda' }} sx={{ flexShrink: 0 }}>
         {(['USD', 'BRL', 'EUR'] as Currency[]).map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
       </Select>
+      <CompanyPicker />
       {fx && (
-        <Tooltip title={`${fx.source} · atualizada ${relTime(fx.fetchedAt)}`}>
-          <Typography variant="caption" sx={{ whiteSpace: 'nowrap', display: { xs: 'none', md: 'block' } }}>USD/BRL <b style={{ color: '#b5c4df' }}>{fx.rates.BRL.toFixed(2).replace('.', ',')}</b></Typography>
+        <Tooltip title={fx.brlDiscount ? `Cotação ${fx.rates.BRL.toFixed(4).replace('.', ',')} − deságio R$ ${fx.brlDiscount.toFixed(4).replace('.', ',')} = ${(fx.brlRevenueRate ?? fx.rates.BRL).toFixed(4).replace('.', ',')} (usada na receita do Ad Manager em BRL) · ${fx.source} · atualizada ${relTime(fx.fetchedAt)}` : `${fx.source} · atualizada ${relTime(fx.fetchedAt)}`}>
+          <Typography variant="caption" sx={{ whiteSpace: 'nowrap', display: { xs: 'none', md: 'block' } }}>USD/BRL <b style={{ color: '#b5c4df' }}>{(fx.brlRevenueRate ?? fx.rates.BRL).toFixed(fx.brlDiscount ? 4 : 2).replace('.', ',')}</b>{fx.brlDiscount ? <span style={{ marginLeft: 4, opacity: 0.7 }}>c/ deságio</span> : null}</Typography>
         </Tooltip>
       )}
     </Stack>

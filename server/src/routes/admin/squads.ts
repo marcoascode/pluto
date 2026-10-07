@@ -5,9 +5,9 @@ import { conflict, notFound, parse } from '../../lib/http.js';
 
 export const squadsRouter = Router();
 
-const body = z.object({ name: z.string().trim().min(2).max(80), domains: z.array(z.string().trim().toLowerCase()).max(500).default([]) });
+const body = z.object({ name: z.string().trim().min(2).max(80), domains: z.array(z.string().trim().toLowerCase()).max(500).default([]), companyId: z.string().regex(/^\d+$/).nullable().optional() });
 const SQUAD_SQL = `
-  SELECT s.id::text, s.name,
+  SELECT s.id::text, s.name, s.company_id::text AS "companyId",
          COALESCE((SELECT array_agg(d.hostname ORDER BY d.hostname) FROM squad_domains sd JOIN domains d ON d.id = sd.domain_id WHERE sd.squad_id = s.id), '{}') AS domains,
          COALESCE((SELECT array_agg(su.user_id::text ORDER BY su.user_id) FROM squad_users su WHERE su.squad_id = s.id), '{}') AS "userIds"
     FROM squads s`;
@@ -21,6 +21,10 @@ async function save(id: string | null, b: z.infer<typeof body>) {
     const sid = id
       ? (await one<{ id: string }>('UPDATE squads SET name = $2 WHERE id = $1 RETURNING id::text', [id, b.name], c))?.id
       : (await one<{ id: string }>('INSERT INTO squads (name) VALUES ($1) RETURNING id::text', [b.name], c))!.id;
+    if (sid && b.companyId !== undefined) {
+      if (b.companyId && !(await one('SELECT 1 FROM companies WHERE id = $1', [b.companyId], c))) throw notFound('Empresa não encontrada.');
+      await c.query('UPDATE squads SET company_id = $2 WHERE id = $1', [sid, b.companyId]);
+    }
     if (!sid) throw notFound('Squad não encontrado.');
     const ids = (await q<{ id: string }>('SELECT id::text FROM domains WHERE hostname = ANY($1)', [b.domains], c)).map((r) => r.id);
     if (ids.length !== new Set(b.domains).size) throw conflict('unknown_domain', 'Algum domínio da lista não está cadastrado.');
@@ -37,7 +41,7 @@ squadsRouter.put('/squads/:id', async (req, res) => { res.json(await save(parse(
 squadsRouter.delete('/squads/:id', async (req, res) => {
   const sid = parse(z.string().regex(/^\d+$/), req.params.id);
   if (!(await one('SELECT 1 FROM squads WHERE id = $1', [sid]))) throw notFound('Squad não encontrado.');
-  if (await one('SELECT 1 FROM squad_users WHERE squad_id = $1', [sid])) throw conflict('squad_has_users', 'Este Squad tem gestores. Mova-os para outro Squad antes.');
+  // Gerentes que viam este Squad deixam de ver; domínios ficam sem Squad (gestores continuam pelos vínculos deles)
   await q('DELETE FROM squads WHERE id = $1', [sid]); // squad_domains sai em cascata → domínios ficam sem Squad
   res.status(204).end();
 });

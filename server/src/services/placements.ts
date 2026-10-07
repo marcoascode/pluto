@@ -1,10 +1,10 @@
 /**
  * Agregação de placement_metrics (mesmas fórmulas de toMetrics, mesma conversão de moeda pela taxa do dia).
  * Spend = custo do Google Ads no placement (Google não tem IVA). Revenue = receita bruta do Ad Manager no
- * placement × (1 − revShare do domínio no dia). Sessions/RPS dependem do tracking próprio do site (ficam vazios).
+ * placement × (1 − revShare do domínio no dia). Em BRL a receita usa a cotação − deságio (igual metrics.ts). Sessions/RPS dependem do tracking próprio do site (ficam vazios).
  */
 import { q } from '../db.js';
-import { toMetrics, type Currency, type Metrics } from './metrics.js';
+import { FR_SQL, toMetrics, type Currency, type Metrics } from './metrics.js';
 
 export interface PlAggOpts {
   from: string; to: string; currency: Currency;
@@ -26,12 +26,13 @@ export async function aggregatePlacements(o: PlAggOpts): Promise<Map<string, Met
     )
     SELECT (${g})::text AS k,
       SUM(m.spend_usd * r.f) AS spend, SUM(m.spend_usd * r.f) AS gs, 0 AS ms, 0 AS iva,
-      SUM(m.revenue_usd * (1 - rs.share) * r.f) AS rev, SUM(m.revenue_usd * r.f) AS gross, 0 AS un, 0 AS sess,
+      SUM(m.revenue_usd * (1 - rs.share) * r.fr) AS rev, SUM(m.revenue_usd * r.fr) AS gross, 0 AS un, 0 AS sess,
       SUM(m.impressions) AS ai, SUM(m.ad_requests) AS ar, SUM(m.responses_served) AS rsv, SUM(m.ad_clicks) AS ac, SUM(m.viewable) AS vw,
       SUM(m.traffic_clicks) AS clk, SUM(m.traffic_impressions) AS ti, COUNT(*) AS n
     FROM placement_metrics m
     LEFT JOIN currency_rates fx ON fx.currency = $1 AND fx.date = m.date
-    CROSS JOIN LATERAL (SELECT CASE WHEN $1 = 'USD' THEN 1 ELSE COALESCE(fx.rate_per_usd, (SELECT rate_per_usd FROM latest), 1) END AS f) r
+    CROSS JOIN LATERAL (SELECT CASE WHEN $1 = 'USD' THEN 1 ELSE COALESCE(fx.rate_per_usd, (SELECT rate_per_usd FROM latest), 1) END AS f0) f0
+    CROSS JOIN LATERAL (SELECT f0.f0 AS f, ${FR_SQL} AS fr) r
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT x.rev_share FROM domain_rev_shares x WHERE x.domain_id = m.domain_id AND x.valid_from <= m.date
                                           ORDER BY x.valid_from DESC LIMIT 1), 0) AS share) rs
     WHERE m.date BETWEEN $2::date AND $3::date

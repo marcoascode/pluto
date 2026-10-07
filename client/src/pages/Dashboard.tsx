@@ -51,7 +51,7 @@ export default function DashboardPage() {
       <KpiRow m={data.metrics} cmp={data.comparison} />
       <Box sx={{ mt: 1.75 }}><AttributionStrip m={data.metrics} /></Box>
       <Box sx={{ mt: 1.75 }}><MetricsCard title="Métricas Monetização" screen="home" m={data.metrics} /></Box>
-      <Grid container spacing={1.75} sx={{ mt: 1.75 }}>
+      <Grid container spacing={1.75} sx={{ mt: 0.25 }}>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card><CardHeader title="Spend vs Revenue" subheader={sub} />
             <CardContent><SpendRevenueChart height={h} labels={labels} yfmt={yM} revenue={win.map((d) => d.metrics.revenue)} spend={win.map((d) => d.metrics.spend)}

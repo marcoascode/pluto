@@ -113,13 +113,37 @@ integrationsRouter.delete('/integrations/:provider/accounts/:id', async (req, re
 });
 
 /* ---------- frequência das sincronizações ---------- */
-const SYNC_SQL = `SELECT id, provider, label, window_desc AS "window", every_minutes AS "everyMinutes", enabled, last_run_at AS "lastRunAt", next_run_at AS "nextRunAt", last_status AS "lastStatus" FROM sync_settings`;
+const SYNC_SQL = `
+  SELECT id, provider, label,
+         CASE window_mode WHEN 'days' THEN 'D-' || window_days || CASE WHEN id = 'gam.close' THEN ' → D-4' ELSE ' → hoje' END
+                          WHEN 'incremental' THEN 'incremental · desde a última execução' ELSE window_desc END AS "window",
+         window_mode AS "windowMode", window_days AS "windowDays", window_mode <> 'fixed' AS "windowEditable",
+         CASE WHEN id LIKE '%.cleanup' THEN true ELSE false END AS "hasRetention", retention_days AS "retentionDays",
+         every_minutes AS "everyMinutes", enabled, last_run_at AS "lastRunAt", next_run_at AS "nextRunAt", last_status AS "lastStatus",
+         (SELECT j.message FROM sync_jobs j WHERE j.setting_id = sync_settings.id ORDER BY j.id DESC LIMIT 1) AS "lastMessage"
+    FROM sync_settings`;
 integrationsRouter.get('/sync-settings', async (_req, res) => { res.json({ settings: await q(`${SYNC_SQL} ORDER BY provider, id`) }); });
 
-/** Frequência e liga/desliga dos jobs: só SuperAdmin. */
+/** Frequência, liga/desliga, janela (D-X → hoje ou incremental) e retenção da limpeza: só SuperAdmin. */
 integrationsRouter.patch('/sync-settings/:id', requireSuperAdmin, async (req, res) => {
-  const b = parse(z.object({ everyMinutes: z.number().int().min(15).max(1440).optional(), enabled: z.boolean().optional() }), req.body);
-  const r = await one(`UPDATE sync_settings SET every_minutes = COALESCE($2, every_minutes), enabled = COALESCE($3, enabled),
+  const b = parse(z.object({
+    everyMinutes: z.number().int().min(15).max(10080).optional(), enabled: z.boolean().optional(),
+    windowMode: z.enum(['days', 'incremental']).optional(), windowDays: z.number().int().min(0).max(90).optional(),
+    retentionDays: z.number().int().min(7).max(3650).nullable().optional(),
+  }), req.body);
+  const cur = await one<{ mode: string; days: number | null }>('SELECT window_mode AS mode, window_days AS days FROM sync_settings WHERE id = $1', [req.params.id]);
+  if (!cur) throw notFound('Job não encontrado.');
+  if ((b.windowMode || b.windowDays !== undefined) && cur.mode === 'fixed') throw new HttpError(422, 'window_fixed', 'Este job não tem janela de datas.');
+  if (req.params.id === 'gam.close' && (b.windowMode === 'incremental' || (b.windowDays !== undefined && b.windowDays < 4))) throw new HttpError(422, 'invalid_window', 'O fechamento vai de D-X até D-4: use X a partir de 4.');
+  if (b.retentionDays !== undefined && !String(req.params.id).endsWith('.cleanup')) throw new HttpError(422, 'no_retention', 'Só os jobs de limpeza têm retenção.');
+  if (b.windowMode || b.windowDays !== undefined || b.retentionDays !== undefined)
+    await q(`UPDATE sync_settings SET window_mode = COALESCE($2, window_mode), window_days = COALESCE($3, window_days),
+               retention_days = CASE WHEN $4::boolean THEN $5::int ELSE retention_days END WHERE id = $1`,
+      [req.params.id, b.windowMode ?? null, b.windowDays ?? (b.windowMode === 'days' && cur.days == null ? 3 : null), b.retentionDays !== undefined, b.retentionDays ?? null]);
+      // const r = await one(`UPDATE sync_settings SET every_minutes = COALESCE($2, every_minutes), enabled = COALESCE($3, enabled),
+      //     next_run_at = CASE WHEN COALESCE($3, enabled) THEN COALESCE(last_run_at, now()) + make_interval(mins => COALESCE($2, every_minutes)) ELSE NULL END
+      //   WHERE id = $1 RETURNING id`, [req.params.id, b.everyMinutes ?? null, b.enabled ?? null]);
+      const r = await one(`UPDATE sync_settings SET every_minutes = COALESCE($2, every_minutes), enabled = COALESCE($3, enabled),
       next_run_at = CASE WHEN COALESCE($3, enabled) THEN COALESCE(last_run_at, now()) + make_interval(mins => COALESCE($2, every_minutes)) ELSE NULL END
     WHERE id = $1 RETURNING id`, [req.params.id, b.everyMinutes ?? null, b.enabled ?? null]);
   if (!r) throw notFound('Job não encontrado.');

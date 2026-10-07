@@ -20,7 +20,7 @@ export const config = {
     port: Number(process.env.PGPORT ?? 5432),
     database: req('PGDATABASE', 'pluto'),
     user: req('PGUSER', 'pluto'),
-    password: req('PGPASSWORD', isProd ? undefined : 'Senha#@Top-500'),
+    password: req('PGPASSWORD', isProd ? undefined : 'pluto'),
     max: Number(process.env.PGPOOL_MAX ?? 10),
     ssl: bool(process.env.PGSSL, false),
   },
@@ -45,7 +45,7 @@ export const config = {
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     metaAppId: process.env.META_APP_ID,
     metaAppSecret: process.env.META_APP_SECRET,
-    metaApiVersion: process.env.META_API_VERSION ?? 'v26.0',
+    metaApiVersion: process.env.META_API_VERSION ?? 'v25.0',
     googleAdsDeveloperToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
     /** MCC (só dígitos). Vai no cabeçalho login-customer-id e é de onde saem as contas. */
     googleAdsLoginCustomerId: (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ?? '').replace(/\D/g, '') || undefined,

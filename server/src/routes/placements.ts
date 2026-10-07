@@ -5,14 +5,14 @@
  *   GET /placements?domain=&accounts=&campaigns=&from&to&currency
  *                                              placements agrupados pelo domínio principal + totais + comparação
  *   GET /placements/campaigns?…&placement=&level=root|host   campanhas que gastaram naquele placement
- * Escopo: scope() (Gestor só o Squad dele) + permissão de Google Ads.
+ * Escopo: scope() + canSeeCampaign (Gestor só as campanhas das contas dele) + permissão de Google Ads.
  */
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { q } from '../db.js';
 import { HttpError, parse } from '../lib/http.js';
 import { requireCap } from '../auth/session.js';
-import { scope } from '../auth/scope.js';
+import { canSeeCampaign, scope } from '../auth/scope.js';
 import { toMetrics } from '../services/metrics.js';
 import { aggregatePlacements, placementRoiDays } from '../services/placements.js';
 import { placementType } from '../services/sync/placements.js';
@@ -32,7 +32,8 @@ async function domainCampaigns(req: Request) {
       FROM campaigns c JOIN integration_accounts a ON a.id = c.account_id
      WHERE c.domain_id = $1 AND c.platform = 'google' AND c.status <> 'REMOVED'
      ORDER BY c.name`, [sc.ids[0]]);
-  return { domainId: sc.ids[0], host: sc.hosts[0], camps };
+  // Gestor: só as campanhas das contas dele neste domínio
+  return { domainId: sc.ids[0], host: sc.hosts[0], camps: camps.filter((c) => canSeeCampaign(sc, c.db_id, sc.ids[0])) };
 }
 const csv = (v: unknown) => (typeof v === 'string' && v ? v.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 500) : []);
 

@@ -18,7 +18,13 @@ export const authApi = {
 
 export const meApi = {
   /** Domínios que o usuário pode ver (todos para Admin/SuperAdmin; os do Squad para Gestor). */
-  domains: () => api.get<{ domains: string[] }>('/me/domains'),
+  domains: (company?: string) => api.get<{ domains: string[] }>('/me/domains', { company }),
+  /** Empresas que o usuário vê (seletor do topo). */
+  companies: () => api.get<{ companies: T.MyCompany[] }>('/me/companies'),
+};
+
+export const companiesApi = {
+  overview: (id: string, q: P) => api.get<T.CompanyOverviewResponse>(`/companies/${encodeURIComponent(id)}/overview`, { ...q, company: undefined }),
 };
 
 export const searchApi = {
@@ -92,7 +98,7 @@ export const integrationsApi = {
   deleteAccount: (p: T.Provider, id: string) => api.del<void>(`/admin/integrations/${p}/accounts/${encodeURIComponent(id)}`),
   /* Frequência das sincronizações */
   syncSettings: () => api.get<{ settings: T.SyncSetting[] }>('/admin/sync-settings'),
-  updateSyncSetting: (id: string, b: { everyMinutes?: number; enabled?: boolean }) => api.patch<T.SyncSetting>(`/admin/sync-settings/${encodeURIComponent(id)}`, b),
+  updateSyncSetting: (id: string, b: { everyMinutes?: number; enabled?: boolean; windowMode?: 'days' | 'incremental'; windowDays?: number; retentionDays?: number | null }) => api.patch<T.SyncSetting>(`/admin/sync-settings/${encodeURIComponent(id)}`, b),
 };
 
 export const adminApi = {
@@ -101,7 +107,7 @@ export const adminApi = {
   updateDomain: (hostname: string, patch: T.DomainInput) => api.patch<T.Domain>(`/admin/domains/${encodeURIComponent(hostname)}`, patch),
   deleteDomain: (hostname: string) => api.del<void>(`/admin/domains/${encodeURIComponent(hostname)}`),
   squads: () => api.get<{ squads: T.Squad[] }>('/admin/squads'),
-  saveSquad: (s: { id?: string; name: string; domains: string[] }) => (s.id ? api.put<T.Squad>(`/admin/squads/${s.id}`, s) : api.post<T.Squad>('/admin/squads', s)),
+  saveSquad: (s: { id?: string; name: string; domains: string[]; companyId?: string | null }) => (s.id ? api.put<T.Squad>(`/admin/squads/${s.id}`, s) : api.post<T.Squad>('/admin/squads', s)),
   deleteSquad: (id: string) => api.del<void>(`/admin/squads/${id}`),
   users: () => api.get<{ users: T.User[] }>('/admin/users'),
   createUser: (b: T.CreateUserRequest) => api.post<T.CreateUserResponse>('/admin/users', b),
@@ -109,7 +115,12 @@ export const adminApi = {
   deleteUser: (id: string) => api.del<void>(`/admin/users/${id}`),
   resendInvite: (id: string) => api.post<{ inviteSent: boolean }>(`/admin/users/${id}/resend-invite`),
   permissions: () => api.get<T.PermissionsResponse>('/admin/permissions'),
-  savePermissions: (gestor: T.Capability[]) => api.put<T.PermissionsResponse>('/admin/permissions', { gestor }),
+  savePermissions: (b: { gestor?: T.Capability[]; gerente?: T.Capability[] }) => api.put<T.PermissionsResponse>('/admin/permissions', b),
+  companies: () => api.get<{ companies: T.Company[] }>('/admin/companies'),
+  saveCompany: (c: T.CompanyInput & { id?: string }) => (c.id ? api.put<T.Company>(`/admin/companies/${c.id}`, c) : api.post<T.Company>('/admin/companies', c)),
+  deleteCompany: (id: string) => api.del<void>(`/admin/companies/${id}`),
+  fxDiscount: () => api.get<T.FxDiscountResponse>('/admin/fx-discount'),
+  saveFxDiscount: (b: { amount: number; validFrom?: string }) => api.put<T.FxDiscountResponse>('/admin/fx-discount', b),
   /** Força buscar a cotação agora na API de câmbio (o servidor também faz isso sozinho). */
   refreshFx: () => api.post<T.FxLatest>('/admin/fx/refresh'),
 };

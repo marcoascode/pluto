@@ -3,7 +3,12 @@ import type { PeriodQuery, PlacementQuery, Platform, ReportQuery } from '@/types
 export const qk = {
   me: ['me'] as const,
   prefs: ['prefs'] as const,
-  myDomains: ['myDomains'] as const,
+  myDomains: (company?: string) => ['myDomains', company ?? ''] as const,
+  myDomainsAll: ['myDomains'] as const,
+  myCompanies: ['myCompanies'] as const,
+  companyOverview: (id: string, q: PeriodQuery) => ['companyOverview', id, q] as const,
+  adminCompanies: ['adminCompanies'] as const,
+  fxDiscount: ['fxDiscount'] as const,
   search: (q: string) => ['search', q] as const,
   dashboard: (q: PeriodQuery) => ['dashboard', q] as const,
   domains: (q: PeriodQuery) => ['domains', q] as const,

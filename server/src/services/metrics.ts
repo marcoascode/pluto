@@ -6,8 +6,12 @@
  * Receita: daily_metrics.revenue_usd é a receita BRUTA do Ad Manager. A receita exibida (líquida) é
  *   bruta × (1 − revShare do domínio vigente no dia)   — o revShare não aparece em nenhuma tela.
  * Despesa: spend = Google Ads + Meta Ads + IVA (IVA = Meta × 13,83%, gravado na importação).
+ * Deságio: em BRL, a RECEITA do Ad Manager usa a cotação do dia − deságio (fx_discounts, ex.: 4,9881 − 0,06).
+ *   O custo continua na cotação cheia (as contas BRL voltam exatamente ao valor pago).
+ * Escopo: domainIds + filter (Gestor só vê as campanhas das contas dele em cada domínio — auth/scope.ts).
  */
 import { q } from '../db.js';
+import { rowFilterSql, type RowFilter } from '../auth/scope.js';
 
 export type Currency = 'USD' | 'BRL' | 'EUR';
 export interface Metrics {
@@ -45,6 +49,8 @@ export interface AggOpts {
   from: string;
   to: string;
   domainIds: string[];
+  /** Filtro de linhas do escopo (null = domínios inteiros). Obrigatório para nenhuma rota esquecer. */
+  filter: RowFilter | null;
   currency: Currency;
   /** Expressão de agrupamento (ex.: `m.date`, `m.domain_id`, `to_char(m.date,'YYYY-MM')`). Sem = total. */
   groupBy?: string;
@@ -59,6 +65,7 @@ export interface AggOpts {
 export async function aggregate(o: AggOpts): Promise<Map<string, Metrics>> {
   if (!o.domainIds.length) return new Map();
   const g = o.groupBy ?? `''`;
+  const rf = rowFilterSql(o.filter, 5 + (o.params?.length ?? 0));
   const sql = `
     WITH latest AS (
       SELECT rate_per_usd FROM currency_rates WHERE currency = $1 AND date <= $3::date ORDER BY date DESC LIMIT 1
@@ -68,25 +75,30 @@ export async function aggregate(o: AggOpts): Promise<Map<string, Metrics>> {
       SUM(CASE WHEN m.platform = 'google' THEN m.spend_usd * r.f ELSE 0 END) AS gs,
       SUM(CASE WHEN m.platform = 'meta'   THEN m.spend_usd * r.f ELSE 0 END) AS ms,
       SUM(m.iva_usd * r.f) AS iva,
-      SUM(m.revenue_usd * (1 - rs.share) * r.f) AS rev,
-      SUM(m.revenue_usd * r.f) AS gross,
-      SUM(CASE WHEN m.platform = 'none' THEN m.revenue_usd * (1 - rs.share) * r.f ELSE 0 END) AS un,
+      SUM(m.revenue_usd * (1 - rs.share) * r.fr) AS rev,
+      SUM(m.revenue_usd * r.fr) AS gross,
+      SUM(CASE WHEN m.platform = 'none' THEN m.revenue_usd * (1 - rs.share) * r.fr ELSE 0 END) AS un,
       SUM(m.sessions) AS sess, SUM(m.impressions) AS ai, SUM(m.ad_requests) AS ar, SUM(m.responses_served) AS rsv,
       SUM(m.ad_clicks) AS ac, SUM(m.viewable) AS vw, SUM(m.traffic_clicks) AS clk, SUM(m.traffic_impressions) AS ti,
       COUNT(*) AS n
     FROM daily_metrics m
     LEFT JOIN currency_rates fx ON fx.currency = $1 AND fx.date = m.date
-    CROSS JOIN LATERAL (SELECT CASE WHEN $1 = 'USD' THEN 1 ELSE COALESCE(fx.rate_per_usd, (SELECT rate_per_usd FROM latest), 1) END AS f) r
+    CROSS JOIN LATERAL (SELECT CASE WHEN $1 = 'USD' THEN 1 ELSE COALESCE(fx.rate_per_usd, (SELECT rate_per_usd FROM latest), 1) END AS f0) f0
+    CROSS JOIN LATERAL (SELECT f0.f0 AS f, ${FR_SQL} AS fr) r
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT x.rev_share FROM domain_rev_shares x WHERE x.domain_id = m.domain_id AND x.valid_from <= m.date
                                           ORDER BY x.valid_from DESC LIMIT 1), 0) AS share) rs
     ${o.joins ?? ''}
     WHERE m.date BETWEEN $2::date AND $3::date
       AND m.domain_id = ANY($4::bigint[])
       ${o.where ? `AND (${o.where})` : ''}
+      ${rf.sql}
     GROUP BY 1`;
-  const rows = await q<Sums & { k: string }>(sql, [o.currency, o.from, o.to, o.domainIds, ...(o.params ?? [])]);
+  const rows = await q<Sums & { k: string }>(sql, [o.currency, o.from, o.to, o.domainIds, ...(o.params ?? []), ...rf.params]);
   return new Map(rows.map((r) => [r.k ?? '', toMetrics(r)]));
 }
+
+/** Cotação da receita: em BRL, cotação − deságio vigente no dia (nunca abaixo de 0,0001). Alias esperado: f0, m. */
+export const FR_SQL = `CASE WHEN $1 = 'BRL' THEN GREATEST(f0.f0 - COALESCE((SELECT x.amount_brl FROM fx_discounts x WHERE x.valid_from <= m.date ORDER BY x.valid_from DESC LIMIT 1), 0), 0.0001) ELSE f0.f0 END`;
 
 export async function total(o: Omit<AggOpts, 'groupBy'>): Promise<Metrics> {
   return (await aggregate(o)).get('') ?? toMetrics();

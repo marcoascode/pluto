@@ -45,22 +45,33 @@ Sem servidor? `npm run dev:mock` usa o servidor falso do navegador (`src/mocks`)
   o e-mail por `admin@plutomidia.com.br` (SMTP do `.env`). A senha temporária nunca volta para o front.
 - Esqueci a senha: link `/login?reset=<token>` válido por 1 h (`password_resets`, também só o hash).
 
-## Squads e permissões (obrigatório no servidor)
+## Escopo, Empresas e permissões (obrigatório no servidor)
 
 `server/src/auth/scope.ts` resolve os domínios permitidos e **toda** rota de métricas passa por ele:
 
+Estrutura: **Empresa** (sócios) → **Squads** → **domínios** → **gestores** (cada um com as contas Google/Meta que usa naquele domínio).
+Um domínio fica em uma conta do Ad Manager (`domains.gam_account_id`).
+
+| Quem | Vê | Tabelas |
+|---|---|---|
+| Admin / SuperAdmin | todos os domínios ativos | — |
+| Sócio (qualquer papel) | todos os domínios dos Squads da Empresa, completos | `company_users`, `squads.company_id` |
+| Gerente | todos os domínios dos Squads dados a ele, completos | `squad_users` (vários por usuário) |
+| Gestor | os domínios que gere; em cada um, **só as campanhas das contas ligadas a ele**. Não atribuída do domínio só se for o único gestor | `domain_managers`, `domain_manager_accounts` |
+
 ```ts
-// Admin/SuperAdmin: todos os domínios ativos · Gestor: só os do Squad dele
-const rows = await q(`SELECT d.id, d.hostname FROM squad_users su
-                        JOIN squad_domains sd ON sd.squad_id = su.squad_id
-                        JOIN domains d ON d.id = sd.domain_id AND d.active
-                       WHERE su.user_id = $1`, [user.id]);
-// ?domain= fora da lista → 403 forbidden_domain
-// e sempre: WHERE m.domain_id = ANY($4::bigint[])
+const sc = await scope(req, req.query.domain);   // ?company= é lido aqui também
+aggregate({ domainIds: sc.ids, filter: sc.filter, ... });   // filter é obrigatório no tipo: nenhuma rota esquece
+// filter (Gestor): m.domain_id = ANY(full) OR m.campaign_id = ANY(campanhas dele) OR (não atribuída AND domínio solo)
+// listas de campanhas: canSeeCampaign(sc, campaignId, domainId)
 ```
 
-Módulos (Relatórios, URLs, Google, Meta, Ad Manager, Atribuição, UTM Debugger) podem ser desligados para o Gestor em
-**Usuários & Squads → Permissões** (`role_permissions`); o servidor responde `403 forbidden_module`. `/admin/*` é só Admin e SuperAdmin; conectar integrações e mudar a frequência do sync é só SuperAdmin.
+O seletor **Empresa** do topo manda `company=<id>` em toda chamada; `/me/companies` lista as Empresas visíveis e `/companies/:id/overview` monta o painel da Empresa (`/empresas/:id` no front).
+
+Módulos (Relatórios, URLs, Google, Meta, Ad Manager, Atribuição, UTM Debugger) podem ser desligados para Gestor e Gerente em
+**Usuários & Squads → Permissões** (`role_permissions`); o servidor responde `403 forbidden_module`. `/admin/*` é só Admin e SuperAdmin (Gerente nunca); conectar integrações e mudar frequência, janela e limpeza do sync é só SuperAdmin.
+
+Login: no máximo 10 tentativas **erradas** por IP a cada 15 min (logins certos não contam, para várias pessoas no mesmo escritório).
 
 ## PostgreSQL
 
@@ -91,7 +102,13 @@ Módulos (Relatórios, URLs, Google, Meta, Ad Manager, Atribuição, UTM Debugge
 | `gam.placements` | `services/sync/placements.ts` | Relatório oculto `DATE × SITE × COUNTRY_CODE × utm_campaign × placement` → `placement_metrics` (source `gam`). Linhas de campanhas Meta são ignoradas. `gam.close` também refaz D-7 → D-4 dos placements |
 | `fx.rates` | `services/fx.ts` | Câmbio |
 
-Janelas: métricas D-3 → hoje; fechamento do Ad Manager D-7 → D-4. Primeira importação: `SYNC_BACKFILL_DAYS` (padrão 30) dias.
+Janelas (editáveis por job em Integrações → Sincronização, só SuperAdmin): padrão D-3 → hoje; fechamento do Ad Manager D-7 → D-4. Modo **incremental** = do dia da última execução com sucesso (−1 dia) até hoje. Primeira importação: `SYNC_BACKFILL_DAYS` (padrão 30) dias.
+
+**Erro numa conta não interrompe as outras**: cada conta Google/Meta e cada rede do Ad Manager roda no seu `try/catch` e fica com o próprio status; o job termina `success` se pelo menos uma deu certo (a mensagem lista as que falharam). Contas **inativas** na plataforma ficam fora (Google: `customer_client.status` ≠ ENABLED · Meta: `account_status` 2/100/101/202), gravado em `integration_accounts.platform_status`.
+
+**Várias redes do Ad Manager:** o worker roda todas as redes importadas. Cada domínio fica com uma rede (`domains.gam_account_id`); sem rede, fica com a primeira que mostrar o site. Cada rede só substitui as linhas dos domínios dela.
+
+**Limpeza (`google-ads.cleanup`, `meta.cleanup`):** com "Exclua dados com mais de X dias" ligado, remove de `ads` e `ad_groups` o que o sync não vê há mais de X dias (`last_seen_at`) e sem métrica nesses X dias. Antes de excluir, as linhas de `daily_metrics` desses anúncios/grupos são somadas no nível de cima (anúncio → grupo → campanha), então os totais não mudam.
 
 **Domínio de cada campanha:** o mais comum entre os links dos anúncios dela (Meta: link do criativo · Google: URL final). Se não der, usa o domínio ligado à conta em Domínios (quando for um só). Sem domínio, a linha não entra e a conta mostra o aviso.
 

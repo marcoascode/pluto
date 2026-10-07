@@ -52,8 +52,8 @@ async function discoverAccounts(c: { mcc: string; token: string }) {
     `SELECT customer_client.id, customer_client.descriptive_name, customer_client.currency_code, customer_client.time_zone, customer_client.manager, customer_client.status FROM customer_client WHERE customer_client.manager = false`);
   for (const { customerClient: a } of rows) {
     const cur = ['USD', 'BRL', 'EUR'].includes(a.currencyCode ?? '') ? a.currencyCode! : 'USD';
-    await q(`INSERT INTO integration_accounts (provider, external_id, name, currency, timezone, imported, status) VALUES ('google-ads', $1, $2, $3, $4, false, 'ok')
-             ON CONFLICT (provider, external_id) DO UPDATE SET currency = EXCLUDED.currency, timezone = EXCLUDED.timezone,
+    await q(`INSERT INTO integration_accounts (provider, external_id, name, currency, timezone, imported, status, platform_status) VALUES ('google-ads', $1, $2, $3, $4, false, 'ok', $5)
+             ON CONFLICT (provider, external_id) DO UPDATE SET currency = EXCLUDED.currency, timezone = EXCLUDED.timezone, platform_status = EXCLUDED.platform_status,
                status = CASE WHEN $5 = 'ENABLED' THEN integration_accounts.status ELSE 'error' END,
                message = CASE WHEN $5 = 'ENABLED' THEN integration_accounts.message ELSE 'Conta ' || $5 || ' no Google Ads' END`,
       [digits(String(a.id)), a.descriptiveName || `Conta ${a.id}`, cur, a.timeZone ?? config.appTz, a.status ?? 'ENABLED']);
@@ -73,8 +73,9 @@ export async function runGoogleAds(kind: 'structure' | 'metrics', w: { from: str
   let c: { mcc: string; token: string };
   try { c = await ctx(); } catch (e) { return { status: 'skipped', message: (e as Error).message }; }
   if (kind === 'structure') { try { await discoverAccounts(c); } catch (e) { return { status: 'failed', message: `MCC: ${(e as Error).message}`.slice(0, 500) }; } }
-  const accs = await q<{ id: string; external_id: string; name: string; currency: string }>(`SELECT id::text, external_id, name, currency FROM integration_accounts WHERE provider = 'google-ads' AND imported ORDER BY id`);
-  if (!accs.length) return { status: kind === 'structure' ? 'success' : 'skipped', message: 'nenhuma conta Google Ads marcada para importar' };
+  // só contas ativas no Google Ads (canceladas/suspensas ficam de fora; o status vem da MCC no job de estrutura)
+  const accs = await q<{ id: string; external_id: string; name: string; currency: string }>(`SELECT id::text, external_id, name, currency FROM integration_accounts WHERE provider = 'google-ads' AND imported AND COALESCE(platform_status, 'ENABLED') = 'ENABLED' ORDER BY id`);
+  if (!accs.length) return { status: kind === 'structure' ? 'success' : 'skipped', message: 'nenhuma conta Google Ads ativa marcada para importar' };
   const dom = await domainResolver();
   const toUsd = kind === 'metrics' ? await fxToUsd(w.from, w.to) : null;
   const url = urlCache();
@@ -154,8 +155,8 @@ export async function runGoogleAds(kind: 'structure' | 'metrics', w: { from: str
       ok++;
     } catch (e) {
       notes.push(`${acc.name}: ${(e as Error).message}`);
-      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300));
-      if ((e as SyncError).code === 'token') break;
+      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => {});
+      // segue para a próxima conta: um erro numa conta não interrompe as outras
     }
   }
   if (!ok) return { status: 'failed', message: notes.join(' · ').slice(0, 500) };

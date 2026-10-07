@@ -8,7 +8,6 @@
  * Receita gravada BRUTA; o revShare do domínio é aplicado na consulta.
  */
 import { config } from '../../config.js';
-// import { one, q } from '../../db.js';
 import { q } from '../../db.js';
 import { domainResolver, emptyFact, replaceFacts, setAccountStatus, statusFromError, urlCache, type Fact } from './common.js';
 import { requestJson, sleep, SyncError } from './http.js';
@@ -92,193 +91,91 @@ async function attributionIndex() {
   };
 }
 
-// export async function runGam(w: { from: string; to: string }, isFinal = false): Promise<JobResult> {
-//   const net = await one<{ id: string; external_id: string; name: string }>(`SELECT id::text, external_id, name FROM integration_accounts WHERE provider = 'gam' AND imported ORDER BY id LIMIT 1`);
-//   if (!net) return { status: 'skipped', message: 'nenhuma rede do Ad Manager marcada para importar' };
-//   try {
-//     const token = await googleAccessToken('gam');
-//     const all = await resolveKeys(net.external_id, token);
-//     const keys = all.filter((k) => k.usable);
-//     const missing = all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));   // source e path são opcionais
-//     const { rows } = await runReport(net.external_id, token, w.from, w.to, keys);
-//     const idx = await attributionIndex();
-//     const dom = await domainResolver();
-//     const url = urlCache();
-//     const ki = (role: KeyInfo['role']) => { const i = keys.findIndex((k) => k.role === role); return i < 0 ? -1 : 3 + i; };
-//     const iCamp = ki('campaign'), iContent = ki('content'), iSource = ki('source'), iPath = ki('path');
-//     const facts: Fact[] = [];
-//     let skipped = 0;
-//     for (const r of rows) {
-//       const d = r.dimensionValues;
-//       const day = isoDate(d[0]);
-//       const site = str(d[1]);
-//       const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
-//       const revenue = num(m[0]);
-//       if (!day || (!revenue && !num(m[1]) && !num(m[2]))) continue;
-//       const domain = site && !EMPTY.test(site) ? await dom.ensure(site) : null;
-//       if (!domain) { skipped++; continue; }
-//       const campVal = iCamp >= 0 ? str(d[iCamp]) : '';
-//       const content = iContent >= 0 ? str(d[iContent]) : '';
-//       const source = iSource >= 0 ? str(d[iSource]).toLowerCase() : '';
-//       // ---- atribuição ----
-//       let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
-//       let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
-//       if (iCamp < 0) reason = 'gam_kv_not_configured';
-//       else if (domain.pending) reason = 'unknown_domain';
-//       else if (EMPTY.test(campVal)) reason = 'missing_campaign_id';
-//       else if (/[{}]/.test(campVal) || /[{}]/.test(content)) reason = 'invalid_utm';
-//       else {
-//         const c = idx.camp.get(campVal);
-//         if (!c) reason = source && /^(fb|facebook|ig|instagram|an|msg|meta)$/.test(source) ? 'meta_ad_not_found' : 'campaign_not_found';
-//         else {
-//           platform = c.platform; campaignId = c.id;
-//           const [g, a] = content.split('_');
-//           if (g && !EMPTY.test(g)) adGroupId = idx.group.get(`${c.id}|${g}`) ?? null;
-//           if (adGroupId && a && !EMPTY.test(a)) adId = idx.ad.get(`${adGroupId}|${a}`) ?? null;
-//         }
-//       }
-//       const path = iPath >= 0 ? str(d[iPath]) : '';
-//       facts.push(emptyFact({
-//         date: day, domainId: domain.id, urlId: path && !EMPTY.test(path) ? await url(domain.id, path) : null,
-//         platform, campaignId, adGroupId, adId, country: str(d[2]).toUpperCase() || 'ZZ', reason,
-//         revenueUsd: revenue, impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]),
-//       }));
-//     }
-//     const n = await replaceFacts('gam', w.from, w.to, 'all', facts, isFinal);
-//     const warn = [
-//       missing.length ? `key-values sem dimensão personalizada no Ad Manager: ${missing.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension)` : '',
-//       skipped ? `${skipped} linhas sem site` : '',
-//     ].filter(Boolean).join(' · ');
-//     await setAccountStatus(net.id, 'ok', warn || null);
-//     return { status: 'success', message: `${rows.length} linhas do relatório · ${n} gravadas${warn ? ' · ' + warn : ''}`.slice(0, 500) };
-//   } catch (e) {
-//     await setAccountStatus(net.id, statusFromError(e), (e as Error).message.slice(0, 300));
-//     if (e instanceof SyncError && (e.code === 'not_connected' || e.code === 'not_configured')) return { status: 'skipped', message: e.message };
-//     return { status: 'failed', message: (e as Error).message.slice(0, 500) };
-//   }
-// }
+type Resolver = Awaited<ReturnType<typeof domainResolver>>;
 
-export async function runGam(w: { from: string; to: string }, isFinal = false): Promise<JobResult> {
-  // 1. CORREÇÃO: Usa 'q' para buscar TODAS as redes marcadas para importar (sem LIMIT 1)
-  const nets = await q<{ id: string; external_id: string; name: string }>(
-    `SELECT id::text, external_id, name FROM integration_accounts WHERE provider = 'gam' AND imported ORDER BY id`
-  );
-  
-  if (!nets || nets.length === 0) return { status: 'skipped', message: 'nenhuma rede do Ad Manager marcada para importar' };
-
-  try {
-    // 2. CORREÇÃO: Resolvemos os utilitários comuns fora do loop para não sobrecarregar o banco
-    const token = await googleAccessToken('gam');
-    const idx = await attributionIndex();
-    const dom = await domainResolver();
-    const url = urlCache();
-    
-    // Arrays acumuladores para salvar os dados de todas as contas em lote no final
-    const allFacts: Fact[] = [];
-    const messages: string[] = [];
-    
-    let totalRows = 0;
-    let totalSkipped = 0;
-    let hasErrors = false;
-
-    // 3. CORREÇÃO: Loop iterando conta por conta
-    for (const net of nets) {
-      try {
-        const all = await resolveKeys(net.external_id, token);
-        const keys = all.filter((k) => k.usable);
-        const missing = all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));
-        
-        const { rows } = await runReport(net.external_id, token, w.from, w.to, keys);
-        totalRows += rows.length;
-
-        const ki = (role: KeyInfo['role']) => { const i = keys.findIndex((k) => k.role === role); return i < 0 ? -1 : 3 + i; };
-        const iCamp = ki('campaign'), iContent = ki('content'), iSource = ki('source'), iPath = ki('path');
-        
-        let skipped = 0;
-        for (const r of rows) {
-          const d = r.dimensionValues;
-          const day = isoDate(d[0]);
-          const site = str(d[1]);
-          const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
-          const revenue = num(m[0]);
-          
-          if (!day || (!revenue && !num(m[1]) && !num(m[2]))) continue;
-          
-          const domain = site && !EMPTY.test(site) ? await dom.ensure(site) : null;
-          if (!domain) { skipped++; totalSkipped++; continue; }
-          
-          const campVal = iCamp >= 0 ? str(d[iCamp]) : '';
-          const content = iContent >= 0 ? str(d[iContent]) : '';
-          const source = iSource >= 0 ? str(d[iSource]).toLowerCase() : '';
-          
-          // ---- atribuição ----
-          let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
-          let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
-          
-          if (iCamp < 0) reason = 'gam_kv_not_configured';
-          else if (domain.pending) reason = 'unknown_domain';
-          else if (EMPTY.test(campVal)) reason = 'missing_campaign_id';
-          else if (/[{}]/.test(campVal) || /[{}]/.test(content)) reason = 'invalid_utm';
-          else {
-            const c = idx.camp.get(campVal);
-            if (!c) reason = source && /^(fb|facebook|ig|instagram|an|msg|meta)$/.test(source) ? 'meta_ad_not_found' : 'campaign_not_found';
-            else {
-              platform = c.platform; campaignId = c.id;
-              const [g, a] = content.split('_');
-              if (g && !EMPTY.test(g)) adGroupId = idx.group.get(`${c.id}|${g}`) ?? null;
-              if (adGroupId && a && !EMPTY.test(a)) adId = idx.ad.get(`${adGroupId}|${a}`) ?? null;
-            }
-          }
-          const path = iPath >= 0 ? str(d[iPath]) : '';
-          
-          // Guarda o fact no array master da execução
-          allFacts.push(emptyFact({
-            date: day, domainId: domain.id, urlId: path && !EMPTY.test(path) ? await url(domain.id, path) : null,
-            platform, campaignId, adGroupId, adId, country: str(d[2]).toUpperCase() || 'ZZ', reason,
-            revenueUsd: revenue, impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]),
-          }));
-        }
-        
-        const warn = [
-          missing.length ? `sem KVs: ${missing.map((k) => k.adTagName).join(', ')}` : '',
-          skipped ? `${skipped} s/ site` : '',
-        ].filter(Boolean).join(' · ');
-        
-        // Sucesso nesta conta! Grava o status isolado dela
-        await setAccountStatus(net.id, 'ok', warn || null);
-        messages.push(`[${net.name}] ok${warn ? ' (' + warn + ')' : ''}`);
-        
-      } catch (e) {
-        // 4. CORREÇÃO: O Try/Catch interno segura o erro e deixa o loop avançar para a próxima conta
-        hasErrors = true;
-        await setAccountStatus(net.id, statusFromError(e), (e as Error).message.slice(0, 300));
-        
-        // Log customizado na string final
-        if (e instanceof SyncError && (e.code === 'not_connected' || e.code === 'not_configured')) {
-           messages.push(`[${net.name}] pulada`);
-        } else {
-           messages.push(`[${net.name}] falhou`);
-        }
+/** Uma rede do Ad Manager: relatório → fatos → grava só os domínios desta rede. */
+async function runNetwork(net: { id: string; external_id: string; name: string }, token: string, w: { from: string; to: string }, isFinal: boolean,
+  dom: Resolver, idx: Awaited<ReturnType<typeof attributionIndex>>, url: ReturnType<typeof urlCache>) {
+  const all = await resolveKeys(net.external_id, token);
+  const keys = all.filter((k) => k.usable);
+  const missing = all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));   // source e path são opcionais
+  const { rows } = await runReport(net.external_id, token, w.from, w.to, keys);
+  const ki = (role: KeyInfo['role']) => { const i = keys.findIndex((k) => k.role === role); return i < 0 ? -1 : 3 + i; };
+  const iCamp = ki('campaign'), iContent = ki('content'), iSource = ki('source'), iPath = ki('path');
+  const facts: Fact[] = [];
+  let skipped = 0, otherNet = 0;
+  for (const r of rows) {
+    const d = r.dimensionValues;
+    const day = isoDate(d[0]);
+    const site = str(d[1]);
+    const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
+    const revenue = num(m[0]);
+    if (!day || (!revenue && !num(m[1]) && !num(m[2]))) continue;
+    const domain = site && !EMPTY.test(site) ? await dom.ensure(site) : null;
+    if (!domain) { skipped++; continue; }
+    if (!(await dom.claimGam(domain, net.id))) { otherNet++; continue; }   // domínio ligado a outra rede do Ad Manager
+    const campVal = iCamp >= 0 ? str(d[iCamp]) : '';
+    const content = iContent >= 0 ? str(d[iContent]) : '';
+    const source = iSource >= 0 ? str(d[iSource]).toLowerCase() : '';
+    // ---- atribuição ----
+    let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
+    let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
+    if (iCamp < 0) reason = 'gam_kv_not_configured';
+    else if (domain.pending) reason = 'unknown_domain';
+    else if (EMPTY.test(campVal)) reason = 'missing_campaign_id';
+    else if (/[{}]/.test(campVal) || /[{}]/.test(content)) reason = 'invalid_utm';
+    else {
+      const c = idx.camp.get(campVal);
+      if (!c) reason = source && /^(fb|facebook|ig|instagram|an|msg|meta)$/.test(source) ? 'meta_ad_not_found' : 'campaign_not_found';
+      else {
+        platform = c.platform; campaignId = c.id;
+        const [g, a] = content.split('_');
+        if (g && !EMPTY.test(g)) adGroupId = idx.group.get(`${c.id}|${g}`) ?? null;
+        if (adGroupId && a && !EMPTY.test(a)) adId = idx.ad.get(`${adGroupId}|${a}`) ?? null;
       }
-    } // -- Fim do loop de contas
-
-    // 5. Salva todas as linhas de todas as contas processadas de uma só vez (Performance otimizada)
-    let n = 0;
-    if (allFacts.length > 0) {
-       n = await replaceFacts('gam', w.from, w.to, 'all', allFacts, isFinal);
     }
+    const path = iPath >= 0 ? str(d[iPath]) : '';
+    facts.push(emptyFact({
+      date: day, domainId: domain.id, urlId: path && !EMPTY.test(path) ? await url(domain.id, path) : null,
+      platform, campaignId, adGroupId, adId, country: str(d[2]).toUpperCase() || 'ZZ', reason,
+      revenueUsd: revenue, impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]),
+    }));
+  }
+  const mine = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);
+  const n = await replaceFacts('gam', w.from, w.to, { domains: mine }, facts, isFinal);
+  const warn = [
+    missing.length ? `key-values sem dimensão personalizada no Ad Manager: ${missing.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension)` : '',
+    skipped ? `${skipped} linhas sem site` : '',
+    otherNet ? `${otherNet} linhas de domínios ligados a outra rede` : '',
+  ].filter(Boolean).join(' · ');
+  await setAccountStatus(net.id, 'ok', warn || null);
+  return { rows: rows.length, n, warn };
+}
 
-    const warnGlobal = totalSkipped ? ` · ${totalSkipped} s/ site` : '';
-    const summary = `${totalRows} linhas no total · ${n} gravadas · Contas: ${messages.join(' | ')}${warnGlobal}`;
-    
-    // Retorna falha geral apenas se NENHUMA conta conseguiu extrair dados
-    return { 
-        status: (hasErrors && allFacts.length === 0) ? 'failed' : 'success', 
-        message: summary.slice(0, 500) 
-    };
-    
-  } catch (e) {
-    // Erro global grave (ex: queda do banco ao carregar chaves no início)
+/** Todas as redes importadas, uma de cada vez. Erro numa rede não interrompe as outras. */
+export async function runGam(w: { from: string; to: string }, isFinal = false): Promise<JobResult> {
+  const nets = await q<{ id: string; external_id: string; name: string }>(`SELECT id::text, external_id, name FROM integration_accounts WHERE provider = 'gam' AND imported ORDER BY id`);
+  if (!nets.length) return { status: 'skipped', message: 'nenhuma rede do Ad Manager marcada para importar' };
+  let token: string;
+  try { token = await googleAccessToken('gam'); } catch (e) {
+    for (const n of nets) await setAccountStatus(n.id, statusFromError(e), (e as Error).message.slice(0, 300));
+    if (e instanceof SyncError && (e.code === 'not_connected' || e.code === 'not_configured')) return { status: 'skipped', message: e.message };
     return { status: 'failed', message: (e as Error).message.slice(0, 500) };
   }
+  const [idx, dom] = await Promise.all([attributionIndex(), domainResolver()]);
+  const url = urlCache();
+  const notes: string[] = [];
+  let ok = 0, rowsTotal = 0, saved = 0;
+  for (const net of nets) {
+    try {
+      const r = await runNetwork(net, token, w, isFinal, dom, idx, url);
+      ok++; rowsTotal += r.rows; saved += r.n;
+      if (r.warn) notes.push(`${net.name}: ${r.warn}`);
+    } catch (e) {
+      notes.push(`${net.name}: ${(e as Error).message}`);
+      await setAccountStatus(net.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => {});
+    }
+  }
+  if (!ok) return { status: 'failed', message: notes.join(' · ').slice(0, 500) };
+  return { status: 'success', message: `${ok}/${nets.length} redes · ${rowsTotal} linhas do relatório · ${saved} gravadas${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
 }

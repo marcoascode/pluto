@@ -1,109 +1,104 @@
-import { Alert, Avatar, Box, Button, Card, CardContent, CardHeader, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, FormGroup, Grid, IconButton, MenuItem, Snackbar, Stack, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Avatar, AvatarGroup, Box, Button, Card, CardContent, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, ListItemText, MenuItem, Snackbar, Stack, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
+import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import ForwardToInboxOutlinedIcon from '@mui/icons-material/ForwardToInboxOutlined';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import ApartmentRoundedIcon from '@mui/icons-material/ApartmentRounded';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { ROLE_HELP, ROLE_LABEL, roleTone } from '@/lib/roles';
-import { useAdminDomains, useAdminMutation, usePermissions, useSquads, useUsers } from '@/hooks/queries';
+import { useAdminCompanies, useAdminDomains, useAdminMutation, useIntegrationAccounts, usePermissions, useSquads, useUsers } from '@/hooks/queries';
 import { adminApi } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
 import { initials } from '@/lib/format';
-import type { Capability, Role, UpdateUserRequest, User } from '@/types/api';
+import type { Capability, Company, DomainLink, Role, User } from '@/types/api';
 
-type TabKey = 'users' | 'squads' | 'perms';
+/* =====================================================================
+   Usuários & Squads
+   - Gestor: domínio(s) que gere + as contas Google Ads / Meta Ads que usa em cada um (vê só essas campanhas).
+   - Gerente: vê vários Squads inteiros, sem administração.
+   - Empresa: sociedade (sócios) que agrupa Squads. Sócio vê a Empresa inteira, em qualquer papel.
+   ===================================================================== */
+type TabKey = 'users' | 'squads' | 'companies' | 'perms';
 const avatarSx = { width: 28, height: 28, fontSize: 11, fontWeight: 600, background: 'linear-gradient(135deg,#2f6fe0,#1b3f86)', color: '#fff' };
+const INV = [qk.users, qk.squads, qk.adminCompanies, qk.adminDomains, qk.myCompanies, qk.myDomainsAll];
 
 export default function UsersSquadsPage() {
   const [tab, setTab] = useState<TabKey>('users');
   return (
     <>
-      <PageHead title="Usuários & Squads" sub="Squad organiza o acesso dos gestores. Domínio é a unidade de performance." />
-      <Tabs value={tab} onChange={(_, v: TabKey) => setTab(v)} sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
-        <Tab value="users" label="Usuários" /><Tab value="squads" label="Squads" /><Tab value="perms" label="Permissões" />
+      <PageHead title="Usuários & Squads" sub="Gestor = domínio + contas. Gerente = vários Squads. Empresa = sócios + Squads." />
+      <Tabs value={tab} onChange={(_, v: TabKey) => setTab(v)} sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }} variant="scrollable" allowScrollButtonsMobile>
+        <Tab value="users" label="Usuários" /><Tab value="squads" label="Squads" /><Tab value="companies" label="Empresas" /><Tab value="perms" label="Permissões" />
       </Tabs>
       {tab === 'users' && <UsersTab />}
       {tab === 'squads' && <SquadsTab />}
+      {tab === 'companies' && <CompaniesTab />}
       {tab === 'perms' && <PermsTab />}
     </>
   );
 }
 
+/* ---------------- Usuários ---------------- */
 function UsersTab() {
   const { data, error, refetch } = useUsers();
   const { data: sq } = useSquads();
-  const [f, setF] = useState<{ name: string; email: string; role: Role; squadId: string }>({ name: '', email: '', role: 'gestor', squadId: '' });
-  const [err, setErr] = useState('');
-  const [created, setCreated] = useState<User | null>(null);
-  const [inviteSent, setInviteSent] = useState(true);
-  const [edit, setEdit] = useState<User | null>(null);
+  const { data: co } = useAdminCompanies();
+  const [form, setForm] = useState<User | 'new' | null>(null);
+  const [created, setCreated] = useState<{ user: User; inviteSent: boolean } | null>(null);
   const [del, setDel] = useState<User | null>(null);
   const [toast, setToast] = useState('');
   const { user: me, isSuperAdmin } = useAuth();
-  const create = useAdminMutation(adminApi.createUser, [qk.users, qk.squads]);
-  const remove = useAdminMutation(adminApi.deleteUser, [qk.users, qk.squads]);
+  const remove = useAdminMutation(adminApi.deleteUser, INV);
   const resend = useAdminMutation(adminApi.resendInvite, [qk.users]);
   if (error) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data) return <PageSkeleton />;
-  const squadId = f.squadId || sq?.squads[0]?.id || '';
-  const submit = () => {
-    if (!f.name.trim()) return setErr('Digite o nome.');
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email)) return setErr('Digite um e-mail válido.');
-    setErr('');
-    create.mutate({ name: f.name.trim(), email: f.email.trim().toLowerCase(), role: f.role, squadId: f.role === 'gestor' ? squadId : null }, {
-      onSuccess: (r) => { setCreated(r.user); setInviteSent(r.inviteSent); setF({ name: '', email: '', role: 'gestor', squadId: '' }); },
-      onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível criar o usuário.'),
-    });
+  const access = (u: User) => {
+    if (u.role === 'admin' || u.role === 'superadmin') return <Typography variant="caption">Todos os domínios</Typography>;
+    if (u.role === 'gerente') return u.squadIds.length ? <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{u.squadIds.map((id) => <Tag key={id}>{sq?.squads.find((s) => s.id === id)?.name ?? id}</Tag>)}</Stack> : <Typography variant="caption">Só as Empresas dele</Typography>;
+    return u.domains.length
+      ? <Tooltip title={u.domains.map((d) => `${d.domain} (${d.googleAccounts.length} Google · ${d.metaAccounts.length} Meta)`).join('\n')}><Typography variant="body2">{u.domains.length === 1 ? u.domains[0].domain : `${u.domains.length} domínios`}<Typography component="span" variant="caption"> · {u.domains.reduce((a, d) => a + d.googleAccounts.length + d.metaAccounts.length, 0)} contas</Typography></Typography></Tooltip>
+      : <Tag tone="warn">Sem domínio</Tag>;
   };
   return (
-    <Grid container spacing={1.75}>
-      <Grid size={{ xs: 12, lg: 8 }}>
-        <TableContainer component={Card}><Table>
-          <TableHead><TableRow>{['Nome', 'E-mail', 'Permissão', 'Squad', 'Status', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
-          <TableBody>{data.users.map((u) => (
-            <TableRow key={u.id}>
-              <TableCell><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }} ><Avatar sx={avatarSx}>{initials(u.name)}</Avatar><span>{u.name}</span></Stack></TableCell>
-              <TableCell>{u.email}</TableCell>
-              <TableCell><Tag tone={roleTone(u.role)}>{ROLE_LABEL[u.role] ?? u.role}</Tag></TableCell>
-              <TableCell>{u.squadId ? sq?.squads.find((s) => s.id === u.squadId)?.name : <Typography variant="caption">Todos os domínios</Typography>}</TableCell>
-              <TableCell>{u.status === 'active' ? <Tag tone="pos">Ativo</Tag> : <Tag tone="warn">{u.status === 'invited' ? 'Convite enviado' : 'Desativado'}</Tag>}</TableCell>
-              <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                {u.status === 'invited' && <Tooltip title="Reenviar convite"><IconButton size="small" aria-label={`Reenviar convite para ${u.name}`} onClick={() => resend.mutate(u.id, { onSuccess: () => setToast(`Convite reenviado para ${u.email}`), onError: (e) => setToast(e instanceof ApiError ? e.message : 'Falhou') })}><ForwardToInboxOutlinedIcon fontSize="small" /></IconButton></Tooltip>}{' '}
-                <Tooltip title="Editar"><span><IconButton size="small" aria-label={`Editar ${u.name}`} disabled={(!!u.isMainAdmin && u.id !== me?.id) || (u.role === 'superadmin' && !isSuperAdmin)} onClick={() => setEdit(u)}><EditOutlinedIcon fontSize="small" /></IconButton></span></Tooltip>{' '}
-                <Tooltip title={u.isMainAdmin ? 'O admin principal não pode ser excluído' : u.id === me?.id ? 'Você não pode excluir a si mesmo' : 'Excluir'}><span><IconButton size="small" aria-label={`Excluir ${u.name}`} disabled={!!u.isMainAdmin || u.id === me?.id || (u.role === 'superadmin' && !isSuperAdmin)} onClick={() => setDel(u)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></span></Tooltip>
-              </TableCell>
-            </TableRow>
-          ))}</TableBody>
-        </Table></TableContainer>
-      </Grid>
-      <Grid size={{ xs: 12, lg: 4 }}>
-        <Card><CardHeader title="Adicionar usuário" /><CardContent><Stack spacing={1.75}>
-          <TextField label="Nome" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Lucas Exemplo" fullWidth />
-          <TextField label="E-mail" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="gestor@exemplo.com" fullWidth />
-          <TextField select label="Permissão" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as Role })} fullWidth><MenuItem value="gestor">Gestor</MenuItem><MenuItem value="admin">Admin</MenuItem>{isSuperAdmin && <MenuItem value="superadmin">SuperAdmin</MenuItem>}</TextField>
-          {f.role === 'gestor' ? (
-            <TextField select label="Squad" value={squadId} onChange={(e) => setF({ ...f, squadId: e.target.value })} fullWidth helperText={`Vai ver: ${sq?.squads.find((s) => s.id === squadId)?.domains.join(', ') || 'nenhum domínio'}`}>
-              {sq?.squads.map((s) => <MenuItem key={s.id} value={s.id}>{s.name} · {s.domains.length} domínios</MenuItem>)}
-            </TextField>
-          ) : <Typography variant="caption">{ROLE_HELP[f.role]}</Typography>}
-          {err && <Alert severity="error" variant="outlined">{err}</Alert>}
-          <Button variant="contained" onClick={submit} disabled={create.isPending}>{create.isPending ? 'Criando…' : 'Criar usuário e enviar convite'}</Button>
-        </Stack></CardContent></Card>
-      </Grid>
+    <>
+      <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 1.75 }}>
+        <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => setForm('new')}>Adicionar usuário</Button>
+        <Typography variant="caption">O convite com a senha temporária é enviado pelo servidor.</Typography>
+      </Stack>
+      <TableContainer component={Card}><Table>
+        <TableHead><TableRow>{['Nome', 'E-mail', 'Permissão', 'Acesso', 'Sócio de', 'Status', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
+        <TableBody>{data.users.map((u) => (
+          <TableRow key={u.id}>
+            <TableCell><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Avatar sx={avatarSx}>{initials(u.name)}</Avatar><span>{u.name}</span></Stack></TableCell>
+            <TableCell>{u.email}</TableCell>
+            <TableCell><Tag tone={roleTone(u.role)}>{ROLE_LABEL[u.role] ?? u.role}</Tag></TableCell>
+            <TableCell sx={{ whiteSpace: 'normal', maxWidth: 260 }}>{access(u)}</TableCell>
+            <TableCell sx={{ whiteSpace: 'normal' }}>{u.companyIds.length ? <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{u.companyIds.map((id) => <Chip key={id} size="small" icon={<ApartmentRoundedIcon sx={{ fontSize: '14px !important' }} />} label={co?.companies.find((c) => c.id === id)?.name ?? id} sx={{ height: 22 }} />)}</Stack> : '—'}</TableCell>
+            <TableCell>{u.status === 'active' ? <Tag tone="pos">Ativo</Tag> : <Tag tone="warn">{u.status === 'invited' ? 'Convite enviado' : 'Desativado'}</Tag>}</TableCell>
+            <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+              {u.status === 'invited' && <Tooltip title="Reenviar convite"><IconButton size="small" aria-label={`Reenviar convite para ${u.name}`} onClick={() => resend.mutate(u.id, { onSuccess: () => setToast(`Convite reenviado para ${u.email}`), onError: (e) => setToast(e instanceof ApiError ? e.message : 'Falhou') })}><ForwardToInboxOutlinedIcon fontSize="small" /></IconButton></Tooltip>}{' '}
+              <Tooltip title="Editar"><span><IconButton size="small" aria-label={`Editar ${u.name}`} disabled={(!!u.isMainAdmin && u.id !== me?.id) || (u.role === 'superadmin' && !isSuperAdmin)} onClick={() => setForm(u)}><EditOutlinedIcon fontSize="small" /></IconButton></span></Tooltip>{' '}
+              <Tooltip title={u.isMainAdmin ? 'O admin principal não pode ser excluído' : u.id === me?.id ? 'Você não pode excluir a si mesmo' : 'Excluir'}><span><IconButton size="small" aria-label={`Excluir ${u.name}`} disabled={!!u.isMainAdmin || u.id === me?.id || (u.role === 'superadmin' && !isSuperAdmin)} onClick={() => setDel(u)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></span></Tooltip>
+            </TableCell>
+          </TableRow>
+        ))}</TableBody>
+      </Table></TableContainer>
+      {form && <UserDialog key={form === 'new' ? 'new' : form.id} u={form === 'new' ? null : form} self={form !== 'new' && form.id === me?.id} onClose={() => setForm(null)} onCreated={(r) => { setForm(null); setCreated(r); }} />}
       <Dialog open={!!created} onClose={() => setCreated(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>Usuário criado<Typography variant="caption" component="div">{inviteSent ? 'O servidor enviou o convite por e-mail' : 'O convite NÃO foi enviado'}</Typography></DialogTitle>
+        <DialogTitle>Usuário criado<Typography variant="caption" component="div">{created?.inviteSent ? 'O servidor enviou o convite por e-mail' : 'O convite NÃO foi enviado'}</Typography></DialogTitle>
         <DialogContent>
-          {!inviteSent && <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>O servidor não conseguiu enviar o e-mail (SMTP não configurado ou fora do ar). Configure o SMTP e use “Reenviar convite” na lista de usuários.</Alert>}
+          {created && !created.inviteSent && <Alert severity="warning" variant="outlined" sx={{ mb: 1.5 }}>O servidor não conseguiu enviar o e-mail (SMTP não configurado ou fora do ar). Configure o SMTP e use “Reenviar convite” na lista de usuários.</Alert>}
           {created && (
             <Box sx={{ bgcolor: '#f5f7fb', color: '#1c2536', borderRadius: 2.5, p: 2.5, fontSize: 14, lineHeight: 1.6 }}>
               <Box sx={{ fontSize: 12, color: '#5b6679', borderBottom: '1px solid #dde3ec', pb: 1.25, mb: 1.5, display: 'grid', gap: 0.25 }}>
-                <span><b>De:</b> Pluto Mídia &lt;admin@plutomidia.com.br&gt;</span><span><b>Para:</b> {created.email}</span><span><b>Assunto:</b> Seu acesso ao Pluto Mídia</span>
+                <span><b>De:</b> Pluto Mídia &lt;admin@plutomidia.com.br&gt;</span><span><b>Para:</b> {created.user.email}</span><span><b>Assunto:</b> Seu acesso ao Pluto Mídia</span>
               </Box>
-              <p style={{ margin: '0 0 10px' }}>Olá {created.name.split(' ')[0]},</p><p style={{ margin: '0 0 10px' }}>Seu acesso ao Pluto Mídia foi criado.</p>
-              <p style={{ margin: 0 }}>Login: <b>{created.email}</b><br />Senha temporária: <b>enviada neste e-mail</b></p>
+              <p style={{ margin: '0 0 10px' }}>Olá {created.user.name.split(' ')[0]},</p><p style={{ margin: '0 0 10px' }}>Seu acesso ao Pluto Mídia foi criado.</p>
+              <p style={{ margin: 0 }}>Login: <b>{created.user.email}</b><br />Senha temporária: <b>enviada neste e-mail</b></p>
               <p style={{ margin: '10px 0 0', fontSize: 13, color: '#5b6679' }}>Por segurança, altere sua senha no primeiro acesso.</p>
             </Box>
           )}
@@ -111,63 +106,129 @@ function UsersTab() {
         </DialogContent>
         <DialogActions><Button variant="contained" onClick={() => setCreated(null)}>Fechar</Button></DialogActions>
       </Dialog>
-      {edit && <UserDialog key={edit.id} u={edit} self={edit.id === me?.id} onClose={() => setEdit(null)} />}
       <ConfirmDialog open={!!del} title="Excluir usuário?" busy={remove.isPending} onClose={() => { setDel(null); remove.reset(); }} onConfirm={() => del && remove.mutate(del.id, { onSuccess: () => setDel(null) })}>
         <b>{del?.name}</b> ({del?.email}) perde o acesso na hora e todas as sessões dele são encerradas. Para só bloquear, edite e escolha <b>Desativado</b>.
         {remove.error && <Alert severity="error" variant="outlined" sx={{ mt: 1.5 }}>{remove.error instanceof ApiError ? remove.error.message : 'Não foi possível excluir.'}</Alert>}
       </ConfirmDialog>
       <Snackbar open={!!toast} autoHideDuration={3000} onClose={() => setToast('')} message={toast} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
-    </Grid>
+    </>
   );
 }
 
-function UserDialog({ u, self, onClose }: { u: User; self: boolean; onClose: () => void }) {
+/** Multi-seleção simples com checkboxes. */
+function Multi({ label, value, options, onChange, helper, disabled }: { label: string; value: string[]; options: { id: string; name: string; sub?: string }[]; onChange: (v: string[]) => void; helper?: string; disabled?: boolean }) {
+  return (
+    <TextField select label={label} value={value} fullWidth disabled={disabled} helperText={helper} onChange={(e) => onChange(typeof e.target.value === 'string' ? e.target.value.split(',').filter(Boolean) : (e.target.value as string[]))}
+      slotProps={{ inputLabel: { shrink: true }, select: { multiple: true, displayEmpty: true, renderValue: (v) => (v as string[]).map((id) => options.find((o) => o.id === id)?.name ?? id).join(', ') || 'Nenhuma' } }}>
+      {options.map((o) => <MenuItem key={o.id} value={o.id}><Checkbox size="small" checked={value.includes(o.id)} /><ListItemText primary={o.name} secondary={o.sub} /></MenuItem>)}
+      {!options.length && <MenuItem disabled>Nada cadastrado</MenuItem>}
+    </TextField>
+  );
+}
+
+/** Gestor: cada linha = domínio + contas Google Ads + contas Meta Ads que ele usa nesse domínio. */
+function DomainLinksEditor({ value, onChange }: { value: DomainLink[]; onChange: (v: DomainLink[]) => void }) {
+  const { data: doms } = useAdminDomains();
+  const { data: ga } = useIntegrationAccounts('google-ads');
+  const { data: ma } = useIntegrationAccounts('meta');
+  const opts = (list?: { id: string; name: string; externalId: string }[]) => (list ?? []).map((a) => ({ id: a.id, name: a.name, sub: a.externalId }));
+  const free = (doms?.domains ?? []).filter((d) => d.active || value.some((v) => v.domain === d.hostname));
+  const set = (i: number, patch: Partial<DomainLink>) => onChange(value.map((v, j) => (j === i ? { ...v, ...patch } : v)));
+  return (
+    <Stack spacing={1.25}>
+      <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+        <Typography variant="overline">Domínios que gere</Typography>
+        <Button size="small" startIcon={<AddRoundedIcon />} disabled={!free.some((d) => !value.some((v) => v.domain === d.hostname))}
+          onClick={() => { const d = free.find((x) => !value.some((v) => v.domain === x.hostname)); if (d) onChange([...value, { domain: d.hostname, googleAccounts: [], metaAccounts: [] }]); }}>Adicionar domínio</Button>
+      </Stack>
+      {value.map((l, i) => (
+        <Card key={i} variant="outlined" sx={{ p: 1.5, bgcolor: 'action.hover' }}>
+          <Stack spacing={1.25}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+              <TextField select size="small" label="Domínio" value={l.domain} onChange={(e) => set(i, { domain: e.target.value })} sx={{ flex: 1 }}>
+                {free.filter((d) => d.hostname === l.domain || !value.some((v) => v.domain === d.hostname)).map((d) => <MenuItem key={d.hostname} value={d.hostname}>{d.hostname}</MenuItem>)}
+              </TextField>
+              <Tooltip title="Tirar este domínio"><IconButton size="small" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label={`Tirar ${l.domain}`}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip>
+            </Stack>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <Multi label="Contas Google Ads" value={l.googleAccounts} options={opts(ga?.accounts)} onChange={(v) => set(i, { googleAccounts: v })} />
+              <Multi label="Contas Meta Ads" value={l.metaAccounts} options={opts(ma?.accounts)} onChange={(v) => set(i, { metaAccounts: v })} />
+            </Stack>
+            {!l.googleAccounts.length && !l.metaAccounts.length && <Typography variant="caption" sx={{ color: 'warning.main' }}>Sem conta, o gestor não vê nenhuma campanha deste domínio.</Typography>}
+          </Stack>
+        </Card>
+      ))}
+      {!value.length && <Typography variant="caption">Nenhum domínio. O gestor só vai ver dados depois de ligar pelo menos um domínio e uma conta.</Typography>}
+    </Stack>
+  );
+}
+
+function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boolean; onClose: () => void; onCreated: (r: { user: User; inviteSent: boolean }) => void }) {
   const { data: sq } = useSquads();
+  const { data: co } = useAdminCompanies();
   const { isSuperAdmin } = useAuth();
-  const [f, setF] = useState<Required<UpdateUserRequest>>({ name: u.name, role: u.role, squadId: u.squadId, status: u.status === 'disabled' ? 'disabled' : 'active' });
+  const [f, setF] = useState({ name: u?.name ?? '', email: u?.email ?? '', role: u?.role ?? ('gestor' as Role), status: u?.status === 'disabled' ? 'disabled' : 'active', squadIds: u?.squadIds ?? [], companyIds: u?.companyIds ?? [], domains: u?.domains ?? [] });
   const [err, setErr] = useState('');
-  const save = useAdminMutation((b: UpdateUserRequest) => adminApi.updateUser(u.id, b), [qk.users, qk.squads]);
+  const create = useAdminMutation(adminApi.createUser, INV);
+  const save = useAdminMutation((b: Parameters<typeof adminApi.updateUser>[1]) => adminApi.updateUser(u!.id, b), INV);
+  const busy = create.isPending || save.isPending;
   const submit = () => {
     if (!f.name.trim()) return setErr('Digite o nome.');
-    if (f.role === 'gestor' && !f.squadId) return setErr('Escolha o Squad do gestor.');
+    if (!u && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email)) return setErr('Digite um e-mail válido.');
+    const dup = f.domains.find((d, i) => f.domains.findIndex((x) => x.domain === d.domain) !== i);
+    if (dup) return setErr(`O domínio ${dup.domain} está repetido.`);
     setErr('');
-    const body: UpdateUserRequest = { name: f.name.trim(), role: f.role, squadId: f.role === 'gestor' ? f.squadId : null };
-    if (u.status !== 'invited') body.status = f.status;
-    save.mutate(body, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
+    const links = { squadIds: f.role === 'gerente' ? f.squadIds : [], companyIds: f.companyIds, domains: f.role === 'gestor' ? f.domains : [] };
+    const onError = (e: unknown) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.');
+    if (!u) return create.mutate({ name: f.name.trim(), email: f.email.trim().toLowerCase(), role: f.role, ...links }, { onSuccess: onCreated, onError });
+    save.mutate({ name: f.name.trim(), role: f.role, ...links, ...(u.status !== 'invited' ? { status: f.status as 'active' | 'disabled' } : {}) }, { onSuccess: onClose, onError });
   };
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Editar usuário<Typography variant="caption" component="div">{u.email}</Typography></DialogTitle>
-      <DialogContent><Stack spacing={1.75} sx={{ pt: 1 }}>
-        <TextField label="Nome" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} fullWidth />
-        <TextField select label="Permissão" value={f.role} disabled={self} helperText={self ? 'Você não pode mudar a sua própria permissão.' : undefined} onChange={(e) => setF({ ...f, role: e.target.value as Role, squadId: e.target.value === 'gestor' ? f.squadId ?? sq?.squads[0]?.id ?? null : null })} fullWidth>
-          <MenuItem value="gestor">Gestor</MenuItem><MenuItem value="admin">Admin</MenuItem>{(isSuperAdmin || u.role === 'superadmin') && <MenuItem value="superadmin" disabled={!isSuperAdmin}>SuperAdmin</MenuItem>}
-        </TextField>
-        <Typography variant="caption" sx={{ mt: -0.75 }}>{ROLE_HELP[f.role]}</Typography>
-        {f.role === 'gestor' && (
-          <TextField select label="Squad" value={f.squadId ?? ''} onChange={(e) => setF({ ...f, squadId: e.target.value })} fullWidth>
-            {sq?.squads.map((s) => <MenuItem key={s.id} value={s.id}>{s.name} · {s.domains.length} domínios</MenuItem>)}
+    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>{u ? 'Editar usuário' : 'Adicionar usuário'}{u && <Typography variant="caption" component="div">{u.email}</Typography>}</DialogTitle>
+      <DialogContent><Grid container spacing={2.5} sx={{ pt: 1 }}>
+        <Grid size={{ xs: 12, md: 5 }}><Stack spacing={1.75}>
+          <TextField label="Nome" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} fullWidth placeholder="Nome Sobrenome" />
+          {!u && <TextField label="E-mail" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} fullWidth placeholder="pessoa@exemplo.com" />}
+          <TextField select label="Permissão" value={f.role} disabled={self} helperText={self ? 'Você não pode mudar a sua própria permissão.' : ROLE_HELP[f.role]} onChange={(e) => setF({ ...f, role: e.target.value as Role })} fullWidth>
+            <MenuItem value="gestor">Gestor</MenuItem><MenuItem value="gerente">Gerente</MenuItem><MenuItem value="admin">Admin</MenuItem>
+            {(isSuperAdmin || u?.role === 'superadmin') && <MenuItem value="superadmin" disabled={!isSuperAdmin}>SuperAdmin</MenuItem>}
           </TextField>
-        )}
-        {u.status !== 'invited' && (
-          <TextField select label="Status" value={f.status} disabled={self} onChange={(e) => setF({ ...f, status: e.target.value as 'active' | 'disabled' })} fullWidth helperText="Desativado não consegue entrar, mas o usuário continua cadastrado.">
-            <MenuItem value="active">Ativo</MenuItem><MenuItem value="disabled">Desativado</MenuItem>
-          </TextField>
-        )}
-        {err && <Alert severity="error" variant="outlined">{err}</Alert>}
-      </Stack></DialogContent>
-      <DialogActions><Button variant="outlined" onClick={onClose}>Cancelar</Button><Button variant="contained" onClick={submit} disabled={save.isPending}>{save.isPending ? 'Salvando…' : 'Salvar'}</Button></DialogActions>
+          <Multi label="Sócio das Empresas" value={f.companyIds} options={(co?.companies ?? []).map((c) => ({ id: c.id, name: c.name, sub: `${c.squadIds.length} Squad(s)` }))} onChange={(v) => setF({ ...f, companyIds: v })}
+            helper="Sócio vê todos os Squads e domínios da Empresa, completos." />
+          {u && u.status !== 'invited' && (
+            <TextField select label="Status" value={f.status} disabled={self} onChange={(e) => setF({ ...f, status: e.target.value })} fullWidth helperText="Desativado não consegue entrar, mas o usuário continua cadastrado.">
+              <MenuItem value="active">Ativo</MenuItem><MenuItem value="disabled">Desativado</MenuItem>
+            </TextField>
+          )}
+        </Stack></Grid>
+        <Grid size={{ xs: 12, md: 7 }}>
+          {f.role === 'gestor' && <DomainLinksEditor value={f.domains} onChange={(v) => setF({ ...f, domains: v })} />}
+          {f.role === 'gerente' && (
+            <Stack spacing={1.25}>
+              <Typography variant="overline">Squads que vê</Typography>
+              <Multi label="Squads" value={f.squadIds} options={(sq?.squads ?? []).map((s) => ({ id: s.id, name: s.name, sub: `${s.domains.length} domínio(s)${s.companyId ? ' · ' + (co?.companies.find((c) => c.id === s.companyId)?.name ?? '') : ''}` }))} onChange={(v) => setF({ ...f, squadIds: v })} />
+              <Typography variant="caption">Vai ver: {[...new Set([...(sq?.squads ?? []).filter((s) => f.squadIds.includes(s.id) || (s.companyId && f.companyIds.includes(s.companyId))).flatMap((s) => s.domains)])].join(', ') || 'nenhum domínio'}</Typography>
+            </Stack>
+          )}
+          {(f.role === 'admin' || f.role === 'superadmin') && <Alert severity="info" variant="outlined">{ROLE_LABEL[f.role]} vê todos os domínios. Squads e domínios não se aplicam.</Alert>}
+        </Grid>
+        {err && <Grid size={12}><Alert severity="error" variant="outlined">{err}</Alert></Grid>}
+      </Grid></DialogContent>
+      <DialogActions><Button variant="outlined" onClick={onClose}>Cancelar</Button><Button variant="contained" onClick={submit} disabled={busy}>{busy ? 'Salvando…' : u ? 'Salvar' : 'Criar usuário e enviar convite'}</Button></DialogActions>
     </Dialog>
   );
 }
 
+/* ---------------- Squads ---------------- */
 function SquadsTab() {
   const { data, error, refetch } = useSquads();
   const { data: doms } = useAdminDomains();
   const { data: users } = useUsers();
-  const [edit, setEdit] = useState<{ id?: string; name: string; domains: string[] } | null>(null);
-  const save = useAdminMutation(adminApi.saveSquad, [qk.squads, qk.adminDomains]);
-  const remove = useAdminMutation(adminApi.deleteSquad, [qk.squads, qk.adminDomains, qk.users]);
+  const { data: co } = useAdminCompanies();
+  const [edit, setEdit] = useState<{ id?: string; name: string; domains: string[]; companyId: string | null } | null>(null);
+  const save = useAdminMutation(adminApi.saveSquad, INV);
+  const remove = useAdminMutation(adminApi.deleteSquad, INV);
   const [del, setDel] = useState<{ id: string; name: string } | null>(null);
   if (error) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data) return <PageSkeleton />;
@@ -175,62 +236,138 @@ function SquadsTab() {
   return (
     <>
       <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 1.75 }}>
-        <Button variant="contained" onClick={() => setEdit({ name: `Squad ${String(data.squads.length + 1).padStart(2, '0')}`, domains: [] })}>+ Criar Squad</Button>
-        <Typography variant="caption">O Squad define quais domínios o gestor vê.</Typography>
+        <Button variant="contained" onClick={() => setEdit({ name: `Squad ${String(data.squads.length + 1).padStart(2, '0')}`, domains: [], companyId: null })}>+ Criar Squad</Button>
+        <Typography variant="caption">Squad agrupa domínios. Pertence a uma Empresa e pode ser visto por Gerentes.</Typography>
       </Stack>
       <Grid container spacing={1.75}>
         {edit && (
           <Grid size={{ xs: 12, md: 6 }}><Card><CardHeader title={edit.id ? 'Editar Squad' : 'Novo Squad'} /><CardContent><Stack spacing={1.5}>
             <TextField label="Nome" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} fullWidth />
-            <Typography variant="overline">Domínios</Typography>
-            <FormGroup>{active.map((d) => {
-              const other = data.squads.find((s) => s.id !== edit.id && s.domains.includes(d.hostname));
-              return <FormControlLabel key={d.hostname} label={<>{d.hostname} {other && <Typography variant="caption" component="span">(hoje em {other.name})</Typography>}</>}
-                control={<Checkbox size="small" checked={edit.domains.includes(d.hostname)} onChange={(e) => setEdit({ ...edit, domains: e.target.checked ? [...edit.domains, d.hostname] : edit.domains.filter((x) => x !== d.hostname) })} />} />;
-            })}</FormGroup>
+            <TextField select label="Empresa" value={edit.companyId ?? ''} onChange={(e) => setEdit({ ...edit, companyId: e.target.value || null })} fullWidth>
+              <MenuItem value="">Sem Empresa</MenuItem>{co?.companies.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+            </TextField>
+            <Multi label="Domínios" value={edit.domains} options={active.map((d) => { const other = data.squads.find((s) => s.id !== edit.id && s.domains.includes(d.hostname)); return { id: d.hostname, name: d.hostname, sub: other ? `hoje em ${other.name}` : undefined }; })} onChange={(v) => setEdit({ ...edit, domains: v })}
+              helper="Um domínio fica em um Squad só: escolher aqui tira do Squad anterior." />
             <Stack direction="row" spacing={1}><Button variant="contained" onClick={() => save.mutate(edit, { onSuccess: () => setEdit(null) })}>Salvar</Button><Button variant="outlined" onClick={() => setEdit(null)}>Cancelar</Button></Stack>
+            {save.error && <Alert severity="error" variant="outlined">{save.error instanceof ApiError ? save.error.message : 'Não foi possível salvar.'}</Alert>}
           </Stack></CardContent></Card></Grid>
         )}
-        {data.squads.filter((s) => s.id !== edit?.id).map((s) => (
-          <Grid key={s.id} size={{ xs: 12, md: 6 }}><Card sx={{ height: '100%' }}>
-            <CardHeader title={s.name} action={<Stack direction="row" spacing={0.5}><Button size="small" variant="outlined" onClick={() => setEdit({ id: s.id, name: s.name, domains: s.domains })}>Editar</Button><Tooltip title="Excluir Squad"><IconButton size="small" aria-label={`Excluir ${s.name}`} onClick={() => setDel(s)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip></Stack>} />
-            <CardContent><Stack spacing={1.75}>
-              <Box><Typography variant="overline">Domínios</Typography><Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>{s.domains.map((d) => <Tag key={d}>{d}</Tag>)}{!s.domains.length && <Typography variant="caption">Nenhum</Typography>}</Stack></Box>
-              <Box><Typography variant="overline">Gestores</Typography>{users?.users.filter((u) => u.squadId === s.id).map((u) => <Stack key={u.id} direction="row" spacing={1} sx={{ alignItems: 'center', py: 0.4 }}><Avatar sx={{ ...avatarSx, width: 24, height: 24, fontSize: 10 }}>{initials(u.name)}</Avatar><span>{u.name}</span><Typography variant="caption">{u.email}</Typography></Stack>)}</Box>
-            </Stack></CardContent>
-          </Card></Grid>
-        ))}
+        {data.squads.filter((s) => s.id !== edit?.id).map((s) => {
+          const gestores = (users?.users ?? []).filter((u) => u.role === 'gestor' && u.domains.some((d) => s.domains.includes(d.domain)));
+          const gerentes = (users?.users ?? []).filter((u) => u.role === 'gerente' && u.squadIds.includes(s.id));
+          const company = co?.companies.find((c) => c.id === s.companyId);
+          return (
+            <Grid key={s.id} size={{ xs: 12, md: 6 }}><Card sx={{ height: '100%' }}>
+              <CardHeader title={s.name} subheader={company ? <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}><ApartmentRoundedIcon sx={{ fontSize: 14 }} /><span>{company.name}</span></Stack> : 'Sem Empresa'}
+                action={<Stack direction="row" spacing={0.5}><Button size="small" variant="outlined" onClick={() => setEdit({ id: s.id, name: s.name, domains: s.domains, companyId: s.companyId })}>Editar</Button><Tooltip title="Excluir Squad"><IconButton size="small" aria-label={`Excluir ${s.name}`} onClick={() => setDel(s)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip></Stack>} />
+              <CardContent><Stack spacing={1.5}>
+                <Box><Typography variant="overline">Domínios</Typography><Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>{s.domains.map((d) => <Tag key={d}>{d}</Tag>)}{!s.domains.length && <Typography variant="caption">Nenhum</Typography>}</Stack></Box>
+                <Box><Typography variant="overline">Gestores</Typography><People list={gestores} empty="Nenhum gestor ligado aos domínios deste Squad" /></Box>
+                <Box><Typography variant="overline">Gerentes</Typography><People list={gerentes} empty="Nenhum" /></Box>
+              </Stack></CardContent>
+            </Card></Grid>
+          );
+        })}
       </Grid>
       <ConfirmDialog open={!!del} title="Excluir Squad?" busy={remove.isPending} onClose={() => { setDel(null); remove.reset(); }} onConfirm={() => del && remove.mutate(del.id, { onSuccess: () => setDel(null) })}>
-        Os domínios de <b>{del?.name}</b> ficam sem Squad (só Admin e SuperAdmin veem). Squads com gestores não podem ser excluídos: mova os gestores antes.
+        Os domínios de <b>{del?.name}</b> ficam sem Squad e os Gerentes deixam de ver este Squad. Os gestores continuam vendo os domínios deles.
         {remove.error && <Alert severity="error" variant="outlined" sx={{ mt: 1.5 }}>{remove.error instanceof ApiError ? remove.error.message : 'Não foi possível excluir.'}</Alert>}
       </ConfirmDialog>
     </>
   );
 }
+function People({ list, empty }: { list: User[]; empty: string }) {
+  if (!list.length) return <Typography variant="caption">{empty}</Typography>;
+  return <>{list.map((u) => <Stack key={u.id} direction="row" spacing={1} sx={{ alignItems: 'center', py: 0.4 }}><Avatar sx={{ ...avatarSx, width: 24, height: 24, fontSize: 10 }}>{initials(u.name)}</Avatar><span>{u.name}</span><Typography variant="caption">{u.email}</Typography></Stack>)}</>;
+}
 
+/* ---------------- Empresas ---------------- */
+function CompaniesTab() {
+  const { data, error, refetch } = useAdminCompanies();
+  const { data: sq } = useSquads();
+  const { data: users } = useUsers();
+  const [edit, setEdit] = useState<(Omit<Company, 'id'> & { id?: string }) | null>(null);
+  const [del, setDel] = useState<Company | null>(null);
+  const save = useAdminMutation(adminApi.saveCompany, INV);
+  const remove = useAdminMutation(adminApi.deleteCompany, INV);
+  if (error) return <ErrorBox error={error} retry={() => refetch()} />;
+  if (!data) return <PageSkeleton />;
+  const uname = (id: string) => users?.users.find((u) => u.id === id)?.name ?? id;
+  return (
+    <>
+      <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 1.75 }}>
+        <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => setEdit({ name: '', partnerIds: [], squadIds: [] })}>Criar Empresa</Button>
+        <Typography variant="caption">Empresa = sociedade. Ex.: “Empresa do Fulano” com os sócios Fulano e Beltrano. Aparece no seletor “Empresa” do topo.</Typography>
+      </Stack>
+      <Grid container spacing={1.75}>
+        {data.companies.map((c) => {
+          const squads = (sq?.squads ?? []).filter((s) => c.squadIds.includes(s.id));
+          return (
+            <Grid key={c.id} size={{ xs: 12, md: 6 }}><Card sx={{ height: '100%' }}>
+              <CardHeader avatar={<ApartmentRoundedIcon color="primary" />} title={c.name} subheader={`${squads.length} Squad(s) · ${squads.reduce((a, s) => a + s.domains.length, 0)} domínio(s)`}
+                action={<Stack direction="row" spacing={0.5}><Button size="small" variant="outlined" onClick={() => setEdit(c)}>Editar</Button><Tooltip title="Excluir Empresa"><IconButton size="small" aria-label={`Excluir ${c.name}`} onClick={() => setDel(c)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip></Stack>} />
+              <CardContent><Stack spacing={1.5}>
+                <Box><Typography variant="overline">Sócios</Typography>
+                  {c.partnerIds.length ? <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><AvatarGroup max={6} sx={{ '& .MuiAvatar-root': { ...avatarSx, width: 26, height: 26 } }}>{c.partnerIds.map((id) => <Avatar key={id}>{initials(uname(id))}</Avatar>)}</AvatarGroup><Typography variant="body2">{c.partnerIds.map(uname).join(' · ')}</Typography></Stack> : <Typography variant="caption">Nenhum sócio</Typography>}
+                </Box>
+                <Box><Typography variant="overline">Squads</Typography>
+                  {squads.map((s) => <Stack key={s.id} direction="row" spacing={1} sx={{ alignItems: 'baseline', py: 0.25 }}><Typography sx={{ fontWeight: 600, fontSize: 13.5 }}>{s.name}</Typography><Typography variant="caption">{s.domains.join(', ') || 'sem domínios'}</Typography></Stack>)}
+                  {!squads.length && <Typography variant="caption">Nenhum Squad</Typography>}
+                </Box>
+              </Stack></CardContent>
+            </Card></Grid>
+          );
+        })}
+        {!data.companies.length && <Grid size={12}><Card><CardContent><Typography variant="caption">Nenhuma Empresa ainda. Crie uma para aparecer o seletor “Empresa” no topo do painel.</Typography></CardContent></Card></Grid>}
+      </Grid>
+      <Dialog open={!!edit} onClose={() => setEdit(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>{edit?.id ? 'Editar Empresa' : 'Criar Empresa'}</DialogTitle>
+        {edit && <DialogContent><Stack spacing={1.75} sx={{ pt: 1 }}>
+          <TextField label="Nome" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} fullWidth placeholder="Empresa do Fulano" />
+          <Multi label="Sócios" value={edit.partnerIds} options={(users?.users ?? []).map((u) => ({ id: u.id, name: u.name, sub: `${ROLE_LABEL[u.role]} · ${u.email}` }))} onChange={(v) => setEdit({ ...edit, partnerIds: v })}
+            helper="Sócios veem todos os Squads e domínios desta Empresa." />
+          <Multi label="Squads" value={edit.squadIds} options={(sq?.squads ?? []).map((s) => ({ id: s.id, name: s.name, sub: `${s.domains.length} domínio(s)${s.companyId && s.companyId !== edit.id ? ' · hoje em ' + (data.companies.find((c) => c.id === s.companyId)?.name ?? 'outra') : ''}` }))} onChange={(v) => setEdit({ ...edit, squadIds: v })}
+            helper="Um Squad fica em uma Empresa só: escolher aqui tira da Empresa anterior." />
+          {save.error && <Alert severity="error" variant="outlined">{save.error instanceof ApiError ? save.error.message : 'Não foi possível salvar.'}</Alert>}
+        </Stack></DialogContent>}
+        <DialogActions><Button variant="outlined" onClick={() => { setEdit(null); save.reset(); }}>Cancelar</Button>
+          <Button variant="contained" disabled={!edit?.name.trim() || save.isPending} onClick={() => edit && save.mutate({ ...edit, name: edit.name.trim() }, { onSuccess: () => setEdit(null) })}>{save.isPending ? 'Salvando…' : 'Salvar'}</Button></DialogActions>
+      </Dialog>
+      <ConfirmDialog open={!!del} title="Excluir Empresa?" busy={remove.isPending} onClose={() => { setDel(null); remove.reset(); }} onConfirm={() => del && remove.mutate(del.id, { onSuccess: () => setDel(null) })}>
+        <b>{del?.name}</b> sai do seletor do topo. Os Squads dela ficam sem Empresa e os sócios deixam de ver os domínios por ser sócio (Gerentes e gestores continuam pelos vínculos deles).
+      </ConfirmDialog>
+    </>
+  );
+}
+
+/* ---------------- Permissões ---------------- */
 function PermsTab() {
   const { data, error, refetch } = usePermissions();
-  const [sel, setSel] = useState<Capability[] | null>(null);
+  const [sel, setSel] = useState<{ gestor: Capability[]; gerente: Capability[] } | null>(null);
   const save = useAdminMutation(adminApi.savePermissions, [qk.permissions, qk.me]);
-  useEffect(() => { if (data) setSel(data.roles.gestor); }, [data]);
+  useEffect(() => { if (data) setSel({ gestor: data.roles.gestor, gerente: data.roles.gerente ?? [] }); }, [data]);
   if (error) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data || !sel) return <PageSkeleton />;
-  const dirty = JSON.stringify([...sel].sort()) !== JSON.stringify([...data.roles.gestor].sort());
+  const same = (a: Capability[], b: Capability[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+  const dirty = !same(sel.gestor, data.roles.gestor) || !same(sel.gerente, data.roles.gerente ?? []);
   const groups = ['Visualização', 'Administração'] as const;
+  const toggle = (r: 'gestor' | 'gerente', c: Capability, on: boolean) => setSel({ ...sel, [r]: on ? [...sel[r], c] : sel[r].filter((x) => x !== c) });
+  const fixed = (vals: boolean[]) => vals.map((v, i) => <TableCell key={i} align="center"><Checkbox size="small" checked={v} disabled /></TableCell>);
   return (
     <>
       <TableContainer component={Card}><Table>
-        <TableHead><TableRow><TableCell>Permissão</TableCell><TableCell align="center">Gestor</TableCell><TableCell align="center">Admin</TableCell><TableCell align="center">SuperAdmin</TableCell></TableRow></TableHead>
+        <TableHead><TableRow><TableCell>Permissão</TableCell>{['Gestor', 'Gerente', 'Admin', 'SuperAdmin'].map((h) => <TableCell key={h} align="center">{h}</TableCell>)}</TableRow></TableHead>
         <TableBody>
-          <TableRow><TableCell>Dashboard e Domínios</TableCell>{[0, 1, 2].map((i) => <TableCell key={i} align="center"><Checkbox size="small" checked disabled /></TableCell>)}</TableRow>
-          <TableRow><TableCell>Vê só os domínios do próprio Squad <LockOutlinedIcon sx={{ fontSize: 14, verticalAlign: -2, color: 'text.disabled' }} /></TableCell><TableCell align="center"><Checkbox size="small" checked disabled /></TableCell><TableCell align="center"><Checkbox size="small" disabled /></TableCell><TableCell align="center"><Checkbox size="small" disabled /></TableCell></TableRow>
+          <TableRow><TableCell>Dashboard, Domínios e Empresas</TableCell>{fixed([true, true, true, true])}</TableRow>
+          <TableRow><TableCell>Escopo dos dados <LockOutlinedIcon sx={{ fontSize: 14, verticalAlign: -2, color: 'text.disabled' }} /><Typography variant="caption" component="div">Gestor: domínios e contas dele · Gerente: Squads dele · Sócio: a Empresa inteira · Admin: tudo</Typography></TableCell>{fixed([true, true, true, true])}</TableRow>
           {groups.map((g) => [
-            <TableRow key={g}><TableCell colSpan={4} sx={{ bgcolor: 'action.hover', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'text.secondary' }}>{g}</TableCell></TableRow>,
+            <TableRow key={g}><TableCell colSpan={5} sx={{ bgcolor: 'action.hover', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'text.secondary' }}>{g}</TableCell></TableRow>,
             ...data.capabilities.filter((c) => c.group === g).map((c) => (
               <TableRow key={c.key}>
                 <TableCell>{c.label}{c.adminOnly && <Tooltip title={c.superAdminOnly ? 'Só SuperAdmin' : 'Por segurança, só Admin e SuperAdmin'}><LockOutlinedIcon sx={{ fontSize: 14, verticalAlign: -2, ml: 0.75, color: 'text.disabled' }} /></Tooltip>}</TableCell>
-                <TableCell align="center"><Checkbox size="small" disabled={c.adminOnly} checked={!c.adminOnly && sel.includes(c.key)} onChange={(e) => setSel(e.target.checked ? [...sel, c.key] : sel.filter((x) => x !== c.key))} slotProps={{ input: { 'aria-label': `Gestor: ${c.label}` } }} /></TableCell>
+                {(['gestor', 'gerente'] as const).map((r) => (
+                  <TableCell key={r} align="center"><Checkbox size="small" disabled={c.adminOnly} checked={!c.adminOnly && sel[r].includes(c.key)} onChange={(e) => toggle(r, c.key, e.target.checked)} slotProps={{ input: { 'aria-label': `${ROLE_LABEL[r]}: ${c.label}` } }} /></TableCell>
+                ))}
                 <TableCell align="center"><Checkbox size="small" checked={data.roles.admin.includes(c.key)} disabled /></TableCell>
                 <TableCell align="center"><Checkbox size="small" checked disabled /></TableCell>
               </TableRow>
@@ -240,10 +377,10 @@ function PermsTab() {
       </Table></TableContainer>
       <Stack direction="row" spacing={1} sx={{ mt: 1.75, alignItems: 'center' }}>
         <Button variant="contained" disabled={!dirty || save.isPending} onClick={() => save.mutate(sel)}>{save.isPending ? 'Salvando…' : 'Salvar permissões'}</Button>
-        <Button variant="outlined" disabled={!dirty} onClick={() => setSel(data.roles.gestor)}>Desfazer</Button>
-        {save.isSuccess && !dirty && <Typography variant="caption">Salvo. Vale no próximo carregamento de cada gestor.</Typography>}
+        <Button variant="outlined" disabled={!dirty} onClick={() => setSel({ gestor: data.roles.gestor, gerente: data.roles.gerente ?? [] })}>Desfazer</Button>
+        {save.isSuccess && !dirty && <Typography variant="caption">Salvo. Vale no próximo carregamento de cada usuário.</Typography>}
       </Stack>
-      <Alert severity="info" variant="outlined" sx={{ mt: 1.75 }}>A restrição por Squad e as permissões são aplicadas no servidor em toda consulta. Um gestor não vê outro domínio nem um módulo desligado mudando a URL ou chamando a API direto.</Alert>
+      <Alert severity="info" variant="outlined" sx={{ mt: 1.75 }}>O escopo e as permissões são aplicados no servidor em toda consulta. Ninguém vê outro domínio, outra conta ou um módulo desligado mudando a URL ou chamando a API direto. Gerente nunca acessa a administração.</Alert>
     </>
   );
 }

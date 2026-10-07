@@ -1,12 +1,14 @@
 import { q, type Db } from '../db.js';
 
-export type Role = 'gestor' | 'admin' | 'superadmin';
-export const ROLES: Role[] = ['gestor', 'admin', 'superadmin'];
+export type Role = 'gestor' | 'gerente' | 'admin' | 'superadmin';
+export const ROLES: Role[] = ['gestor', 'gerente', 'admin', 'superadmin'];
+/** Papéis com módulos configuráveis em Permissões (só visualização). */
+export type ViewRole = 'gestor' | 'gerente';
 export const isAdminRole = (r: string) => r === 'admin' || r === 'superadmin';
 
 /**
  * Mesma lista do front (src/types/api.ts → Capability).
- * - adminOnly: nunca vai para o Gestor.
+ * - adminOnly: nunca vai para Gestor nem Gerente.
  * - superAdminOnly: só o SuperAdmin (conectar integrações e mudar a frequência do sync).
  */
 export const CAPABILITIES = [
@@ -29,22 +31,25 @@ export const ALL_CAPS = CAPABILITIES.map((c) => c.key) as Capability[];
 export const ADMIN_CAPS = CAPABILITIES.filter((c) => !c.superAdminOnly).map((c) => c.key) as Capability[];
 export const GESTOR_ALLOWED = new Set<Capability>(CAPABILITIES.filter((c) => !c.adminOnly).map((c) => c.key));
 
-let cache: { at: number; gestor: Capability[] } | null = null;
-export async function gestorCaps(db?: Db): Promise<Capability[]> {
-  if (cache && Date.now() - cache.at < 30_000) return cache.gestor;
-  const rows = await q<{ capability: Capability }>(`SELECT capability FROM role_permissions WHERE role = 'gestor'`, [], db);
-  const gestor = rows.map((r) => r.capability).filter((c) => GESTOR_ALLOWED.has(c));
-  cache = { at: Date.now(), gestor };
-  return gestor;
+let cache: { at: number; caps: Record<ViewRole, Capability[]> } | null = null;
+async function viewCaps(db?: Db): Promise<Record<ViewRole, Capability[]>> {
+  if (cache && Date.now() - cache.at < 30_000) return cache.caps;
+  const rows = await q<{ role: ViewRole; capability: Capability }>(`SELECT role, capability FROM role_permissions WHERE role IN ('gestor', 'gerente')`, [], db);
+  const pick = (role: ViewRole) => rows.filter((r) => r.role === role).map((r) => r.capability).filter((c) => GESTOR_ALLOWED.has(c));
+  cache = { at: Date.now(), caps: { gestor: pick('gestor'), gerente: pick('gerente') } };
+  return cache.caps;
 }
+export const gestorCaps = async (db?: Db) => (await viewCaps(db)).gestor;
 export const clearPermCache = () => { cache = null; };
 
 export async function capsOf(role: string): Promise<Capability[]> {
   if (role === 'superadmin') return ALL_CAPS;
   if (role === 'admin') return ADMIN_CAPS;
-  return gestorCaps();
+  const v = await viewCaps();
+  return role === 'gerente' ? v.gerente : v.gestor;
 }
 export async function rolesMatrix() {
-  return { gestor: await gestorCaps(), admin: ADMIN_CAPS, superadmin: ALL_CAPS };
+  const v = await viewCaps();
+  return { gestor: v.gestor, gerente: v.gerente, admin: ADMIN_CAPS, superadmin: ALL_CAPS };
 }
-export const ROLE_LABEL: Record<Role, string> = { gestor: 'Gestor', admin: 'Admin', superadmin: 'SuperAdmin' };
+export const ROLE_LABEL: Record<Role, string> = { gestor: 'Gestor', gerente: 'Gerente', admin: 'Admin', superadmin: 'SuperAdmin' };

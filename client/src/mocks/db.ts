@@ -4,7 +4,7 @@
  * (campaign_country_daily + receita não atribuída) e agrega sob demanda.
  * Pode ser apagado quando o backend estiver no ar.
  */
-import type { Currency, Metrics, User, Squad, Domain, AccountStatus, IssueType } from '@/types/api';
+import type { Currency, Metrics, User, Squad, Domain, AccountStatus, IssueType, Company } from '@/types/api';
 import { addDays, lastMonths, todayISO } from '@/lib/period';
 
 function mulberry(a: number) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -47,23 +47,35 @@ export const MACC: AccountStatus[] = [
 export const accName = (id: string) => [...GACC, ...MACC].find((a) => a.id === id)?.name ?? id;
 
 export const DOMAINS: Domain[] = [
-  { hostname: 'dominioX.com', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g1', 'g2'], metaAccounts: ['m1'], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
-  { hostname: 'dominioY.com', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g3'], metaAccounts: [], lastDataAt: new Date(Date.now() - 5 * 60000).toISOString() },
-  { hostname: 'dominioZ.com', revShare: 10, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g1'], metaAccounts: ['m1'], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
-  { hostname: 'dominioA.com', revShare: 7, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g4'], metaAccounts: ['m2'], lastDataAt: new Date(Date.now() - 52 * 60000).toISOString() },
-  { hostname: 'dominioB.com', revShare: 12, revShareFrom: null, active: true, squadId: null, googleAccounts: ['g5'], metaAccounts: ['m3'], lastDataAt: new Date(Date.now() - 22 * 60000).toISOString() },
-  { hostname: 'dominioC.com', revShare: 0, revShareFrom: null, active: false, squadId: null, googleAccounts: [], metaAccounts: [], lastDataAt: null },
+  { hostname: 'dominioX.com', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g1', 'g2'], metaAccounts: ['m1'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
+  { hostname: 'dominioY.com', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g3'], metaAccounts: [], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 5 * 60000).toISOString() },
+  { hostname: 'dominioZ.com', revShare: 10, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g1'], metaAccounts: ['m1'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
+  { hostname: 'dominioA.com', revShare: 7, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g4'], metaAccounts: ['m2'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 52 * 60000).toISOString() },
+  { hostname: 'dominioB.com', revShare: 12, revShareFrom: null, active: true, squadId: null, googleAccounts: ['g5'], metaAccounts: ['m3'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 22 * 60000).toISOString() },
+  { hostname: 'dominioC.com', revShare: 0, revShareFrom: null, active: false, squadId: null, googleAccounts: [], metaAccounts: [], gamAccountId: null, managers: [], lastDataAt: null },
 ];
 export const SQUADS: Squad[] = [
-  { id: 's1', name: 'Squad 01', domains: ['dominioX.com', 'dominioY.com'], userIds: ['u2'] },
-  { id: 's2', name: 'Squad 02', domains: ['dominioZ.com', 'dominioA.com'], userIds: ['u3'] },
+  { id: 's1', name: 'Squad 01', companyId: 'c1', domains: ['dominioX.com', 'dominioY.com'], userIds: [] },
+  { id: 's2', name: 'Squad 02', companyId: 'c2', domains: ['dominioZ.com', 'dominioA.com'], userIds: [] },
+];
+/** Empresas (sociedades) de exemplo: sócios + Squads. Nomes genéricos. */
+export const COMPANIES: Company[] = [
+  { id: 'c1', name: 'Empresa A', partnerIds: ['u1', 'u5'], squadIds: ['s1'] },
+  { id: 'c2', name: 'Empresa B', partnerIds: ['u6', 'u5'], squadIds: ['s2'] },
 ];
 export const USERS: (User & { password?: string })[] = [
-  { id: 'u1', name: 'Lucas Hirsch', email: 'admin@exemplo.com', role: 'superadmin', squadId: null, status: 'active', mustChangePassword: false, isMainAdmin: true, password: 'admin123' },
-  { id: 'u4', name: 'Admin Exemplo', email: 'ops@exemplo.com', role: 'admin', squadId: null, status: 'active', mustChangePassword: false, password: 'admin123' },
-  { id: 'u2', name: 'Gestor Exemplo', email: 'gestor@exemplo.com', role: 'gestor', squadId: 's1', status: 'active', mustChangePassword: false, password: 'gestor123' },
-  { id: 'u3', name: 'Ana Exemplo', email: 'ana@exemplo.com', role: 'gestor', squadId: 's2', status: 'invited', mustChangePassword: true },
+  { id: 'u1', name: 'Lucas Hirsch', email: 'admin@exemplo.com', role: 'superadmin', squadIds: [], companyIds: ['c1'], domains: [], status: 'active', mustChangePassword: false, isMainAdmin: true, password: 'admin123' },
+  { id: 'u4', name: 'Admin Exemplo', email: 'ops@exemplo.com', role: 'admin', squadIds: [], companyIds: [], domains: [], status: 'active', mustChangePassword: false, password: 'admin123' },
+  { id: 'u5', name: 'Sócio Principal', email: 'socio@exemplo.com', role: 'gerente', squadIds: [], companyIds: ['c1', 'c2'], domains: [], status: 'active', mustChangePassword: false, password: 'socio123' },
+  { id: 'u6', name: 'Sócio B', email: 'socio.b@exemplo.com', role: 'gerente', squadIds: [], companyIds: ['c2'], domains: [], status: 'active', mustChangePassword: false, password: 'socio123' },
+  { id: 'u2', name: 'Gestor Exemplo', email: 'gestor@exemplo.com', role: 'gestor', squadIds: [], companyIds: [], status: 'active', mustChangePassword: false, password: 'gestor123',
+    domains: [{ domain: 'dominioX.com', googleAccounts: ['g1'], metaAccounts: ['m1'] }, { domain: 'dominioY.com', googleAccounts: ['g3'], metaAccounts: [] }] },
+  { id: 'u3', name: 'Ana Exemplo', email: 'ana@exemplo.com', role: 'gestor', squadIds: [], companyIds: [], status: 'invited', mustChangePassword: true,
+    domains: [{ domain: 'dominioX.com', googleAccounts: ['g2'], metaAccounts: [] }, { domain: 'dominioZ.com', googleAccounts: ['g1'], metaAccounts: ['m1'] }, { domain: 'dominioA.com', googleAccounts: ['g4'], metaAccounts: ['m2'] }] },
 ];
+/** Deságio (R$ por US$) com histórico. A receita do Ad Manager em BRL usa cotação − deságio do dia. */
+export const FXD: { validFrom: string; amount: number; createdAt: string; createdBy: string | null }[] = [];
+export function discountAt(di: number) { const d = DATES[di]; let best: { validFrom: string; amount: number } | null = null; for (const x of FXD) if (x.validFrom <= d && (!best || x.validFrom > best.validFrom)) best = x; return best?.amount ?? 0; }
 export const UNKNOWN_DOMAIN = 'site-nao-cadastrado.com';
 const URLS: Record<string, string[]> = {
   'dominioX.com': ['/cw/url-01/', '/cw/url-02/', '/cw/url-03/', '/cw/url-04/'], 'dominioY.com': ['/vagas/url-01/', '/vagas/url-02/', '/vagas/url-03/'],
@@ -147,8 +159,8 @@ function pushUn(di: number, domain: string, url: string, country: string, rev: n
 export function agg(rows: Row[], cur: Currency): Metrics {
   // spend = Google + Meta + IVA (13,83% sobre a Meta) · revenue = bruta × (1 − revShare do domínio)
   const s = { spend: 0, gs: 0, ms: 0, iva: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0 };
-  for (const r of rows) { const f = FX[cur][r.di] ?? 1; const sp = r.spendUSD * f, rv = r.revUSD * f, iv = r.src === 'meta' ? sp * META_IVA : 0; s.spend += sp + iv; s.iva += iv; if (r.src === 'google') s.gs += sp; else if (r.src === 'meta') s.ms += sp;
-    s.rev += rv; s.gross += r.grossUSD * f; s.rsv += r.rsv; if (r.src === 'unatt') s.un += rv; else s.att += rv; s.sess += r.sess; s.ai += r.adImps; s.ar += r.adReq; s.ac += r.adClk; s.vw += r.view; s.clk += r.clk; s.ti += r.tImps; }
+  for (const r of rows) { const f = FX[cur][r.di] ?? 1; const fr = cur === 'BRL' ? Math.max(0.0001, f - discountAt(r.di)) : f; const sp = r.spendUSD * f, rv = r.revUSD * fr, iv = r.src === 'meta' ? sp * META_IVA : 0; s.spend += sp + iv; s.iva += iv; if (r.src === 'google') s.gs += sp; else if (r.src === 'meta') s.ms += sp;
+    s.rev += rv; s.gross += r.grossUSD * fr; s.rsv += r.rsv; if (r.src === 'unatt') s.un += rv; else s.att += rv; s.sess += r.sess; s.ai += r.adImps; s.ar += r.adReq; s.ac += r.adClk; s.vw += r.view; s.clk += r.clk; s.ti += r.tImps; }
   const profit = s.rev - s.spend;
   return { revenue: s.rev, grossRevenue: s.gross, spend: s.spend, googleSpend: s.gs, metaSpend: s.ms, iva: s.iva,
     googleShare: s.spend > 0 ? (s.gs / s.spend) * 100 : null, metaShare: s.spend > 0 ? (s.ms / s.spend) * 100 : null, profit, roi: s.spend > 0 ? (profit / s.spend) * 100 : null, margin: s.rev > 0 ? (profit / s.rev) * 100 : null,

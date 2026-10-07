@@ -109,9 +109,15 @@ export async function latest() {
     `SELECT DISTINCT ON (currency) currency, rate_per_usd, fetched_at, source, date::text FROM currency_rates ORDER BY currency, date DESC`);
   const by = Object.fromEntries(rows.map((r) => [r.currency, r]));
   const newest = rows.reduce<string | null>((a, r) => (!a || r.fetched_at > a ? r.fetched_at : a), null);
+  const disc = await currentDiscount();
+  const brl = by.BRL?.rate_per_usd != null ? Number(by.BRL.rate_per_usd) : null;
   return {
     base: 'USD' as const,
     rates: { USD: 1, BRL: by.BRL?.rate_per_usd ?? null, EUR: by.EUR?.rate_per_usd ?? null },
+    /** Deságio (R$) e a cotação USD/BRL usada na receita do Ad Manager (cotação − deságio). */
+    brlDiscount: disc?.amount ?? 0,
+    brlDiscountFrom: disc?.validFrom ?? null,
+    brlRevenueRate: brl != null ? Math.max(0.0001, brl - (disc?.amount ?? 0)) : null,
     fetchedAt: newest ? new Date(newest).toISOString() : null,
     source: (by.BRL?.source ?? 'sem cotação').replace(' (repetida)', '') + (by.BRL ? ` · taxa de ${by.BRL.date}` : ''),
   };
@@ -122,4 +128,16 @@ export async function history(days: number) {
     `SELECT date::text, max(rate_per_usd) FILTER (WHERE currency = 'BRL') AS "BRL", max(rate_per_usd) FILTER (WHERE currency = 'EUR') AS "EUR"
        FROM currency_rates WHERE date > $1::date - $2::int GROUP BY date ORDER BY date DESC`, [today(), days]);
   return { rows };
+}
+
+/* ---------------- deságio ---------------- */
+/** Deságio vigente hoje (R$ por US$). */
+export async function currentDiscount(): Promise<{ amount: number; validFrom: string } | null> {
+  const r = await q<{ amount: string; valid_from: string }>(`SELECT amount_brl AS amount, valid_from::text FROM fx_discounts WHERE valid_from <= CURRENT_DATE ORDER BY valid_from DESC LIMIT 1`);
+  return r[0] ? { amount: Number(r[0].amount), validFrom: r[0].valid_from } : null;
+}
+export async function discountHistory() {
+  return (await q<{ amount: string; validFrom: string; createdAt: string; createdBy: string | null }>(`
+    SELECT x.amount_brl AS amount, x.valid_from::text AS "validFrom", x.created_at AS "createdAt", u.name AS "createdBy"
+      FROM fx_discounts x LEFT JOIN users u ON u.id = x.created_by ORDER BY x.valid_from DESC LIMIT 50`)).map((r) => ({ ...r, amount: Number(r.amount) }));
 }

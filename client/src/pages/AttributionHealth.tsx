@@ -43,7 +43,7 @@ export default function AttributionHealthPage() {
         ))}
         {!data.issues.length && <Typography variant="caption" sx={{ p: 4, display: 'block', textAlign: 'center' }}>Nenhum problema no período.</Typography>}
       </Card>
-      <Grid container spacing={1.75} sx={{ mt: 1.75 }}>
+      <Grid container spacing={1.75} sx={{ mt: 0.25 }}>
         <Grid size={{ xs: 12, md: 6 }}><Card><CardHeader title="Attribution Rate por dia" /><CardContent>
           <LineChart height={h} skipAnimation hideLegend grid={{ horizontal: true }} margin={{ left: 8, right: 16, top: 12, bottom: 4 }}
             xAxis={[{ scaleType: 'point', data: daily.map((d) => ddmm(d.date)) }]} yAxis={[{ min: 0, max: 100, valueFormatter: (v: number) => `${v}%`, width: 44 }]}

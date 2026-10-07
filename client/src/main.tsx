@@ -1,6 +1,9 @@
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, HashRouter } from 'react-router-dom';
+
+// Demonstração em arquivo único (npm run build:demo) abre via file:// → rotas com # no endereço.
+const Router = import.meta.env.VITE_ROUTER === 'hash' ? HashRouter : BrowserRouter;
 import { CssBaseline, ThemeProvider } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -28,9 +31,9 @@ function Root() {
       <CssBaseline />
       <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="pt-br">
         <QueryClientProvider client={qc}>
-          <BrowserRouter>
+          <Router>
             <AuthProvider><PrefsProvider><FiltersProvider><App /></FiltersProvider></PrefsProvider></AuthProvider>
-          </BrowserRouter>
+          </Router>
         </QueryClientProvider>
       </LocalizationProvider>
     </ThemeProvider>

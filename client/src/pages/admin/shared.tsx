@@ -12,7 +12,7 @@ import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
 import { ConfirmDialog, ErrorBox, PageSkeleton, StatusChip } from '@/components/ui/States';
 import { relTime } from '@/lib/format';
-import type { Currency, IntegrationAccount, IntegrationAccountInput, Provider } from '@/types/api';
+import type { Currency, IntegrationAccount, IntegrationAccountInput, Provider, SyncSetting } from '@/types/api';
 
 export type { Provider };
 
@@ -143,41 +143,107 @@ export function AccountsCard({ provider, title }: { provider: Provider; title: s
 /* ------------------------------------------------------------------ */
 /* Sincronização (frequência por job)                                   */
 /* ------------------------------------------------------------------ */
-const FREQ: [number, string][] = [[15, 'a cada 15 min'], [30, 'a cada 30 min'], [60, 'a cada 1 h'], [120, 'a cada 2 h'], [360, 'a cada 6 h'], [720, 'a cada 12 h'], [1440, '1× ao dia']];
+const FREQ: [number, string][] = [[15, 'a cada 15 min'], [30, 'a cada 30 min'], [60, 'a cada 1 h'], [120, 'a cada 2 h'], [360, 'a cada 6 h'], [720, 'a cada 12 h'], [1440, '1× ao dia'], [10080, '1× por semana']];
 const fmtWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
+type SyncPatch = { id: string; everyMinutes?: number; enabled?: boolean; windowMode?: 'days' | 'incremental'; windowDays?: number; retentionDays?: number | null };
+
+/** Janela editável: "D-X → hoje" (fechamento do Ad Manager: "D-X → D-4") ou "incremental". */
+function WindowCell({ j, locked, onSave }: { j: SyncSetting; locked: boolean; onSave: (b: Omit<SyncPatch, 'id'>) => void }) {
+  const [x, setX] = useState(String(j.windowDays ?? 3));
+  const close = j.id === 'gam.close';
+  if (!j.windowEditable || locked) return <Typography variant="body2" sx={{ color: 'text.secondary' }}>{j.window}</Typography>;
+  const commit = () => { const n = Math.round(Number(x)); const min = close ? 4 : 0; if (!Number.isFinite(n) || n < min || n > 90) { setX(String(j.windowDays ?? 3)); return; } if (n !== j.windowDays) onSave({ windowMode: 'days', windowDays: n }); };
+  return (
+    <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+      {!close && (
+        <Select size="small" value={j.windowMode} onChange={(e) => onSave(e.target.value === 'incremental' ? { windowMode: 'incremental' } : { windowMode: 'days', windowDays: j.windowDays ?? 3 })} inputProps={{ 'aria-label': `Janela de ${j.label}` }}>
+          <MenuItem value="days">Últimos dias</MenuItem><MenuItem value="incremental">Incremental</MenuItem>
+        </Select>
+      )}
+      {j.windowMode === 'days' && (
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+          <Typography variant="body2">D-</Typography>
+          <TextField size="small" value={x} onChange={(e) => setX(e.target.value.replace(/\D/g, '').slice(0, 2))} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()}
+            sx={{ width: 58 }} slotProps={{ htmlInput: { inputMode: 'numeric', 'aria-label': `Dias da janela de ${j.label}` } }} />
+          <Typography variant="body2" sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{close ? '→ D-4' : '→ hoje'}</Typography>
+        </Stack>
+      )}
+      {j.windowMode === 'incremental' && <Tooltip title="Do dia da última execução com sucesso (com 1 dia de folga) até hoje. Na primeira importação volta 30 dias."><Typography variant="caption">desde a última execução</Typography></Tooltip>}
+    </Stack>
+  );
+}
+
+/** "Exclua dados com mais de X dias": limpeza de grupos/conjuntos e anúncios antigos (jobs *.cleanup). */
+function RetentionBox({ j, locked, onSave }: { j: SyncSetting; locked: boolean; onSave: (days: number | null) => void }) {
+  const [x, setX] = useState(j.retentionDays ? String(j.retentionDays) : '');
+  const [confirm, setConfirm] = useState<number | null | undefined>(undefined);
+  const n = x ? Math.round(Number(x)) : null;
+  const valid = n === null || (Number.isFinite(n) && n >= 7 && n <= 3650);
+  const changed = n !== (j.retentionDays ?? null);
+  const lvl = j.provider === 'meta' ? 'conjuntos' : 'grupos';
+  return (
+    <Box sx={{ px: 2, py: 1.75, borderTop: 1, borderColor: 'divider' }}>
+      <Typography sx={{ fontWeight: 600, fontSize: 13.5 }}>Limpeza de dados antigos</Typography>
+      <Typography variant="caption" component="div" sx={{ mb: 1 }}>
+        Remove do banco os {lvl} e anúncios que não aparecem mais na plataforma (pausados há muito tempo, removidos ou arquivados) e sem métrica no período.
+        As métricas antigas deles não somem: são somadas na campanha. Roda {FREQ.find(([v]) => v === j.everyMinutes)?.[1] ?? `a cada ${j.everyMinutes} min`}.
+      </Typography>
+      <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+        <Typography variant="body2">Exclua dados com mais de</Typography>
+        <TextField size="small" value={x} disabled={locked} placeholder="—" onChange={(e) => setX(e.target.value.replace(/\D/g, '').slice(0, 4))} error={!valid}
+          sx={{ width: 84 }} slotProps={{ htmlInput: { inputMode: 'numeric', 'aria-label': 'Dias para manter' } }} />
+        <Typography variant="body2">dias</Typography>
+        {!locked && <Button size="small" variant="contained" disabled={!valid || !changed} onClick={() => setConfirm(n)}>Salvar</Button>}
+        {!locked && j.retentionDays && <Button size="small" onClick={() => { setX(''); setConfirm(null); }}>Desligar</Button>}
+        <Typography variant="caption">{j.retentionDays ? `Ligada: ${j.retentionDays} dias` : 'Desligada'}{locked ? ' · definida pelo SuperAdmin' : ' · mínimo 7 dias'}</Typography>
+      </Stack>
+      <ConfirmDialog open={confirm !== undefined} title={confirm ? `Excluir ${lvl} e anúncios com mais de ${confirm} dias?` : 'Desligar a limpeza?'} confirmLabel={confirm ? 'Salvar e ligar' : 'Desligar'} danger={!!confirm}
+        onClose={() => setConfirm(undefined)} onConfirm={() => { onSave(confirm ?? null); setConfirm(undefined); }}>
+        {confirm ? <>Na próxima execução, os {lvl} e anúncios sem atividade há mais de <b>{confirm} dias</b> saem do banco. Os totais por dia, campanha e domínio continuam iguais, mas o detalhe por {lvl === 'grupos' ? 'grupo' : 'conjunto'}/anúncio desses itens deixa de existir.</> : 'Nada mais será excluído automaticamente.'}
+      </ConfirmDialog>
+    </Box>
+  );
+}
 
 export function SyncPanel({ provider }: { provider: Provider | 'fx' }) {
   const { data } = useSyncSettings();
   const { can } = useAuth();
-  const locked = !can('admin.integrations.connect');   // frequência e liga/desliga: só SuperAdmin
+  const locked = !can('admin.integrations.connect');   // frequência, janela, liga/desliga e limpeza: só SuperAdmin
   const [msg, setMsg] = useState('');
-  const upd = useAdminMutation(({ id, ...b }: { id: string; everyMinutes?: number; enabled?: boolean }) => integrationsApi.updateSyncSetting(id, b), [qk.syncSettings]);
-  const rows = data?.settings.filter((s) => s.provider === provider) ?? [];
+  const upd = useAdminMutation(({ id, ...b }: SyncPatch) => integrationsApi.updateSyncSetting(id, b), [qk.syncSettings]);
+  const save = (id: string) => (b: Omit<SyncPatch, 'id'>) => upd.mutate({ id, ...b }, { onError: (e) => setMsg(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
+  const all = data?.settings.filter((s) => s.provider === provider) ?? [];
+  const rows = all.filter((s) => !s.hasRetention);
+  const cleanup = all.find((s) => s.hasRetention);
   const syncNow = async () => {
     if (provider === 'fx') return;
     try { await integrationsApi.syncNow(provider); setMsg('Sincronização colocada na fila.'); } catch (e) { setMsg(e instanceof ApiError ? e.message : 'Não foi possível enfileirar.'); }
   };
   return (
     <Card sx={{ mt: 1.75 }}>
-      <CardHeader title="Sincronização" subheader={locked ? 'Frequência definida pelo SuperAdmin. Só a janela incremental é baixada de novo.' : 'Fila com retry e backoff exponencial. Só a janela incremental é baixada de novo.'}
+      <CardHeader title="Sincronização" subheader={locked ? 'Frequência e janela definidas pelo SuperAdmin. Um erro numa conta não interrompe as outras.' : 'Janela: quantos dias para trás cada execução baixa de novo (D-X → hoje) ou incremental. Um erro numa conta não interrompe as outras.'}
         action={provider !== 'fx' ? <Button size="small" variant="outlined" onClick={syncNow}>Sincronizar agora</Button> : undefined} />
       <TableContainer><Table size="small">
         <TableHead><TableRow>{['Job', 'Janela', 'Frequência', 'Ativo', 'Última execução', 'Próxima'].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
         <TableBody>{rows.map((j) => (
           <TableRow key={j.id}>
             <TableCell>{j.label}</TableCell>
-            <TableCell sx={{ color: 'text.secondary' }}>{j.window}</TableCell>
-            <TableCell><Select size="small" disabled={locked} value={j.everyMinutes} onChange={(e) => upd.mutate({ id: j.id, everyMinutes: Number(e.target.value) })} inputProps={{ 'aria-label': `Frequência de ${j.label}` }}>
+            <TableCell><WindowCell key={`${j.windowMode}-${j.windowDays}`} j={j} locked={locked} onSave={save(j.id)} /></TableCell>
+            <TableCell><Select size="small" disabled={locked} value={j.everyMinutes} onChange={(e) => save(j.id)({ everyMinutes: Number(e.target.value) })} inputProps={{ 'aria-label': `Frequência de ${j.label}` }}>
               {(FREQ.some(([v]) => v === j.everyMinutes) ? FREQ : [...FREQ, [j.everyMinutes, `a cada ${j.everyMinutes} min`] as [number, string]]).map(([v, l]) => <MenuItem key={v} value={v}>{l}</MenuItem>)}
             </Select></TableCell>
-            <TableCell><Switch size="small" disabled={locked} checked={j.enabled} onChange={(e) => upd.mutate({ id: j.id, enabled: e.target.checked })} slotProps={{ input: { 'aria-label': `Ativar ${j.label}` } }} /></TableCell>
-            <TableCell>{fmtWhen(j.lastRunAt)}{j.lastStatus === 'failed' && <Chip size="small" color="error" label="falhou" sx={{ ml: 0.75, height: 18 }} />}</TableCell>
+            <TableCell><Switch size="small" disabled={locked} checked={j.enabled} onChange={(e) => save(j.id)({ enabled: e.target.checked })} slotProps={{ input: { 'aria-label': `Ativar ${j.label}` } }} /></TableCell>
+            <TableCell>
+              <Tooltip title={j.lastMessage ?? ''}><span>{fmtWhen(j.lastRunAt)}</span></Tooltip>
+              {j.lastStatus === 'failed' && <Tooltip title={j.lastMessage ?? ''}><Chip size="small" color="error" label="falhou" sx={{ ml: 0.75, height: 18 }} /></Tooltip>}
+            </TableCell>
             <TableCell>{j.enabled ? fmtWhen(j.nextRunAt) : 'pausado'}</TableCell>
           </TableRow>
         ))}
           {!rows.length && <TableRow><TableCell colSpan={6} sx={{ color: 'text.disabled' }}>Carregando…</TableCell></TableRow>}
         </TableBody>
       </Table></TableContainer>
+      {cleanup && <RetentionBox key={String(cleanup.retentionDays)} j={cleanup} locked={locked} onSave={(days) => save(cleanup.id)({ retentionDays: days })} />}
       <Snackbar open={!!msg} autoHideDuration={3000} onClose={() => setMsg('')} message={msg} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
     </Card>
   );

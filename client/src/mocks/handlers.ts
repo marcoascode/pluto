@@ -5,7 +5,7 @@
 import { ApiError } from '@/lib/api/client';
 import type * as T from '@/types/api';
 import { addDays, lastMonths } from '@/lib/period';
-import { agg, CAMPS, CT, DATES, DAYS, DOMAINS, FX, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, type Row } from './db';
+import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, type Row } from './db';
 import { PL_LABEL, placementRows, typeOf, type PRow } from './placements';
 
 const LS = { get: <V,>(k: string): V | null => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } }, set: (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
@@ -28,8 +28,9 @@ const CAPS: T.CapabilityDef[] = [
   { key: 'admin.currency', label: 'Moedas e câmbio', group: 'Administração', adminOnly: true, superAdminOnly: false },
 ];
 let GESTOR_CAPS: T.Capability[] = CAPS.filter((c) => !c.adminOnly).map((c) => c.key);
+let GERENTE_CAPS: T.Capability[] = CAPS.filter((c) => !c.adminOnly).map((c) => c.key);
 const isAdm = (u: T.User) => u.role === 'admin' || u.role === 'superadmin';
-const capsOf = (u: T.User): T.Capability[] => (u.role === 'superadmin' ? CAPS.map((c) => c.key) : u.role === 'admin' ? CAPS.filter((c) => !c.superAdminOnly).map((c) => c.key) : GESTOR_CAPS);
+const capsOf = (u: T.User): T.Capability[] => (u.role === 'superadmin' ? CAPS.map((c) => c.key) : u.role === 'admin' ? CAPS.filter((c) => !c.superAdminOnly).map((c) => c.key) : u.role === 'gerente' ? GERENTE_CAPS : GESTOR_CAPS);
 const onlySuper = (u: T.User) => { if (u.role !== 'superadmin') throw new ApiError(403, 'superadmin_only', 'Só o SuperAdmin pode conectar integrações e mudar a frequência de sincronização.'); };
 const need = (u: T.User, cap: T.Capability) => { if (!capsOf(u).includes(cap)) throw new ApiError(403, 'forbidden_module', 'Este módulo não está liberado para o seu usuário.'); };
 const pub = (u: (typeof USERS)[number]): T.User => { const { password: _p, ...rest } = u; return { ...rest, permissions: capsOf(u) }; };
@@ -50,27 +51,59 @@ function setAccDomains(a: T.IntegrationAccount, hosts: string[]) {
 }
 const now = Date.now();
 const SYNC: T.SyncSetting[] = ([
-  ['google-ads.metrics', 'google-ads', 'Custo por campanha × país', 'incremental · D-3 → hoje', 30], ['google-ads.structure', 'google-ads', 'Estrutura: campanhas, grupos, anúncios', 'incremental', 120],
-  ['meta.metrics', 'meta', 'Insights por anúncio × país', 'incremental · D-3 → hoje', 30], ['meta.structure', 'meta', 'Estrutura: campanha, conjunto, anúncio', 'incremental', 120],
-  ['gam.revenue', 'gam', 'Receita e delivery por key-values × país × URL', 'reprocessa hoje e D-1 a D-3', 60], ['gam.close', 'gam', 'Fechamento de receita', 'reprocessa D-4 a D-7', 1440],
-  ['google-ads.placements', 'google-ads', 'Custo por placement (onde o anúncio apareceu)', 'incremental · D-3 → hoje', 60], ['gam.placements', 'gam', 'Receita por placement (key-value placement)', 'reprocessa hoje e D-1 a D-3', 60],
-  ['fx.rates', 'fx', 'Cotações USD → BRL e EUR (Frankfurter)', 'hoje + dias que faltarem', 360],
-] as const).map(([id, provider, label, window, every]) => ({ id, provider, label, window, everyMinutes: every, enabled: true, lastRunAt: new Date(now - 7 * 60000).toISOString(), nextRunAt: new Date(now + (every - 7) * 60000).toISOString(), lastStatus: 'success' as const }));
+  ['google-ads.metrics', 'google-ads', 'Custo por campanha × país', 'days', 3, 30], ['google-ads.structure', 'google-ads', 'Estrutura: campanhas, grupos, anúncios', 'fixed', null, 120],
+  ['meta.metrics', 'meta', 'Insights por anúncio × país', 'days', 3, 30], ['meta.structure', 'meta', 'Estrutura: campanha, conjunto, anúncio', 'fixed', null, 120],
+  ['gam.revenue', 'gam', 'Receita e delivery por key-values × país × URL', 'days', 3, 60], ['gam.close', 'gam', 'Fechamento de receita', 'days', 7, 1440],
+  ['google-ads.placements', 'google-ads', 'Custo por placement (onde o anúncio apareceu)', 'days', 3, 60], ['gam.placements', 'gam', 'Receita por placement (key-value placement)', 'days', 3, 60],
+  ['google-ads.cleanup', 'google-ads', 'Limpeza de grupos e anúncios antigos', 'fixed', null, 1440], ['meta.cleanup', 'meta', 'Limpeza de conjuntos e anúncios antigos', 'fixed', null, 1440],
+  ['fx.rates', 'fx', 'Cotações USD → BRL e EUR (Frankfurter)', 'fixed', null, 360],
+] as const).map(([id, provider, label, mode, days, every]) => ({ id, provider, label, window: '', windowMode: mode, windowDays: days, windowEditable: mode !== 'fixed', hasRetention: id.endsWith('.cleanup'), retentionDays: null as number | null,
+  lastMessage: id.endsWith('.cleanup') ? 'Limpeza desligada (defina "Excluir dados com mais de X dias")' : '1/1 contas · ok', everyMinutes: every, enabled: true, lastRunAt: new Date(now - 7 * 60000).toISOString(), nextRunAt: new Date(now + (every - 7) * 60000).toISOString(), lastStatus: 'success' as const }));
+const winLabel = (st: T.SyncSetting) => (st.windowMode === 'days' ? `D-${st.windowDays} → ${st.id === 'gam.close' ? 'D-4' : 'hoje'}` : st.windowMode === 'incremental' ? 'incremental · desde a última execução' : st.id === 'fx.rates' ? 'hoje + dias que faltarem' : st.id.endsWith('.structure') ? 'incremental' : '—');
+SYNC.forEach((st) => { st.window = winLabel(st); });
 void PROV_OF;
 
-function allowed(u: T.User): Set<string> {
-  if (isAdm(u)) return new Set([...DOMAINS.map((d) => d.hostname), UNKNOWN_DOMAIN]);
-  const s = SQUADS.find((x) => x.id === u.squadId);
-  return new Set((s?.domains ?? []).filter((d) => DOMAINS.find((x) => x.hostname === d)?.active));
+/* ---- escopo (mesma regra do servidor: auth/scope.ts) ----
+   Admin: tudo · Sócio: Empresa inteira · Gerente: Squads dele · Gestor: domínios dele, só campanhas das contas dele
+   (receita não atribuída só se for o único gestor do domínio) · ?company= filtra a Empresa. */
+let REQ_COMPANY = '';
+interface Scope { doms: Set<string>; filter: { full: Set<string>; camps: Set<string>; solo: Set<string> } | null }
+const activeDom = (h: string) => !!DOMAINS.find((x) => x.hostname === h && x.active);
+function visibleCompanies(u: T.User) {
+  if (isAdm(u)) return COMPANIES.map((c) => c.id);
+  return COMPANIES.filter((c) => c.partnerIds.includes(u.id) || c.squadIds.some((sid) => u.squadIds.includes(sid)) || SQUADS.some((s) => s.companyId === c.id && s.domains.some((d) => u.domains.some((x) => x.domain === d)))).map((c) => c.id);
 }
+function scopeOf(u: T.User, company = REQ_COMPANY): Scope {
+  let doms: Set<string>; let filter: Scope['filter'] = null;
+  if (isAdm(u)) doms = new Set([...DOMAINS.map((d) => d.hostname), UNKNOWN_DOMAIN]);
+  else {
+    const full = new Set(SQUADS.filter((s) => (s.companyId && COMPANIES.find((c) => c.id === s.companyId)?.partnerIds.includes(u.id)) || (u.role === 'gerente' && u.squadIds.includes(s.id))).flatMap((s) => s.domains).filter(activeDom));
+    const restricted = u.role === 'gestor' ? u.domains.filter((l) => activeDom(l.domain) && !full.has(l.domain)) : [];
+    doms = new Set([...full, ...restricted.map((l) => l.domain)]);
+    if (restricted.length) {
+      const camps = new Set(CAMPS.filter((c) => restricted.some((l) => l.domain === c.domain && [...l.googleAccounts, ...l.metaAccounts].includes(c.acc))).map((c) => c.id));
+      const solo = new Set(restricted.filter((l) => USERS.filter((x) => x.role === 'gestor' && x.domains.some((d) => d.domain === l.domain)).length === 1).map((l) => l.domain));
+      filter = { full, camps, solo };
+    }
+  }
+  if (company) {
+    if (!visibleCompanies(u).includes(company)) throw new ApiError(403, 'forbidden_company', 'Você não tem acesso a esta Empresa.');
+    const inCo = new Set(SQUADS.filter((s) => s.companyId === company).flatMap((s) => s.domains));
+    doms = new Set([...doms].filter((d) => inCo.has(d)));
+  }
+  return { doms, filter };
+}
+function allowed(u: T.User): Set<string> { return scopeOf(u).doms; }
+const rowOk = (sc: Scope, r: Row) => sc.doms.has(r.domain) && (!sc.filter || sc.filter.full.has(r.domain) || (!!r.camp && sc.filter.camps.has(r.camp)) || (r.src === 'unatt' && sc.filter.solo.has(r.domain)));
+const campOk = (sc: Scope, c: { id: string; domain: string }) => sc.doms.has(c.domain) && (!sc.filter || sc.filter.full.has(c.domain) || sc.filter.camps.has(c.id));
 function range(q: Record<string, unknown>) {
   const a = dayIndex(String(q.to)), b = dayIndex(String(q.from));
   return [a < 0 ? 0 : a, b < 0 ? DAYS - 1 : b] as const;
 }
 function rowsFor(u: T.User, q: Record<string, unknown>, extra?: (r: Row) => boolean, override?: readonly [number, number]) {
-  const al = allowed(u); const [a, b] = override ?? range(q); const dom = q.domain ? String(q.domain) : '';
-  if (dom && !al.has(dom)) throw new ApiError(403, 'forbidden_domain', 'Você não tem acesso a este domínio.');
-  return ROWS.filter((r) => r.di >= a && r.di <= b && al.has(r.domain) && (!dom || r.domain === dom) && (!extra || extra(r)));
+  const sc = scopeOf(u); const [a, b] = override ?? range(q); const dom = q.domain ? String(q.domain) : '';
+  if (dom && !sc.doms.has(dom)) throw new ApiError(403, 'forbidden_domain', 'Você não tem acesso a este domínio.');
+  return ROWS.filter((r) => r.di >= a && r.di <= b && rowOk(sc, r) && (!dom || r.domain === dom) && (!extra || extra(r)));
 }
 function comparison(u: T.User, q: Record<string, unknown>, extra: ((r: Row) => boolean) | undefined, cur: T.Currency): T.Comparison | null {
   const [a0, b] = range(q); if (a0 === 0 && b === 0) return null; const a = a0 === 0 ? 1 : a0; const len = b - a + 1; const pa = b + 1, pb = b + len; if (pb >= DAYS) return null;
@@ -100,6 +133,7 @@ const UTM: T.UtmTemplates = {
 export async function mockRequest<R>(method: string, path: string, query: Record<string, unknown> = {}, body?: unknown): Promise<R> {
   await sleep(180 + Math.random() * 220);
   const q = query; const cur = (q.currency as T.Currency) || 'USD'; const b = (body ?? {}) as Record<string, any>;
+  REQ_COMPANY = typeof q.company === 'string' ? q.company : '';
   const out = <V,>(v: V) => v as unknown as R;
 
   /* ---- auth ---- */
@@ -120,9 +154,27 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path === '/me/domains') return out({ domains: [...allowed(u)].filter((d) => DOMAINS.find((x) => x.hostname === d && x.active)) });
   if (path === '/search') {
     const t = String(q.q || '').toLowerCase(); const al = allowed(u); const results: T.SearchResult[] = [];
-    CAMPS.filter((c) => al.has(c.domain) && (c.name.toLowerCase().includes(t) || c.id.includes(t))).slice(0, 6).forEach((c) => results.push({ kind: 'campaign', label: c.name, sub: c.id, platform: c.platform, id: c.id, domain: c.domain }));
+    const sc = scopeOf(u); CAMPS.filter((c) => campOk(sc, c) && (c.name.toLowerCase().includes(t) || c.id.includes(t))).slice(0, 6).forEach((c) => results.push({ kind: 'campaign', label: c.name, sub: c.id, platform: c.platform, id: c.id, domain: c.domain }));
     DOMAINS.filter((d) => al.has(d.hostname) && d.active && d.hostname.toLowerCase().includes(t)).forEach((d) => results.push({ kind: 'domain', label: d.hostname, domain: d.hostname }));
     return out({ results });
+  }
+  if (path === '/me/companies') {
+    const vis = scopeOf(u, '').doms;
+    return out({ companies: COMPANIES.filter((c) => visibleCompanies(u).includes(c.id)).map((c) => {
+      const squads = SQUADS.filter((s) => s.companyId === c.id).map((s) => ({ id: s.id, name: s.name, domains: s.domains.filter((d) => vis.has(d)) })).filter((s) => s.domains.length);
+      return { id: c.id, name: c.name, partners: USERS.filter((x) => c.partnerIds.includes(x.id)).map((x) => ({ id: x.id, name: x.name, role: x.role })), squads, domains: squads.flatMap((s) => s.domains) };
+    }) });
+  }
+  let mc = path.match(/^\/companies\/([^/]+)\/overview$/);
+  if (mc) {
+    const cid = decodeURIComponent(mc[1]); const sc = scopeOf(u, cid); const c = COMPANIES.find((x) => x.id === cid)!;
+    const qq = { ...q, company: cid }; REQ_COMPANY = cid;
+    const rows = rowsFor(u, qq); const [a, bb] = range(q); const g = group(rowsFor(u, qq, undefined, [Math.min(a, 1), Math.max(bb, a + 13)]), (r) => r.di);
+    const daily: T.DailyPoint[] = []; for (let d = Math.max(bb, a + 13); d >= a; d--) daily.push({ date: DATES[d], partial: d === 0, metrics: agg(g.get(d) ?? [], cur) });
+    return out<T.CompanyOverviewResponse>({ company: { id: c.id, name: c.name, partners: USERS.filter((x) => c.partnerIds.includes(x.id)).map((x) => ({ id: x.id, name: x.name, role: x.role })) },
+      period: { from: String(q.from), to: String(q.to) }, comparison: comparison(u, qq, undefined, cur), totals: agg(rows, cur), daily,
+      squads: SQUADS.filter((s) => s.companyId === cid).map((s) => { const ds = s.domains.filter((d) => sc.doms.has(d)); return { id: s.id, name: s.name, metrics: agg(rows.filter((r) => ds.includes(r.domain)), cur),
+        domains: ds.map((d) => ({ domain: d, metrics: agg(rows.filter((r) => r.domain === d), cur), gestores: USERS.filter((x) => x.role === 'gestor' && x.domains.some((l) => l.domain === d)).map((x) => ({ id: x.id, name: x.name })) })) }; }).filter((s) => s.domains.length) });
   }
   if (path.startsWith('/admin') && !isAdm(u)) throw new ApiError(403, 'forbidden', 'Área exclusiva de Admin.');
 
@@ -139,19 +191,20 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (m) {
     const dom = decodeURIComponent(m[1]); const qq = { ...q, domain: dom }; const rows = rowsFor(u, qq); const recent = rowsFor(u, qq, undefined, [0, 3]);
     const cr = rows.filter((r) => r.camp); const crec = recent.filter((r) => r.camp);
-    return out<T.DomainDetailResponse>({ domain: dom, comparison: comparison(u, qq, undefined, cur), metrics: agg(rows, cur), campaignTotals: agg(cr, cur), campaignTotalsRoiDays: roiDays(crec, cur), campaigns: campaignRows(CAMPS.filter((c) => c.domain === dom), rows, recent, cur) });
+    return out<T.DomainDetailResponse>({ domain: dom, comparison: comparison(u, qq, undefined, cur), metrics: agg(rows, cur), campaignTotals: agg(cr, cur), campaignTotalsRoiDays: roiDays(crec, cur), campaigns: campaignRows(CAMPS.filter((c) => c.domain === dom && campOk(scopeOf(u), c)), rows, recent, cur) });
   }
   if (path === '/campaigns') {
     const platform = q.platform as T.Platform; need(u, platform === 'google' ? 'campaigns.google.view' : 'campaigns.meta.view'); const al = allowed(u);
-    let camps = CAMPS.filter((c) => c.platform === platform && al.has(c.domain) && (!q.domain || c.domain === q.domain) && (!q.accountId || c.acc === q.accountId));
+    const sc = scopeOf(u); void al;
+    let camps = CAMPS.filter((c) => c.platform === platform && campOk(sc, c) && (!q.domain || c.domain === q.domain) && (!q.accountId || c.acc === q.accountId));
     if (q.includePaused !== true && q.includePaused !== 'true') camps = camps.filter((c) => c.status === 'ENABLED');
     const ids = new Set(camps.map((c) => c.id)); const rows = rowsFor(u, q, (r) => ids.has(r.camp!)); const recent = rowsFor(u, q, (r) => ids.has(r.camp!), [0, 3]);
     return out<T.CampaignsResponse>({ comparison: comparison(u, q, (r) => ids.has(r.camp!), cur), totals: agg(rows, cur), totalsRoiDays: roiDays(recent, cur), campaigns: campaignRows(camps, rows, recent, cur),
-      accounts: [...new Set(CAMPS.filter((c) => c.platform === platform && al.has(c.domain)).map((c) => c.acc))].map((id) => ({ id, name: accName(id) })) });
+      accounts: [...new Set(CAMPS.filter((c) => c.platform === platform && campOk(sc, c)).map((c) => c.acc))].map((id) => ({ id, name: accName(id) })) });
   }
   m = path.match(/^\/campaigns\/(google|meta)\/([^/]+)\/(children|countries)$/);
   if (m) {
-    const c = CAMPS.find((x) => x.id === m![2]); if (!c || !allowed(u).has(c.domain)) throw new ApiError(404, 'not_found', 'Campanha não encontrada.');
+    const c = CAMPS.find((x) => x.id === m![2]); if (!c || !campOk(scopeOf(u), c)) throw new ApiError(404, 'not_found', 'Campanha não encontrada.');
     const rows = rowsFor(u, q, (r) => r.camp === c.id); const recent = rowsFor(u, q, (r) => r.camp === c.id, [0, 3]);
     if (m[3] === 'children') return out<T.CampaignChildrenResponse>({ groups: c.groups.map((g) => ({ id: g.id, name: g.name, metrics: agg(rows.filter((r) => r.grp === g.id), cur), roiDays: roiDays(recent.filter((r) => r.grp === g.id), cur),
       ads: g.ads.map((a) => ({ id: a.id, name: a.name, metrics: agg(rows.filter((r) => r.ad === a.id), cur), roiDays: roiDays(recent.filter((r) => r.ad === a.id), cur) })) })) });
@@ -163,7 +216,7 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     need(u, 'campaigns.google.view');
     const dom = String(q.domain || ''); if (!dom) throw new ApiError(422, 'domain_required', 'Escolha um domínio.');
     if (!allowed(u).has(dom)) throw new ApiError(403, 'forbidden_domain', 'Você não tem acesso a este domínio.');
-    const camps = CAMPS.filter((c) => c.platform === 'google' && c.domain === dom);
+    const psc = scopeOf(u); const camps = CAMPS.filter((c) => c.platform === 'google' && c.domain === dom && campOk(psc, c));
     if (path === '/placements/filters') {
       const accs = [...new Set(camps.map((c) => c.acc))];
       return out<T.PlacementFiltersResponse>({ domain: dom, accounts: accs.map((id) => ({ id, name: accName(id), externalId: GACC.find((g) => g.id === id)?.externalId ?? id, campaigns: camps.filter((c) => c.acc === id).length })),
@@ -217,7 +270,7 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   }
   if (path === '/utm/templates') return out(UTM);
   if (path === '/utm/debug') { need(u, 'utm.debug'); return out(debugUtm(String(b.url || ''))); }
-  if (path === '/fx/latest') return out<T.FxLatest>({ base: 'USD', rates: { USD: 1, BRL: FX.BRL[0], EUR: FX.EUR[0] }, fetchedAt: new Date(Date.now() - 12 * 60000).toISOString(), source: 'API de câmbio (mock)' });
+  if (path === '/fx/latest') return out<T.FxLatest>(fxLatest('API de câmbio (mock)', 12));
   if (path === '/fx/history') return out({ rows: DATES.slice(0, Number(q.days) || 10).map((d, i) => ({ date: d, BRL: FX.BRL[i], EUR: FX.EUR[i] })) });
 
   /* ---- admin ---- */
@@ -245,37 +298,66 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path === '/admin/sync-settings') return out({ settings: SYNC });
   m = path.match(/^\/admin\/sync-settings\/(.+)$/);
   if (m) { onlySuper(u); const st = SYNC.find((x) => x.id === decodeURIComponent(m![1])); if (!st) throw new ApiError(404, 'not_found', 'Job não encontrado.');
-    if (b.everyMinutes !== undefined) { const v = Number(b.everyMinutes); if (!(v >= 15 && v <= 1440)) throw new ApiError(422, 'invalid_frequency', 'Frequência entre 15 min e 24 h.'); st.everyMinutes = v; }
+    if (b.everyMinutes !== undefined) { const v = Number(b.everyMinutes); if (!(v >= 15 && v <= 10080)) throw new ApiError(422, 'invalid_frequency', 'Frequência entre 15 min e 1 semana.'); st.everyMinutes = v; }
+    if (b.windowMode !== undefined || b.windowDays !== undefined) {
+      if (st.windowMode === 'fixed') throw new ApiError(422, 'window_fixed', 'Este job não tem janela de datas.');
+      if (st.id === 'gam.close' && (b.windowMode === 'incremental' || (b.windowDays !== undefined && b.windowDays < 4))) throw new ApiError(422, 'invalid_window', 'O fechamento vai de D-X até D-4: use X a partir de 4.');
+      if (b.windowMode) st.windowMode = b.windowMode; if (b.windowDays !== undefined) st.windowDays = Number(b.windowDays); st.window = winLabel(st);
+    }
+    if (b.retentionDays !== undefined) { if (!st.hasRetention) throw new ApiError(422, 'no_retention', 'Só os jobs de limpeza têm retenção.'); st.retentionDays = b.retentionDays; st.lastMessage = b.retentionDays ? `0 anúncio(s) e 0 grupo(s) sem atividade há mais de ${b.retentionDays} dias removidos (mock)` : 'Limpeza desligada'; }
     if (b.enabled !== undefined) st.enabled = !!b.enabled;
     st.nextRunAt = st.enabled ? new Date(Date.parse(st.lastRunAt ?? new Date().toISOString()) + st.everyMinutes * 60000).toISOString() : null; return out(st); }
-  if (path === '/admin/fx/refresh') { FX.BRL[0] = +(FX.BRL[0] + (Math.random() - 0.5) * 0.01).toFixed(4); return out<T.FxLatest>({ base: 'USD', rates: { USD: 1, BRL: FX.BRL[0], EUR: FX.EUR[0] }, fetchedAt: new Date().toISOString(), source: 'Frankfurter (mock)' }); }
+  if (path === '/admin/fx/refresh') { FX.BRL[0] = +(FX.BRL[0] + (Math.random() - 0.5) * 0.01).toFixed(4); return out<T.FxLatest>(fxLatest('Frankfurter (mock)', 0)); }
+  if (path === '/admin/fx-discount') {
+    if (method === 'PUT') { const amount = Number(b.amount); if (!(amount >= 0 && amount < 5)) throw new ApiError(422, 'invalid_input', 'Deságio entre R$ 0 e R$ 4,9999.'); const from = b.validFrom ?? (FXD.length ? TODAY : '2000-01-01'); const ex = FXD.find((x) => x.validFrom === from); if (ex) { ex.amount = amount; ex.createdBy = u.name; } else FXD.push({ validFrom: from, amount, createdAt: new Date().toISOString(), createdBy: u.name }); }
+    const curD = FXD.filter((x) => x.validFrom <= TODAY).sort((a2, b2) => b2.validFrom.localeCompare(a2.validFrom))[0];
+    return out<T.FxDiscountResponse>({ current: curD ? { amount: curD.amount, validFrom: curD.validFrom } : null, history: FXD.slice().sort((a2, b2) => b2.validFrom.localeCompare(a2.validFrom)) });
+  }
   if (path === '/admin/permissions') {
-    if (method === 'PUT') { const want = (b.gestor ?? []) as T.Capability[]; GESTOR_CAPS = CAPS.filter((c) => !c.adminOnly && want.includes(c.key)).map((c) => c.key); }
-    return out<T.PermissionsResponse>({ capabilities: CAPS, roles: { gestor: GESTOR_CAPS, admin: CAPS.filter((c) => !c.superAdminOnly).map((c) => c.key), superadmin: CAPS.map((c) => c.key) } });
+    if (method === 'PUT') { if (b.gestor) GESTOR_CAPS = CAPS.filter((c) => !c.adminOnly && (b.gestor as T.Capability[]).includes(c.key)).map((c) => c.key); if (b.gerente) GERENTE_CAPS = CAPS.filter((c) => !c.adminOnly && (b.gerente as T.Capability[]).includes(c.key)).map((c) => c.key); }
+    return out<T.PermissionsResponse>({ capabilities: CAPS, roles: { gestor: GESTOR_CAPS, gerente: GERENTE_CAPS, admin: CAPS.filter((c) => !c.superAdminOnly).map((c) => c.key), superadmin: CAPS.map((c) => c.key) } });
   }
   if (/\/sync$/.test(path)) return out(undefined);
-  if (path === '/admin/domains' && method === 'GET') return out({ domains: DOMAINS.map((d) => ({ ...d, squadId: SQUADS.find((s) => s.domains.includes(d.hostname))?.id ?? null })) });
-  if (path === '/admin/domains' && method === 'POST') { const d: T.Domain = { hostname: String(b.hostname), revShare: Number(b.revShare ?? 0), revShareFrom: null, active: true, squadId: null, googleAccounts: [], metaAccounts: [], lastDataAt: null }; DOMAINS.push(d); return out(d); }
+  if (path === '/admin/domains' && method === 'GET') return out({ domains: DOMAINS.map(domOut) });
+  if (path === '/admin/domains' && method === 'POST') { const d: T.Domain = { hostname: String(b.hostname), revShare: Number(b.revShare ?? 0), revShareFrom: null, active: true, squadId: null, googleAccounts: [], metaAccounts: [], gamAccountId: null, managers: [], lastDataAt: null }; DOMAINS.push(d); return out(d); }
   m = path.match(/^\/admin\/domains\/(.+)$/);
   if (m) {
     const d = DOMAINS.find((x) => x.hostname === decodeURIComponent(m![1])); if (!d) throw new ApiError(404, 'not_found', 'Domínio não encontrado.');
     if (method === 'DELETE') { if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'domain_has_data', 'Este domínio tem dados históricos. Desative em vez de excluir.'); DOMAINS.splice(DOMAINS.indexOf(d), 1); SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); return out(undefined); }
     if (b.hostname && b.hostname !== d.hostname) { if (DOMAINS.find((x) => x.hostname === b.hostname)) throw new ApiError(409, 'domain_exists', 'Já existe um domínio com esse nome.'); if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'rename_mock', 'No modo mock não dá para renomear domínios com dados.'); SQUADS.forEach((s) => (s.domains = s.domains.map((x) => (x === d.hostname ? b.hostname : x)))); d.hostname = b.hostname; }
     if (b.squadId !== undefined) { SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); const s = SQUADS.find((x) => x.id === b.squadId); if (s) s.domains.push(d.hostname); d.squadId = s?.id ?? null; }
-    for (const k of ['active', 'googleAccounts', 'metaAccounts'] as const) if (b[k] !== undefined) (d as any)[k] = b[k];
+    for (const k of ['active', 'googleAccounts', 'metaAccounts', 'gamAccountId'] as const) if (b[k] !== undefined) (d as any)[k] = b[k];
     if (b.revShare !== undefined) { const v = Number(b.revShare); if (!(v >= 0 && v < 100)) throw new ApiError(422, 'invalid_input', 'revShare entre 0 e 99,999%.'); d.revShare = v; d.revShareFrom = b.revShareFrom ?? TODAY; }
-    return out(d);
+    return out(domOut(d));
   }
-  if (path === '/admin/squads' && method === 'GET') return out({ squads: SQUADS.map((s) => ({ ...s, userIds: USERS.filter((x) => x.squadId === s.id).map((x) => x.id) })) });
+  if (path === '/admin/squads' && method === 'GET') return out({ squads: SQUADS.map(sqOut) });
   m = path.match(/^\/admin\/squads\/([^/]+)$/);
-  if (m && method === 'DELETE') { const s = SQUADS.find((x) => x.id === m![1]); if (!s) throw new ApiError(404, 'not_found', 'Squad não encontrado.'); if (USERS.some((x) => x.squadId === s.id)) throw new ApiError(409, 'squad_has_users', 'Este Squad tem gestores. Mova-os para outro Squad antes.'); SQUADS.splice(SQUADS.indexOf(s), 1); DOMAINS.forEach((d) => { if (d.squadId === s.id) d.squadId = null; }); return out(undefined); }
-  if (path.startsWith('/admin/squads')) { let s = SQUADS.find((x) => x.id === b.id); if (!s) { s = { id: 's' + Date.now(), name: b.name, domains: [], userIds: [] }; SQUADS.push(s); } s.name = b.name; s.domains = b.domains ?? []; SQUADS.forEach((x) => { if (x !== s) x.domains = x.domains.filter((d) => !s!.domains.includes(d)); }); return out(s); }
+  if (m && method === 'DELETE') { const s = SQUADS.find((x) => x.id === m![1]); if (!s) throw new ApiError(404, 'not_found', 'Squad não encontrado.'); SQUADS.splice(SQUADS.indexOf(s), 1); USERS.forEach((x) => (x.squadIds = x.squadIds.filter((y) => y !== s.id))); COMPANIES.forEach((c) => (c.squadIds = c.squadIds.filter((y) => y !== s.id))); return out(undefined); }
+  if (path.startsWith('/admin/squads')) {
+    let s = SQUADS.find((x) => x.id === b.id); if (!s) { s = { id: 's' + Date.now(), name: b.name, companyId: null, domains: [], userIds: [] }; SQUADS.push(s); }
+    const sq = s; sq.name = b.name; sq.domains = b.domains ?? []; SQUADS.forEach((x) => { if (x !== sq) x.domains = x.domains.filter((d) => !sq.domains.includes(d)); });
+    if (b.companyId !== undefined) { sq.companyId = b.companyId; COMPANIES.forEach((c) => { c.squadIds = c.squadIds.filter((y) => y !== sq.id); if (c.id === b.companyId) c.squadIds.push(sq.id); }); }
+    return out(sqOut(sq));
+  }
+  if (path === '/admin/companies' && method === 'GET') return out({ companies: COMPANIES });
+  m = path.match(/^\/admin\/companies(?:\/([^/]+))?$/);
+  if (m) {
+    if (method === 'DELETE') { const c = COMPANIES.find((x) => x.id === m![1]); if (!c) throw new ApiError(404, 'not_found', 'Empresa não encontrada.'); COMPANIES.splice(COMPANIES.indexOf(c), 1); SQUADS.forEach((sq) => { if (sq.companyId === c.id) sq.companyId = null; }); USERS.forEach((x) => (x.companyIds = x.companyIds.filter((y) => y !== c.id))); return out(undefined); }
+    const name = String(b.name ?? '').trim(); if (name.length < 2) throw new ApiError(422, 'invalid_input', 'Nome com pelo menos 2 letras.');
+    if (COMPANIES.some((x) => x.id !== m![1] && x.name.toLowerCase() === name.toLowerCase())) throw new ApiError(409, 'company_exists', 'Já existe uma Empresa com esse nome.');
+    let c = COMPANIES.find((x) => x.id === m![1]); if (!c) { c = { id: 'c' + Date.now(), name, partnerIds: [], squadIds: [] }; COMPANIES.push(c); }
+    const co = c; co.name = name; co.partnerIds = b.partnerIds ?? []; co.squadIds = b.squadIds ?? [];
+    SQUADS.forEach((sq) => { if (co.squadIds.includes(sq.id)) sq.companyId = co.id; else if (sq.companyId === co.id) sq.companyId = null; });
+    COMPANIES.forEach((x) => { if (x !== co) x.squadIds = x.squadIds.filter((y) => !co.squadIds.includes(y)); });
+    USERS.forEach((x) => { const has = co.partnerIds.includes(x.id); x.companyIds = has ? [...new Set([...x.companyIds, co.id])] : x.companyIds.filter((y) => y !== co.id); });
+    return out(co);
+  }
   if (path === '/admin/users' && method === 'GET') return out({ users: USERS.map(pub) });
   if (path === '/admin/users' && method === 'POST') {
     if (b.role === 'superadmin' && u.role !== 'superadmin') throw new ApiError(403, 'superadmin_only', 'Só um SuperAdmin pode dar a permissão SuperAdmin.');
     if (USERS.find((x) => x.email === String(b.email).toLowerCase())) throw new ApiError(409, 'email_taken', 'Já existe um usuário com esse e-mail.');
-    const nu = { id: 'u' + Date.now(), name: b.name, email: String(b.email).toLowerCase(), role: b.role, squadId: b.squadId ?? null, status: 'invited' as const, mustChangePassword: true, password: 'temp1234' };
-    USERS.push(nu); return out<T.CreateUserResponse>({ user: pub(nu), inviteSent: true });
+    const nu = { id: 'u' + Date.now(), name: b.name, email: String(b.email).toLowerCase(), role: b.role, squadIds: [], companyIds: [], domains: [], status: 'invited' as const, mustChangePassword: true, password: 'temp1234' };
+    USERS.push(nu); setLinks(nu, b); return out<T.CreateUserResponse>({ user: pub(nu), inviteSent: true });
   }
   m = path.match(/^\/admin\/users\/([^/]+)(\/resend-invite)?$/);
   if (m) {
@@ -286,12 +368,33 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     if (method === 'PATCH') {
       if (t.id === u.id && (b.role && b.role !== t.role || b.status === 'disabled')) throw new ApiError(409, 'self', 'Você não pode mudar a sua própria permissão ou se desativar.');
       if (t.isMainAdmin && b.role && b.role !== 'superadmin') throw new ApiError(409, 'main_admin', 'O admin principal é sempre SuperAdmin.');
-      if (b.name !== undefined) t.name = String(b.name).trim(); if (b.role) t.role = b.role; if (b.squadId !== undefined) t.squadId = t.role === 'gestor' ? b.squadId : null; if (b.status) t.status = b.status;
-      if (t.role === 'gestor' && !t.squadId) throw new ApiError(422, 'squad_required', 'Gestor precisa de um Squad.');
+      const changed = !!b.role && b.role !== t.role;
+      if (b.name !== undefined) t.name = String(b.name).trim(); if (b.role) t.role = b.role; if (b.status) t.status = b.status;
+      setLinks(t, b, changed);
       return out(pub(t));
     }
   }
   throw new ApiError(404, 'not_found', `Rota mock não implementada: ${method} ${path}`);
+}
+
+function fxLatest(source: string, agoMin: number): T.FxLatest {
+  const d = discountAt(0); const fr = FXD.filter((x) => x.validFrom <= TODAY).sort((a, b) => b.validFrom.localeCompare(a.validFrom))[0];
+  return { base: 'USD', rates: { USD: 1, BRL: FX.BRL[0], EUR: FX.EUR[0] }, fetchedAt: new Date(Date.now() - agoMin * 60000).toISOString(), source, brlDiscount: d, brlDiscountFrom: fr?.validFrom ?? null, brlRevenueRate: Math.max(0.0001, FX.BRL[0] - d) };
+}
+const domOut = (d: T.Domain): T.Domain => ({ ...d, squadId: SQUADS.find((s) => s.domains.includes(d.hostname))?.id ?? null,
+  managers: USERS.filter((x) => x.role === 'gestor' && x.domains.some((l) => l.domain === d.hostname)).map((x) => { const l = x.domains.find((y) => y.domain === d.hostname)!; return { userId: x.id, name: x.name, googleAccounts: l.googleAccounts, metaAccounts: l.metaAccounts }; }) });
+const sqOut = (s: T.Squad): T.Squad => ({ ...s, userIds: USERS.filter((x) => x.role === 'gerente' && x.squadIds.includes(s.id)).map((x) => x.id) });
+/** Mesmas regras de vínculo do servidor (routes/admin/users.ts → saveLinks). */
+function setLinks(t: T.User, b: Record<string, any>, roleChanged = false) {
+  if (b.squadIds !== undefined || roleChanged) t.squadIds = t.role === 'gerente' ? [...new Set<string>(b.squadIds ?? (roleChanged ? [] : t.squadIds))] : [];
+  if (b.companyIds !== undefined) { t.companyIds = [...new Set<string>(b.companyIds)]; COMPANIES.forEach((c) => { const has = t.companyIds.includes(c.id); c.partnerIds = has ? [...new Set([...c.partnerIds, t.id])] : c.partnerIds.filter((y) => y !== t.id); }); }
+  if (b.domains !== undefined || roleChanged) {
+    const list: T.DomainLink[] = t.role === 'gestor' ? (b.domains ?? (roleChanged ? [] : t.domains)) : [];
+    for (const l of list) if (!DOMAINS.find((d) => d.hostname === l.domain)) throw new ApiError(404, 'not_found', `Domínio ${l.domain} não cadastrado.`);
+    if (new Set(list.map((l) => l.domain)).size !== list.length) throw new ApiError(409, 'duplicate_domain', 'Domínio repetido.');
+    t.domains = list.map((l) => ({ domain: l.domain, googleAccounts: l.googleAccounts ?? [], metaAccounts: l.metaAccounts ?? [] }));
+    for (const l of t.domains) { const d = DOMAINS.find((x) => x.hostname === l.domain)!; d.googleAccounts = [...new Set([...d.googleAccounts, ...l.googleAccounts])]; d.metaAccounts = [...new Set([...d.metaAccounts, ...l.metaAccounts])]; }
+  }
 }
 
 function campaignRows(camps: typeof CAMPS, rows: Row[], recent: Row[], cur: T.Currency): T.CampaignRow[] {

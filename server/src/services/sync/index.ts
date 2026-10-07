@@ -10,11 +10,13 @@
  *  gam.close             fechamento: reprocessa D-7 → D-4 e marca is_final     (gam.ts + placements)
  *  google-ads.placements custo por campanha × placement, D-3 → hoje          (placements.ts)
  *  gam.placements       receita por site × campanha × placement              (placements.ts)
+ *  google-ads.cleanup / meta.cleanup  remove grupos/anúncios não vistos há X dias (retention_days) (cleanup.ts)
  *  fx.rates              câmbio USD → BRL/EUR                                 (../fx.ts)
  *
  * Cada job grava só as linhas da própria origem (daily_metrics.source) e é idempotente:
  * rodar de novo a mesma janela substitui os valores, não duplica.
- * Primeira importação de uma origem: volta SYNC_BACKFILL_DAYS (padrão 30) dias.
+ * Primeira importação de uma origem: volta SYNC_BACKFILL_DAYS (padrão 30) dias. Janela de cada job: sync_settings.window_mode/window_days.
+ * Erro numa conta (ou rede do Ad Manager) não interrompe as outras: cada conta fica com o próprio status.
  */
 import { one, q } from '../../db.js';
 import { refreshRates } from '../fx.js';
@@ -23,6 +25,7 @@ import { runGam } from './gam.js';
 import { runGoogleAds } from './googleAds.js';
 import { runMeta } from './meta.js';
 import { runGamPlacements, runGoogleAdsPlacements } from './placements.js';
+import { runCleanup } from './cleanup.js';
 
 export type JobResult = { status: 'success' | 'skipped' | 'failed'; message?: string };
 type Runner = () => Promise<JobResult>;
@@ -30,17 +33,26 @@ type Runner = () => Promise<JobResult>;
 const RUNNERS: Record<string, Runner> = {
   'fx.rates': async () => { const r = await refreshRates(); return { status: 'success', message: `${r.count} taxas · ${r.source}` }; },
   'google-ads.structure': async () => runGoogleAds('structure', await windowFor('google-ads', 'recent')),
-  'google-ads.metrics': async () => runGoogleAds('metrics', await windowFor('google-ads', 'recent')),
+  'google-ads.metrics': async () => runGoogleAds('metrics', await windowFor('google-ads', 'recent', 'daily_metrics', 'google-ads.metrics')),
   'meta.structure': async () => runMeta('structure', await windowFor('meta', 'recent')),
-  'meta.metrics': async () => runMeta('metrics', await windowFor('meta', 'recent')),
-  'gam.revenue': async () => runGam(await windowFor('gam', 'recent')),
+  // 'meta.metrics': async () => runMeta('metrics', await windowFor('meta', 'recent')),
+  // 'gam.revenue': async () => runGam(await windowFor('gam', 'recent')),
+  'meta.metrics': async () => runMeta('metrics', await windowFor('meta', 'recent', 'daily_metrics', 'meta.metrics')),
+  'gam.revenue': async () => runGam(await windowFor('gam', 'recent', 'daily_metrics', 'gam.revenue')),
   'gam.close': async () => {
-    const a = await runGam(await windowFor('gam', 'close'), true);
-    const b = await runGamPlacements(await windowFor('gam', 'close', 'placement_metrics'), true);
+    // const a = await runGam(await windowFor('gam', 'close'), true);
+    // const b = await runGamPlacements(await windowFor('gam', 'close', 'placement_metrics'), true);
+    const w = await windowFor('gam', 'close', 'daily_metrics', 'gam.close');
+    const a = await runGam(w, true);
+    const b = await runGamPlacements(w, true);
     return { status: a.status, message: `${a.message ?? ''} · placements: ${b.message ?? b.status}`.slice(0, 500) };
   },
-  'google-ads.placements': async () => runGoogleAdsPlacements(await windowFor('google-ads', 'recent', 'placement_metrics')),
-  'gam.placements': async () => runGamPlacements(await windowFor('gam', 'recent', 'placement_metrics')),
+  // 'google-ads.placements': async () => runGoogleAdsPlacements(await windowFor('google-ads', 'recent', 'placement_metrics')),
+  // 'gam.placements': async () => runGamPlacements(await windowFor('gam', 'recent', 'placement_metrics')),
+  'google-ads.placements': async () => runGoogleAdsPlacements(await windowFor('google-ads', 'recent', 'placement_metrics', 'google-ads.placements')),
+  'gam.placements': async () => runGamPlacements(await windowFor('gam', 'recent', 'placement_metrics', 'gam.placements')),
+  'google-ads.cleanup': async () => runCleanup('google-ads.cleanup', 'google'),
+  'meta.cleanup': async () => runCleanup('meta.cleanup', 'meta'),
 };
 
 /** Evita o mesmo job rodando duas vezes ao mesmo tempo neste processo. */

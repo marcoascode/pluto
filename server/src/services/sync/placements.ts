@@ -60,7 +60,7 @@ const NUMS = Object.keys(zero) as (keyof typeof zero)[];
 const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
 
 /** Apaga a janela da origem (no escopo de campanhas) e grava de novo. Soma linhas repetidas da mesma chave. */
-async function replacePlacements(source: 'google-ads' | 'gam', from: string, to: string, scope: string[] | 'all', rows: PFact[], isFinal = false) {
+async function replacePlacements(source: 'google-ads' | 'gam', from: string, to: string, scope: string[] | 'all' | { domains: string[] }, rows: PFact[], isFinal = false) {
   const m = new Map<string, PFact>();
   for (const f of rows) {
     if (f.date < from || f.date > to) continue;
@@ -72,6 +72,7 @@ async function replacePlacements(source: 'google-ads' | 'gam', from: string, to:
   const data = [...m.values()];
   await tx(async (c) => {
     if (scope === 'all') await c.query('DELETE FROM placement_metrics WHERE source = $1 AND date BETWEEN $2 AND $3', [source, from, to]);
+    else if (!Array.isArray(scope)) { if (scope.domains.length) await c.query('DELETE FROM placement_metrics WHERE source = $1 AND date BETWEEN $2 AND $3 AND domain_id = ANY($4::bigint[])', [source, from, to, scope.domains]); }
     else if (scope.length) await c.query('DELETE FROM placement_metrics WHERE source = $1 AND date BETWEEN $2 AND $3 AND campaign_id = ANY($4::bigint[])', [source, from, to, scope]);
     for (let i = 0; i < data.length; i += 2000) {
       const ch = data.slice(i, i + 2000);
@@ -109,8 +110,8 @@ interface PlRow {
 export async function runGoogleAdsPlacements(w: { from: string; to: string }): Promise<JobResult> {
   let c: { mcc: string; token: string };
   try { c = await ctx(); } catch (e) { return { status: 'skipped', message: (e as Error).message }; }
-  const accs = await q<{ id: string; external_id: string; name: string; currency: string }>(`SELECT id::text, external_id, name, currency FROM integration_accounts WHERE provider = 'google-ads' AND imported ORDER BY id`);
-  if (!accs.length) return { status: 'skipped', message: 'nenhuma conta Google Ads marcada para importar' };
+  const accs = await q<{ id: string; external_id: string; name: string; currency: string }>(`SELECT id::text, external_id, name, currency FROM integration_accounts WHERE provider = 'google-ads' AND imported AND COALESCE(platform_status, 'ENABLED') = 'ENABLED' ORDER BY id`);
+  if (!accs.length) return { status: 'skipped', message: 'nenhuma conta Google Ads ativa marcada para importar' };
   const toUsd = await fxToUsd(w.from, w.to);
   const labels = new Map<string, { label: string; type: PlacementType }>();
   const notes: string[] = [];
@@ -142,8 +143,8 @@ export async function runGoogleAdsPlacements(w: { from: string; to: string }): P
       ok++;
     } catch (e) {
       notes.push(`${acc.name}: ${(e as Error).message}`);
-      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300));
-      if ((e as SyncError).code === 'token') break;
+      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => {});
+      // segue para a próxima conta: um erro numa conta não interrompe as outras
     }
   }
   await saveLabels(labels);
@@ -152,40 +153,53 @@ export async function runGoogleAdsPlacements(w: { from: string; to: string }): P
 }
 
 /* ---------------- Ad Manager: receita por placement ---------------- */
+/** Todas as redes importadas; erro numa rede não interrompe as outras. Cada rede só grava os domínios dela. */
 export async function runGamPlacements(w: { from: string; to: string }, isFinal = false): Promise<JobResult> {
-  const net = await q<{ id: string; external_id: string }>(`SELECT id::text, external_id FROM integration_accounts WHERE provider = 'gam' AND imported ORDER BY id LIMIT 1`);
-  if (!net.length) return { status: 'skipped', message: 'nenhuma rede do Ad Manager marcada para importar' };
-  try {
-    const token = await googleAccessToken('gam');
-    const keys = await resolveKeys(net[0].external_id, token, [['campaign', config.gamKeys.campaign], ['placement', config.gamPlacementKey]]);
-    const bad = keys.filter((k) => !k.usable);
-    if (bad.length) return { status: 'skipped', message: `key-values sem dimensão personalizada no Ad Manager: ${bad.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension). O site precisa enviar "${config.gamPlacementKey}" com o {placement} da URL.` };
-    const { rows } = await runReport(net[0].external_id, token, w.from, w.to, keys, 'pluto-placements');
-    const camps = await q<{ id: string; ext: string; platform: string }>(`SELECT id::text, external_id AS ext, platform FROM campaigns`);
-    const byExt = new Map(camps.filter((x) => x.platform === 'google').map((x) => [x.ext, x.id]));
-    const metaIds = new Set(camps.filter((x) => x.platform === 'meta').map((x) => x.ext));   // placements aqui são só do Google Ads
-    const dom = await domainResolver();
-    const iCamp = 3 + keys.findIndex((k) => k.role === 'campaign'), iPl = 3 + keys.findIndex((k) => k.role === 'placement');
-    // relatório com DATE, SITE, COUNTRY_CODE + key-values; o país é somado aqui
-    const facts: PFact[] = [];
-    let noPl = 0;
-    for (const r of rows) {
-      const d = r.dimensionValues; const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
-      const day = isoDate(d[0]); const site = str(d[1]);
-      if (!day || !site || EMPTY.test(site)) continue;
-      const p = normPlacement(str(d[iPl]));
-      if (!p) { if (!metaIds.has(str(d[iCamp]))) noPl++; continue; }
-      const domain = await dom.ensure(site);
-      if (!domain || domain.pending) continue;
-      const cv = str(d[iCamp]);
-      if (metaIds.has(cv)) continue;
-      facts.push({ ...zero, date: day, domainId: domain.id, campaignId: cv && !EMPTY.test(cv) ? byExt.get(cv) ?? null : null, placement: p.key,
-        revenueUsd: num(m[0]), impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]) });
-    }
-    const n = await replacePlacements('gam', w.from, w.to, 'all', facts, isFinal);
-    return { status: 'success', message: `${rows.length} linhas do relatório · ${n} gravadas${noPl ? ` · ${noPl} sem placement` : ''}`.slice(0, 500) };
-  } catch (e) {
+  const nets = await q<{ id: string; external_id: string; name: string }>(`SELECT id::text, external_id, name FROM integration_accounts WHERE provider = 'gam' AND imported ORDER BY id`);
+  if (!nets.length) return { status: 'skipped', message: 'nenhuma rede do Ad Manager marcada para importar' };
+  let token: string;
+  try { token = await googleAccessToken('gam'); } catch (e) {
     if (e instanceof SyncError && (e.code === 'not_connected' || e.code === 'not_configured')) return { status: 'skipped', message: e.message };
     return { status: 'failed', message: (e as Error).message.slice(0, 500) };
   }
+  const camps = await q<{ id: string; ext: string; platform: string }>(`SELECT id::text, external_id AS ext, platform FROM campaigns`);
+  const byExt = new Map(camps.filter((x) => x.platform === 'google').map((x) => [x.ext, x.id]));
+  const metaIds = new Set(camps.filter((x) => x.platform === 'meta').map((x) => x.ext));   // placements aqui são só do Google Ads
+  const dom = await domainResolver();
+  const notes: string[] = [];
+  let ok = 0, skippedNets = 0, saved = 0, rowsTotal = 0;
+  for (const net of nets) {
+    try {
+      const keys = await resolveKeys(net.external_id, token, [['campaign', config.gamKeys.campaign], ['placement', config.gamPlacementKey]]);
+      const bad = keys.filter((k) => !k.usable);
+      if (bad.length) { skippedNets++; notes.push(`${net.name}: key-values sem dimensão personalizada no Ad Manager: ${bad.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension). O site precisa enviar "${config.gamPlacementKey}" com o {placement} da URL.`); continue; }
+      const { rows } = await runReport(net.external_id, token, w.from, w.to, keys, 'pluto-placements');
+      const iCamp = 3 + keys.findIndex((k) => k.role === 'campaign'), iPl = 3 + keys.findIndex((k) => k.role === 'placement');
+      // relatório com DATE, SITE, COUNTRY_CODE + key-values; o país é somado aqui
+      const facts: PFact[] = [];
+      let noPl = 0;
+      for (const r of rows) {
+        const d = r.dimensionValues; const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
+        const day = isoDate(d[0]); const site = str(d[1]);
+        if (!day || !site || EMPTY.test(site)) continue;
+        const cv = str(d[iCamp]);
+        if (metaIds.has(cv)) continue;
+        const p = normPlacement(str(d[iPl]));
+        if (!p) { noPl++; continue; }
+        const domain = await dom.ensure(site);
+        if (!domain || domain.pending || !(await dom.claimGam(domain, net.id))) continue;
+        facts.push({ ...zero, date: day, domainId: domain.id, campaignId: cv && !EMPTY.test(cv) ? byExt.get(cv) ?? null : null, placement: p.key,
+          revenueUsd: num(m[0]), impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]) });
+      }
+      const mine = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);
+      saved += await replacePlacements('gam', w.from, w.to, { domains: mine }, facts, isFinal);
+      rowsTotal += rows.length; ok++;
+      if (noPl) notes.push(`${net.name}: ${noPl} linhas sem placement`);
+    } catch (e) {
+      notes.push(`${net.name}: ${(e as Error).message}`);
+    }
+  }
+  if (!ok && skippedNets === nets.length) return { status: 'skipped', message: notes.join(' · ').slice(0, 500) };
+  if (!ok) return { status: 'failed', message: notes.join(' · ').slice(0, 500) };
+  return { status: 'success', message: `${ok}/${nets.length} redes · ${rowsTotal} linhas do relatório · ${saved} gravadas${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
 }

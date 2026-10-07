@@ -7,5 +7,5 @@ dist
 *copy.*
 /docs
 README.md
-hash.ts
+/server/hash.ts
 pluto.jpg

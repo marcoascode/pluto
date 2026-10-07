@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+- **Empresas**: seletor "Empresa" ao lado da Moeda (`components/filters/CompanyPicker.tsx`). Cada Empresa mostra sócios, Squads e domínios; escolher filtra o painel inteiro (`?company=` em toda chamada, guardado no navegador). "Abrir painel" leva para **`/empresas/:id`** (`pages/CompanyOverview.tsx`): sócios, KPIs, gráficos e Squads → domínios → gestores.
+- **Usuários & Squads** (`pages/admin/UsersSquads.tsx`):
+  - papel **Gerente** (vê vários Squads, sem administração);
+  - Gestor com **domínio(s) + contas Google Ads + contas Meta Ads** em cada domínio (vê só essas campanhas);
+  - "Sócio das Empresas" para qualquer papel;
+  - nova aba **Empresas** (nome, sócios, Squads); Squad ganha Empresa;
+  - Permissões com coluna Gerente.
+- **Domínios**: conta do Ad Manager (uma por domínio) e lista de gestores com as contas de cada um.
+- **Moedas**: **deságio** (R$) com histórico — a receita do Ad Manager em BRL usa cotação − deságio. O topo mostra a cotação com deságio.
+- **Sincronização** (Integrações): coluna **Janela** editável (Últimos dias D-X → hoje, ou Incremental) e **"Exclua dados com mais de X dias"** para grupos/conjuntos e anúncios antigos. Tooltip com a última mensagem do job.
+- Tipos: `Role` ganha `gerente`; `User` troca `squadId` por `squadIds`, `companyIds`, `domains: DomainLink[]`; novos `MyCompany`, `Company`, `CompanyOverviewResponse`, `FxDiscountResponse`; `Domain.gamAccountId/managers`, `Squad.companyId`, `SyncSetting.windowMode/windowDays/windowEditable/hasRetention/retentionDays/lastMessage`, `FxLatest.brlDiscount/brlRevenueRate`.
+- Servidor: migration `004_empresas_gerente_vinculos.sql`, escopo novo em `auth/scope.ts` (filtro obrigatório em `aggregate`), `routes/companies.ts`, `routes/admin/companies.ts`, `services/sync/cleanup.ts`; workers não param numa conta com erro e pulam contas inativas; Ad Manager com várias redes; login conta só tentativas erradas.
+
 ## 0.6.0
 - **Nova aba Placements** (`/placements`, em Campanhas, abaixo de Meta Ads · `src/pages/Placements.tsx`):
   - Filtro em 3 passos: **Domínio** (obrigatório) → **Contas Google Ads** do domínio → **Campanhas** → "Pesquisar placements". Contas e campanhas com seleção múltipla ("Todas" ou só as marcadas). A pesquisa fica na URL (`?d=&a=&c=`). O Domínio do topo some nessa tela; Data e Moeda continuam.

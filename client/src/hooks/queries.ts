@@ -1,13 +1,18 @@
 /** Todos os hooks de dados. Cada tela usa só estes, nunca fetch direto. */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { meApi, searchApi, adminApi, attributionApi, campaignsApi, dashboardApi, domainsApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
+import { meApi, searchApi, adminApi, companiesApi, attributionApi, campaignsApi, dashboardApi, domainsApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
 import { qk } from '@/lib/api/keys';
 import { useFilters } from '@/context/FiltersContext';
 import type { Platform, PlacementQuery, Provider } from '@/types/api';
 
 const opts = { placeholderData: keepPreviousData, staleTime: 60_000 } as const;
 
-export function useMyDomains() { return useQuery({ queryKey: qk.myDomains, queryFn: meApi.domains, staleTime: 5 * 60_000 }); }
+/** Domínios do usuário, já filtrados pela Empresa escolhida no topo. */
+export function useMyDomains() { const { company } = useFilters(); return useQuery({ queryKey: qk.myDomains(company), queryFn: () => meApi.domains(company || undefined), staleTime: 5 * 60_000 }); }
+export function useMyCompanies() { return useQuery({ queryKey: qk.myCompanies, queryFn: meApi.companies, staleTime: 5 * 60_000 }); }
+export function useCompanyOverview(id: string) { const { query } = useFilters(); return useQuery({ queryKey: qk.companyOverview(id, query), queryFn: () => companiesApi.overview(id, query), ...opts }); }
+export function useAdminCompanies() { return useQuery({ queryKey: qk.adminCompanies, queryFn: adminApi.companies }); }
+export function useFxDiscount() { return useQuery({ queryKey: qk.fxDiscount, queryFn: adminApi.fxDiscount }); }
 export function useSearch(q: string) { return useQuery({ queryKey: qk.search(q), queryFn: () => searchApi.search(q), enabled: q.trim().length >= 2, staleTime: 30_000 }); }
 export function useDashboard() { const { query } = useFilters(); return useQuery({ queryKey: qk.dashboard(query), queryFn: () => dashboardApi.get(query), ...opts }); }
 export function useDomainsSummary() { const { query } = useFilters(); return useQuery({ queryKey: qk.domains(query), queryFn: () => domainsApi.summary(query), ...opts }); }
@@ -27,8 +32,8 @@ export function useCampaignCountries(platform: Platform, id: string | null) {
 /** Placements: o domínio vem do filtro da própria tela (não do topo). sel = pesquisa aplicada; null = ainda não pesquisou. */
 export interface PlacementSel { domain: string; accounts: string[]; campaigns: string[] }
 function usePlacementQuery(sel: PlacementSel | null): PlacementQuery | null {
-  const { from, to, currency } = useFilters();
-  return sel ? { from, to, currency, domain: sel.domain, accounts: sel.accounts.join(',') || undefined, campaigns: sel.campaigns.join(',') || undefined } : null;
+  const { from, to, currency, company } = useFilters();
+  return sel ? { from, to, currency, company: company || undefined, domain: sel.domain, accounts: sel.accounts.join(',') || undefined, campaigns: sel.campaigns.join(',') || undefined } : null;
 }
 export function usePlacementFilters(domain: string) { return useQuery({ queryKey: qk.placementFilters(domain), queryFn: () => placementsApi.filters(domain), enabled: !!domain, staleTime: 5 * 60_000 }); }
 export function usePlacements(sel: PlacementSel | null) {
@@ -42,7 +47,7 @@ export function usePlacementCampaigns(sel: PlacementSel | null, placement: strin
 export function useUrls(domain: string) { const { query } = useFilters(); const q = { ...query, domain: domain || undefined }; return useQuery({ queryKey: qk.urls(q), queryFn: () => urlsApi.list(q), ...opts }); }
 export function useGam() { const { query } = useFilters(); return useQuery({ queryKey: qk.gam(query), queryFn: () => gamApi.summary(query), ...opts }); }
 /** Relatórios usam só Domínio e Moeda do topo (o mês é escolhido na própria tela). */
-function useReportQuery() { const { domain, currency } = useFilters(); return { domain: domain || undefined, currency }; }
+function useReportQuery() { const { domain, currency, company } = useFilters(); return { domain: domain || undefined, currency, company: company || undefined }; }
 export function useDailyReport(month: string) { const q = useReportQuery(); return useQuery({ queryKey: qk.reportDaily(month, q), queryFn: () => reportsApi.daily({ ...q, month }), ...opts }); }
 export function useMonthlyReport(months: number) { const q = useReportQuery(); return useQuery({ queryKey: qk.reportMonthly(months, q), queryFn: () => reportsApi.monthly({ ...q, months }), ...opts }); }
 export function useHealth() { const { query } = useFilters(); return useQuery({ queryKey: qk.health(query), queryFn: () => attributionApi.health(query), ...opts }); }

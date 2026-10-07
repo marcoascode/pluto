@@ -13,11 +13,25 @@ export type Platform = 'google' | 'meta' | 'none';
 
 /* ---------------- janela ---------------- */
 /** Janela do job. Na primeira importação da origem, volta SYNC_BACKFILL_DAYS dias. */
-export async function windowFor(source: Source, kind: 'recent' | 'close', table: 'daily_metrics' | 'placement_metrics' = 'daily_metrics'): Promise<{ from: string; to: string; backfill: boolean }> {
+/**
+ * Janela de datas do job (editável em Integrações → Sincronização, só SuperAdmin):
+ *  - window_mode 'days':        D-X → hoje  (gam.close: D-X → D-4)
+ *  - window_mode 'incremental': do dia da última execução com sucesso (−1 dia de folga) até hoje
+ * Primeira importação da origem (tabela ainda vazia): volta SYNC_BACKFILL_DAYS dias.
+ */
+export async function windowFor(source: Source, kind: 'recent' | 'close', table: 'daily_metrics' | 'placement_metrics' = 'daily_metrics', settingId?: string): Promise<{ from: string; to: string; backfill: boolean }> {
   const t = today();
-  if (kind === 'close') return { from: addDays(t, -7), to: addDays(t, -4), backfill: false };
+  const st = settingId ? await one<{ mode: string; days: number | null }>('SELECT window_mode AS mode, window_days AS days FROM sync_settings WHERE id = $1', [settingId]) : null;
+  const clamp = (d: number) => Math.max(0, Math.min(400, d));
+  if (kind === 'close') { const x = Math.max(4, clamp(st?.days ?? 7)); return { from: addDays(t, -x), to: addDays(t, -4), backfill: false }; }
   const has = await one(`SELECT 1 FROM ${table} WHERE source = $1 LIMIT 1`, [source]);
-  return has ? { from: addDays(t, -3), to: t, backfill: false } : { from: addDays(t, -config.sync.backfillDays), to: t, backfill: true };
+  if (!has) return { from: addDays(t, -config.sync.backfillDays), to: t, backfill: true };
+  if (st?.mode === 'incremental' && settingId) {
+    const last = await one<{ d: string | null }>(`SELECT (max(finished_at) AT TIME ZONE '${config.appTz.replace(/[^A-Za-z0-9_/+-]/g, '')}')::date::text AS d FROM sync_jobs WHERE setting_id = $1 AND status = 'success'`, [settingId]);
+    if (last?.d) { const from = addDays(last.d, -1); return { from: from < addDays(t, -400) ? addDays(t, -400) : from > t ? t : from, to: t, backfill: false }; }
+    return { from: addDays(t, -3), to: t, backfill: false };
+  }
+  return { from: addDays(t, -clamp(st?.days ?? 3)), to: t, backfill: false };
 }
 
 /* ---------------- câmbio: valor na moeda da conta → USD pela taxa do dia ---------------- */
@@ -47,7 +61,7 @@ export async function metaIvaRate(): Promise<number> {
 export const normHost = (h: string) => h.trim().toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
 
 export async function domainResolver() {
-  const rows = await q<{ id: string; hostname: string; active: boolean; pending: boolean }>('SELECT id::text, hostname, active, created_by_sync AS pending FROM domains');
+  const rows = await q<{ id: string; hostname: string; active: boolean; pending: boolean; gam: string | null }>('SELECT id::text, hostname, active, created_by_sync AS pending, gam_account_id::text AS gam FROM domains');
   const map = new Map(rows.map((r) => [r.hostname, r]));
   /** Hostname exato ou domínio pai cadastrado (blog.site.com → site.com). */
   const byHost = (host: string | null | undefined) => {
@@ -63,13 +77,21 @@ export async function domainResolver() {
     const found = byHost(h);
     if (found) return found;
     if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h)) return null;
-    const r = await one<{ id: string; hostname: string; active: boolean; pending: boolean }>(
+    const r = await one<{ id: string; hostname: string; active: boolean; pending: boolean; gam: string | null }>(
       `INSERT INTO domains (hostname, active, created_by_sync) VALUES ($1, false, true)
-       ON CONFLICT (hostname) DO UPDATE SET hostname = EXCLUDED.hostname RETURNING id::text, hostname, active, created_by_sync AS pending`, [h]);
+       ON CONFLICT (hostname) DO UPDATE SET hostname = EXCLUDED.hostname RETURNING id::text, hostname, active, created_by_sync AS pending, gam_account_id::text AS gam`, [h]);
     map.set(h, r!);
     return r!;
   };
-  return { byHost, byUrl, ensure };
+  /** Um domínio = uma rede do Ad Manager. Sem rede ainda: fica com a primeira que mostrar o site. Outra rede → false. */
+  const claimGam = async (d: { id: string; gam: string | null }, networkId: string) => {
+    if (d.gam === networkId) return true;
+    if (d.gam) return false;
+    await q('UPDATE domains SET gam_account_id = $2 WHERE id = $1 AND gam_account_id IS NULL', [d.id, networkId]);
+    d.gam = networkId;
+    return true;
+  };
+  return { byHost, byUrl, ensure, claimGam };
 }
 
 export function parseUrl(url: string | null | undefined): URL | null {
@@ -112,14 +134,14 @@ export async function upsertCampaign(accountId: string, platform: 'google' | 'me
 export async function upsertAdGroup(campaignId: string, extId: string, name: string, status?: string): Promise<string> {
   const r = await one<{ id: string }>(`
     INSERT INTO ad_groups (campaign_id, external_id, name, status) VALUES ($1, $2, $3, $4)
-    ON CONFLICT (campaign_id, external_id) DO UPDATE SET name = EXCLUDED.name, status = COALESCE(EXCLUDED.status, ad_groups.status)
+    ON CONFLICT (campaign_id, external_id) DO UPDATE SET name = EXCLUDED.name, status = COALESCE(EXCLUDED.status, ad_groups.status), last_seen_at = now()
     RETURNING id::text`, [campaignId, extId, name.slice(0, 255) || extId, status ?? null]);
   return r!.id;
 }
 export async function upsertAd(adGroupId: string, extId: string, name: string, finalUrl?: string | null, status?: string): Promise<string> {
   const r = await one<{ id: string }>(`
     INSERT INTO ads (ad_group_id, external_id, name, final_url, status) VALUES ($1, $2, $3, $4, $5)
-    ON CONFLICT (ad_group_id, external_id) DO UPDATE SET name = EXCLUDED.name, final_url = COALESCE(EXCLUDED.final_url, ads.final_url), status = COALESCE(EXCLUDED.status, ads.status)
+    ON CONFLICT (ad_group_id, external_id) DO UPDATE SET name = EXCLUDED.name, final_url = COALESCE(EXCLUDED.final_url, ads.final_url), status = COALESCE(EXCLUDED.status, ads.status), last_seen_at = now()
     RETURNING id::text`, [adGroupId, extId, name.slice(0, 255) || `Anúncio ${extId}`, finalUrl ?? null, status ?? null]);
   return r!.id;
 }
@@ -154,10 +176,12 @@ const ISO2 = /^[A-Z]{2}$/;
  * Substitui as linhas da origem na janela por `rows` (transação).
  * scope: ids de campanhas cujas linhas são desta execução (Google/Meta, por conta) ou 'all' (Ad Manager).
  */
-export async function replaceFacts(source: Source, from: string, to: string, scope: string[] | 'all', rows: Fact[], isFinal = false) {
+/** scope: ids de campanhas · 'all' (a origem inteira) · { domains } (Ad Manager: só os domínios daquela rede). */
+export async function replaceFacts(source: Source, from: string, to: string, scope: string[] | 'all' | { domains: string[] }, rows: Fact[], isFinal = false) {
   const data = mergeFacts(rows.filter((f) => f.date >= from && f.date <= to));   // nunca grava fora da janela que apagou
   await tx(async (c) => {
     if (scope === 'all') await c.query('DELETE FROM daily_metrics WHERE source = $1 AND date BETWEEN $2 AND $3', [source, from, to]);
+    else if (!Array.isArray(scope)) { if (scope.domains.length) await c.query('DELETE FROM daily_metrics WHERE source = $1 AND date BETWEEN $2 AND $3 AND domain_id = ANY($4::bigint[])', [source, from, to, scope.domains]); }
     else if (scope.length) await c.query('DELETE FROM daily_metrics WHERE source = $1 AND date BETWEEN $2 AND $3 AND campaign_id = ANY($4::bigint[])', [source, from, to, scope]);
     for (let i = 0; i < data.length; i += 2000) {
       const ch = data.slice(i, i + 2000);

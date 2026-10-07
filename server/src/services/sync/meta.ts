@@ -7,11 +7,15 @@
 import { config } from '../../config.js';
 import { q } from '../../db.js';
 import { accountDomains, domainResolver, emptyFact, fxToUsd, metaIvaRate, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
-import { isMetaRateLimit, requestJson, sleep, SyncError } from './http.js';
+// import { isMetaRateLimit, requestJson, sleep, SyncError } from './http.js';
+import { isMetaRateLimit, requestJson, sleep } from './http.js';
 import { metaAccessToken } from './tokens.js';
 import type { JobResult } from './index.js';
 
 const base = () => `${config.api.metaGraph}/${config.oauth.metaApiVersion}`;
+/** account_status da Marketing API. Desativada/encerrada não entra no sync. */
+const META_STATUS: Record<number, string> = { 1: 'ACTIVE', 2: 'DISABLED', 3: 'UNSETTLED', 7: 'PENDING_RISK_REVIEW', 8: 'PENDING_SETTLEMENT', 9: 'IN_GRACE_PERIOD', 100: 'PENDING_CLOSURE', 101: 'CLOSED', 201: 'ANY_ACTIVE', 202: 'ANY_CLOSED' };
+const META_INACTIVE = new Set([2, 100, 101, 202]);
 
 /** Segue paging.next. Em limite de uso (#17/#80004…) espera 60 s e tenta de novo (até 3×). */
 async function paginate<T>(firstUrl: string): Promise<T[]> {
@@ -80,6 +84,7 @@ interface InsightRow { date_start: string; campaign_id: string; campaign_name: s
 export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; to: string }): Promise<JobResult> {
   const token = await metaAccessToken();
   const accs = await q<Acc>(`SELECT id::text, external_id, name, currency FROM integration_accounts WHERE provider = 'meta' AND imported ORDER BY id`);
+  let skippedInactive = 0;
   if (!accs.length) return { status: 'skipped', message: 'nenhuma conta Meta marcada para importar' };
   const dom = await domainResolver();
   const toUsd = kind === 'metrics' ? await fxToUsd(w.from, w.to) : null;
@@ -91,7 +96,11 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
     try {
       const info = await requestJson<{ currency?: string; timezone_name?: string; account_status?: number }>(`${base()}/act_${acc.external_id}?${new URLSearchParams({ fields: 'name,currency,timezone_name,account_status', access_token: token })}`);
       if (info.currency && ['USD', 'BRL', 'EUR'].includes(info.currency)) acc.currency = info.currency;
-      await q('UPDATE integration_accounts SET currency = $2, timezone = COALESCE($3, timezone) WHERE id = $1', [acc.id, acc.currency, info.timezone_name ?? null]);
+      // await q('UPDATE integration_accounts SET currency = $2, timezone = COALESCE($3, timezone) WHERE id = $1', [acc.id, acc.currency, info.timezone_name ?? null]);
+      const pst = META_STATUS[info.account_status ?? 1] ?? `STATUS_${info.account_status}`;
+      await q('UPDATE integration_accounts SET currency = $2, timezone = COALESCE($3, timezone), platform_status = $4 WHERE id = $1', [acc.id, acc.currency, info.timezone_name ?? null, pst]);
+      // conta desativada/encerrada na Meta: não busca dados (as outras seguem normalmente)
+      if (META_INACTIVE.has(info.account_status ?? 1)) { skippedInactive++; await setAccountStatus(acc.id, 'ok', `Conta ${pst} na Meta: fora do sync`); continue; }
       const st = await syncStructure(acc, token, dom);
       if (kind === 'structure') { await setAccountStatus(acc.id, 'ok', null); ok++; continue; }
 
@@ -126,10 +135,16 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
       ok++;
     } catch (e) {
       notes.push(`${acc.name}: ${(e as Error).message}`);
-      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300));
-      if ((e as SyncError).code === 'token') break;   // token vale para todas as contas
+      // await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300));
+      // if ((e as SyncError).code === 'token') break;   // token vale para todas as contas
+
+      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => {});
+      // segue para a próxima conta: um erro numa conta não interrompe as outras
     }
   }
-  if (!ok) return { status: 'failed', message: notes.join(' · ').slice(0, 500) };
-  return { status: 'success', message: `${ok}/${accs.length} contas · ${kind === 'structure' ? 'estrutura atualizada' : rowsTotal + ' linhas'}${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
+  // if (!ok) return { status: 'failed', message: notes.join(' · ').slice(0, 500) };
+  // return { status: 'success', message: `${ok}/${accs.length} contas · ${kind === 'structure' ? 'estrutura atualizada' : rowsTotal + ' linhas'}${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
+  if (skippedInactive) notes.push(`${skippedInactive} conta(s) inativa(s) na Meta ignorada(s)`);
+  if (!ok) return { status: skippedInactive === accs.length ? 'skipped' : 'failed', message: notes.join(' · ').slice(0, 500) };
+  return { status: 'success', message: `${ok}/${accs.length - skippedInactive} contas · ${kind === 'structure' ? 'estrutura atualizada' : rowsTotal + ' linhas'}${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
 }

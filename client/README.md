@@ -21,6 +21,7 @@ npm run dev
 npm run build             # tsc -b && vite build → dist/
 npm run preview           # serve o dist/ em http://localhost:4173 (com o mesmo proxy)
 npm run typecheck
+npm run build:demo        # o app inteiro em UM arquivo (dist-demo/index.html) com dados de exemplo, abre sem servidor
 ```
 
 Usuários do modo mock (só existem no navegador, senhas de exemplo):
@@ -29,7 +30,9 @@ Usuários do modo mock (só existem no navegador, senhas de exemplo):
 |---|---|---|
 | `admin@exemplo.com` | `admin123` | SuperAdmin (admin principal — conecta integrações, muda a frequência do sync, vê o ícone de prévia mobile) |
 | `ops@exemplo.com` | `admin123` | Admin (CRUD de tudo, inclusive contas; sem conectar integrações nem mudar frequência) |
-| `gestor@exemplo.com` | `gestor123` | Gestor, Squad 01 — sem acesso a dominioZ.com |
+| `socio@exemplo.com` | `socio123` | Gerente, sócio da Empresa A e da Empresa B (vê as duas, sem administração) |
+| `socio.b@exemplo.com` | `socio123` | Gerente, sócio só da Empresa B |
+| `gestor@exemplo.com` | `gestor123` | Gestor de dominioX.com e dominioY.com — só as campanhas das contas dele |
 
 ## Variáveis (`.env`)
 

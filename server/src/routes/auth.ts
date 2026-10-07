@@ -10,8 +10,12 @@ import { checkPasswordStrength, endSession, killSessions, loadUser, requireAuth,
 
 export const authRouter = Router();
 
-// 10 tentativas por 15 min por IP (o Nginx repassa o IP real; ver app.set('trust proxy')).
-const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
+// 10 tentativas ERRADAS por 15 min por IP (o Nginx repassa o IP real; ver app.set('trust proxy')).
+// Logins certos não contam: várias pessoas no mesmo escritório (mesmo IP) entram normalmente.
+const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, skipSuccessfulRequests: true, standardHeaders: 'draft-8', legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ error: { code: 'too_many_attempts', message: 'Muitas tentativas. Espere alguns minutos.' } }) });
+// "Esqueci a senha" sempre responde 204 (não revela e-mails), então conta todas as chamadas.
+const forgotLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
   handler: (_req, res) => res.status(429).json({ error: { code: 'too_many_attempts', message: 'Muitas tentativas. Espere alguns minutos.' } }) });
 
 // hash descartável para gastar o mesmo tempo quando o e-mail não existe (não revela quais e-mails existem)
@@ -48,7 +52,7 @@ authRouter.post('/change-password', requireAuth, async (req, res) => {
 });
 
 /** Sempre responde 204 (não revela se o e-mail existe). Envia link de 1 h. */
-authRouter.post('/forgot-password', loginLimiter, async (req, res) => {
+authRouter.post('/forgot-password', forgotLimiter, async (req, res) => {
   const b = parse(z.object({ email: z.string().trim().toLowerCase().email() }), req.body);
   const u = await one<{ id: string; name: string; email: string }>(`SELECT id::text, name, email FROM users WHERE lower(email) = $1 AND status <> 'disabled'`, [b.email]);
   if (u) {

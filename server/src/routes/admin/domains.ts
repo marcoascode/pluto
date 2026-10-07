@@ -17,12 +17,18 @@ const DOMAIN_SQL = `
          COALESCE((SELECT round(rs.rev_share * 100, 3) FROM domain_rev_shares rs WHERE rs.domain_id = d.id AND rs.valid_from <= ${TODAY_SQL} ORDER BY rs.valid_from DESC LIMIT 1), 0)::float AS "revShare",
          (SELECT rs.valid_from::text FROM domain_rev_shares rs WHERE rs.domain_id = d.id AND rs.valid_from <= ${TODAY_SQL} ORDER BY rs.valid_from DESC LIMIT 1) AS "revShareFrom",
          COALESCE(array_agg(a.id::text ORDER BY a.name) FILTER (WHERE a.provider = 'google-ads'), '{}') AS "googleAccounts",
-         COALESCE(array_agg(a.id::text ORDER BY a.name) FILTER (WHERE a.provider = 'meta'), '{}') AS "metaAccounts"
+         COALESCE(array_agg(a.id::text ORDER BY a.name) FILTER (WHERE a.provider = 'meta'), '{}') AS "metaAccounts",
+         d.gam_account_id::text AS "gamAccountId",
+         COALESCE((SELECT json_agg(json_build_object('userId', u.id::text, 'name', u.name,
+             'googleAccounts', COALESCE((SELECT array_agg(x.account_id::text) FROM domain_manager_accounts x JOIN integration_accounts ia ON ia.id = x.account_id WHERE x.domain_id = dm.domain_id AND x.user_id = dm.user_id AND ia.provider = 'google-ads'), '{}'),
+             'metaAccounts',   COALESCE((SELECT array_agg(x.account_id::text) FROM domain_manager_accounts x JOIN integration_accounts ia ON ia.id = x.account_id WHERE x.domain_id = dm.domain_id AND x.user_id = dm.user_id AND ia.provider = 'meta'), '{}')
+           ) ORDER BY u.name) FROM domain_managers dm JOIN users u ON u.id = dm.user_id WHERE dm.domain_id = d.id), '[]'::json) AS "managers"
     FROM domains d
     LEFT JOIN squad_domains sd ON sd.domain_id = d.id
     LEFT JOIN domain_accounts da ON da.domain_id = d.id
     LEFT JOIN integration_accounts a ON a.id = da.account_id`;
 const GROUP = ' GROUP BY d.id, sd.squad_id';
+/* Gestores do domínio (e as contas de cada um) são editados em Usuários → gestor → Domínios. */
 const get = (host: string) => one(`${DOMAIN_SQL} WHERE d.hostname = $1${GROUP}`, [host]);
 
 domainsRouter.get('/domains', async (_req, res) => { res.json({ domains: await q(`${DOMAIN_SQL}${GROUP} ORDER BY d.active DESC, d.hostname`) }); });
@@ -57,6 +63,7 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
     hostname: HOST.optional(), active: z.boolean().optional(), squadId: z.string().regex(/^\d+$/).nullable().optional(),
     googleAccounts: z.array(z.string().regex(/^\d+$/)).max(200).optional(), metaAccounts: z.array(z.string().regex(/^\d+$/)).max(200).optional(),
     revShare: revShare.optional(), revShareFrom: ISO.optional(),
+    gamAccountId: z.string().regex(/^\d+$/).nullable().optional(),   // um domínio = uma conta do Ad Manager
   }), req.body);
   const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
   if (!d) throw notFound('Domínio não encontrado.');
@@ -66,6 +73,10 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
       await c.query('UPDATE domains SET hostname = $2 WHERE id = $1', [d.id, b.hostname]);
     }
     if (b.active !== undefined) await c.query('UPDATE domains SET active = $2, created_by_sync = false WHERE id = $1', [d.id, b.active]);
+    if (b.gamAccountId !== undefined) {
+      if (b.gamAccountId && !(await one(`SELECT 1 FROM integration_accounts WHERE id = $1 AND provider = 'gam'`, [b.gamAccountId], c))) throw notFound('Conta do Ad Manager não encontrada.');
+      await c.query('UPDATE domains SET gam_account_id = $2 WHERE id = $1', [d.id, b.gamAccountId]);
+    }
     // revShare: vale a partir de revShareFrom (padrão: hoje). Dias anteriores continuam com o percentual antigo.
     if (b.revShare !== undefined) {
       const first = !(await one('SELECT 1 FROM domain_rev_shares WHERE domain_id = $1', [d.id], c));

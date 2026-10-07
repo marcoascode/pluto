@@ -65,7 +65,8 @@ export default function LoginPage() {
             <Typography variant="overline">Modo demonstração (mock)</Typography>
             <Button variant="outlined" onClick={() => { setEmail('admin@exemplo.com'); setPw('admin123'); }} sx={{ justifyContent: 'space-between' }}>SuperAdmin<Typography variant="caption">admin@exemplo.com · admin123</Typography></Button>
             <Button variant="outlined" onClick={() => { setEmail('ops@exemplo.com'); setPw('admin123'); }} sx={{ justifyContent: 'space-between' }}>Admin<Typography variant="caption">ops@exemplo.com · admin123</Typography></Button>
-            <Button variant="outlined" onClick={() => { setEmail('gestor@exemplo.com'); setPw('gestor123'); }} sx={{ justifyContent: 'space-between' }}>Gestor · Squad 01<Typography variant="caption">gestor@exemplo.com · gestor123</Typography></Button>
+            <Button variant="outlined" onClick={() => { setEmail('gestor@exemplo.com'); setPw('gestor123'); }} sx={{ justifyContent: 'space-between' }}>Gestor · 2 domínios<Typography variant="caption">gestor@exemplo.com · gestor123</Typography></Button>
+            <Button variant="outlined" onClick={() => { setEmail('socio@exemplo.com'); setPw('socio123'); }} sx={{ justifyContent: 'space-between' }}>Gerente · sócio das 2 Empresas<Typography variant="caption">socio@exemplo.com · socio123</Typography></Button>
           </>)}
         </Stack>
       </Card>

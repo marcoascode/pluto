@@ -10,7 +10,10 @@ export interface SessionUser {
   name: string;
   email: string;
   role: Role;
-  squadId: string | null;
+  squadIds: string[];                 // Gerente: Squads que ele vê (vários)
+  companyIds: string[];               // Empresas em que é sócio
+  /** Gestor: domínios que ele gere e as contas que usa em cada um */
+  domains: { domain: string; googleAccounts: string[]; metaAccounts: string[] }[];
   status: 'active' | 'invited' | 'disabled';
   mustChangePassword: boolean;
   isMainAdmin: boolean;
@@ -22,8 +25,14 @@ declare global {
 
 export const USER_SQL = `
   SELECT u.id::text, u.name, u.email, u.role, u.status, u.must_change_password AS "mustChangePassword", u.is_main_admin AS "isMainAdmin",
-         su.squad_id::text AS "squadId"
-    FROM users u LEFT JOIN squad_users su ON su.user_id = u.id`;
+         COALESCE((SELECT array_agg(su.squad_id::text ORDER BY su.squad_id) FROM squad_users su WHERE su.user_id = u.id), '{}') AS "squadIds",
+         COALESCE((SELECT array_agg(cu.company_id::text ORDER BY cu.company_id) FROM company_users cu WHERE cu.user_id = u.id), '{}') AS "companyIds",
+         COALESCE((SELECT json_agg(json_build_object(
+             'domain', d.hostname,
+             'googleAccounts', COALESCE((SELECT array_agg(a.id::text ORDER BY a.name) FROM domain_manager_accounts x JOIN integration_accounts a ON a.id = x.account_id WHERE x.domain_id = dm.domain_id AND x.user_id = dm.user_id AND a.provider = 'google-ads'), '{}'),
+             'metaAccounts',   COALESCE((SELECT array_agg(a.id::text ORDER BY a.name) FROM domain_manager_accounts x JOIN integration_accounts a ON a.id = x.account_id WHERE x.domain_id = dm.domain_id AND x.user_id = dm.user_id AND a.provider = 'meta'), '{}')
+           ) ORDER BY d.hostname) FROM domain_managers dm JOIN domains d ON d.id = dm.domain_id WHERE dm.user_id = u.id), '[]'::json) AS "domains"
+    FROM users u`;
 
 export async function loadUser(id: string): Promise<SessionUser | null> {
   const u = await one<Omit<SessionUser, 'permissions'>>(`${USER_SQL} WHERE u.id = $1`, [id]);

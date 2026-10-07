@@ -15,6 +15,7 @@ import { authRouter } from './routes/auth.js';
 import { meRouter } from './routes/me.js';
 import { metricsRouter } from './routes/metrics.js';
 import { placementsRouter } from './routes/placements.js';
+import { companiesReadRouter } from './routes/companies.js';
 import { adminRouter } from './routes/admin/index.js';
 import { backfillIfEmpty } from './services/fx.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
@@ -46,6 +47,7 @@ export function createApp() {
   app.use(requireAuth); // daqui para baixo, só com sessão válida
   app.use('/me', meRouter);
   app.use('/admin', adminRouter);
+  app.use(companiesReadRouter);
   app.use('/placements', placementsRouter);
   app.use(metricsRouter);
 
@@ -66,14 +68,12 @@ async function seedAdmin() {
   console.log(`[seed] admin principal criado: ${email} (troque ADMIN_PASSWORD do .env depois do primeiro login)`);
 }
 
-console.log("Senha carregada:", config.db?.password || process.env.DATABASE_URL);
-
 async function main() {
   await migrate();
   await seedAdmin();
   await q('DELETE FROM sessions WHERE expires_at < now()');
   const app = createApp();
-  const server = app.listen(config.port, () => console.log(`[api] ouvindo em :${config.port} (${config.isProd ? 'produção' : 'dev'}) 🟢`));
+  const server = app.listen(config.port, () => console.log(`[api] ouvindo em :${config.port} (${config.isProd ? 'produção' : 'dev'})`));
   backfillIfEmpty().catch((e) => console.warn('[fx]', e.message));
   if (config.schedulerEnabled) startScheduler();
   const stop = (sig: string) => {
