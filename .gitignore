@@ -6,3 +6,6 @@ dist
 *.tsbuildinfo
 *copy.*
 /docs
+README.md
+hash.ts
+pluto.jpg
