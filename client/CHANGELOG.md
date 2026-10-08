@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+- **Meta Ads (`server/src/services/sync/meta.ts`)**:
+  - **chunking**: a janela `w.from → w.to` é fatiada em blocos de no máximo 3 dias (`META_CHUNK_DAYS`), do mais recente ao mais antigo; cada bloco é paginado à parte e os resultados são unidos e gravados uma vez por conta. O agendador (`index.ts`) não mudou;
+  - **limite de uso** (#17, #80004 "too many calls"…): pausa 60 s (`META_RATE_LIMIT_WAIT_MS`) e repete, até 5× (`META_RATE_LIMIT_RETRIES`). Vale também para a estrutura e para a leitura da conta;
+  - **"Please reduce the amount of data"**: o bloco vira dias soltos; num dia só, a página cai pela metade (500 → 25). `http.ts` não repete esse erro às cegas (`too_much_data`);
+  - **domínio de cada linha**: link do criativo → domínio da campanha → domínio único da conta (`domain_accounts`). Só sem nenhum dos três a linha fica de fora, e a conta mostra quantas linhas, quanto custo e cliques e quais campanhas.
+- **Ad Manager (`gam.ts`, `placements.ts`)**: **fim do `claimGam`**. O domínio só recebe receita da rede ligada a ele em Domínios (`domain.gam === net.id`), sem UPDATE automático. Linhas sem site, de site sem rede e de site de outra rede são ignoradas, somadas (linhas e US$) e listadas por site no status da rede.
+- **Status `warn` ("Sincronizado com avisos")**: conta/rede que sincronizou mas descartou linhas. Aparece em Contas (Google, Meta e agora as redes do Ad Manager) e nas tabelas de contas das integrações. `/admin/integrations` devolve `gam.accounts`.
+- **Atenção na atualização**: domínios que ainda não têm rede do Ad Manager (`gam_account_id` nulo) param de receber receita até o admin ligar cada um em Domínios. Os que o `claimGam` já tinha ligado continuam como estão.
+
 ## 0.7.0
 - **Empresas**: seletor "Empresa" ao lado da Moeda (`components/filters/CompanyPicker.tsx`). Cada Empresa mostra sócios, Squads e domínios; escolher filtra o painel inteiro (`?company=` em toda chamada, guardado no navegador). "Abrir painel" leva para **`/empresas/:id`** (`pages/CompanyOverview.tsx`): sócios, KPIs, gráficos e Squads → domínios → gestores.
 - **Usuários & Squads** (`pages/admin/UsersSquads.tsx`):

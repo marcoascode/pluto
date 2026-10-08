@@ -6,6 +6,9 @@
  * utm_content ({adgroupid}_{creative} / {{adset.id}}_{{ad.id}}). Linha sem key-value válido → receita
  * "não atribuída" (platform = 'none' + motivo), nunca rateada entre campanhas.
  * Receita gravada BRUTA; o revShare do domínio é aplicado na consulta.
+ * Rede × domínio: VALIDAÇÃO ESTRITA. Só entra a linha cujo domínio está ligado a ESTA rede em Domínios
+ * (domains.gam_account_id === net.id). O worker não liga domínio a rede (claimGam removido).
+ * Linhas sem site / de site sem rede / de site de outra rede são contadas e viram aviso no status da rede.
  */
 import { config } from '../../config.js';
 import { q } from '../../db.js';
@@ -103,7 +106,11 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const ki = (role: KeyInfo['role']) => { const i = keys.findIndex((k) => k.role === role); return i < 0 ? -1 : 3 + i; };
   const iCamp = ki('campaign'), iContent = ki('content'), iSource = ki('source'), iPath = ki('path');
   const facts: Fact[] = [];
-  let skipped = 0, otherNet = 0;
+  // descartes, agrupados para o aviso final da rede (setAccountStatus): linhas e receita (USD) de cada caso
+  const noSite = { rows: 0, revenue: 0 };                                       // SITE vazio/inválido na API
+  const unlinked = new Map<string, { rows: number; revenue: number }>();        // domínio sem rede do Ad Manager (gam_account_id nulo)
+  const otherNet = new Map<string, { rows: number; revenue: number }>();        // domínio ligado a OUTRA rede
+  const bump = (m: Map<string, { rows: number; revenue: number }>, host: string, rev: number) => { const x = m.get(host) ?? { rows: 0, revenue: 0 }; x.rows++; x.revenue += rev; m.set(host, x); };
   for (const r of rows) {
     const d = r.dimensionValues;
     const day = isoDate(d[0]);
@@ -111,9 +118,12 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
     const revenue = num(m[0]);
     if (!day || (!revenue && !num(m[1]) && !num(m[2]))) continue;
+    // Linha sem SITE (ou valor inválido): impossível atribuir a um domínio → ignora, mas conta para o aviso
     const domain = site && !EMPTY.test(site) ? await dom.ensure(site) : null;
-    if (!domain) { skipped++; continue; }
-    if (!(await dom.claimGam(domain, net.id))) { otherNet++; continue; }   // domínio ligado a outra rede do Ad Manager
+    if (!domain) { noSite.rows++; noSite.revenue += revenue; continue; }
+    // VALIDAÇÃO ESTRITA da rede (fim do claimGam): o domínio só recebe receita da rede ligada a ele manualmente
+    // em Domínios (domains.gam_account_id). Nada de UPDATE automático aqui.
+    if (domain.gam !== net.id) { bump(domain.gam ? otherNet : unlinked, domain.hostname, revenue); continue; }
     const campVal = iCamp >= 0 ? str(d[iCamp]) : '';
     const content = iContent >= 0 ? str(d[iContent]) : '';
     const source = iSource >= 0 ? str(d[iSource]).toLowerCase() : '';
@@ -145,10 +155,11 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const n = await replaceFacts('gam', w.from, w.to, { domains: mine }, facts, isFinal);
   const warn = [
     missing.length ? `key-values sem dimensão personalizada no Ad Manager: ${missing.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension)` : '',
-    skipped ? `${skipped} linhas sem site` : '',
-    otherNet ? `${otherNet} linhas de domínios ligados a outra rede` : '',
+    noSite.rows ? `${noSite.rows} linhas sem site ignoradas (${usd(noSite.revenue)}): confira se utm_campaign e utm_content estão como dimensão personalizada nesta rede` : '',
+    unlinked.size ? `${sum(unlinked)} linhas de sites sem rede ligada ignoradas (${usd(rev(unlinked))}): ${sites(unlinked)}. Ligue cada site a esta rede em Domínios` : '',
+    otherNet.size ? `${sum(otherNet)} linhas de sites ligados a outra rede ignoradas (${usd(rev(otherNet))}): ${sites(otherNet)}. Se o site é desta rede, troque a rede em Domínios` : '',
   ].filter(Boolean).join(' · ');
-  await setAccountStatus(net.id, 'ok', warn || null);
+  await setAccountStatus(net.id, warn ? 'warn' : 'ok', warn || null);
   return { rows: rows.length, n, warn };
 }
 
@@ -179,3 +190,10 @@ export async function runGam(w: { from: string; to: string }, isFinal = false): 
   if (!ok) return { status: 'failed', message: notes.join(' · ').slice(0, 500) };
   return { status: 'success', message: `${ok}/${nets.length} redes · ${rowsTotal} linhas do relatório · ${saved} gravadas${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
 }
+
+type Lost = Map<string, { rows: number; revenue: number }>;
+const usd = (n: number) => `US$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const sum = (m: Lost) => [...m.values()].reduce((a, x) => a + x.rows, 0);
+const rev = (m: Lost) => [...m.values()].reduce((a, x) => a + x.revenue, 0);
+/** Os 5 sites com mais receita descartada, para o admin saber onde mexer. */
+const sites = (m: Lost) => { const l = [...m].sort((a, b) => b[1].revenue - a[1].revenue); return l.slice(0, 5).map(([h]) => h).join(', ') + (l.length > 5 ? ` e mais ${l.length - 5}` : ''); };

@@ -40,7 +40,8 @@ Object.assign(GACC[4], { status: 'error', message: 'Erro na API · RESOURCE_EXHA
 Object.assign(GACC[8], { status: 'permission', message: 'Permissão insuficiente · a MCC não tem acesso de leitura' });
 export const MACC: AccountStatus[] = [
   { id: 'm1', name: 'Meta Conta 01', externalId: 'act_1000000001', currency: 'USD', timezone: 'America/Sao_Paulo', status: 'ok', lastSyncAt: new Date(Date.now() - 7 * 60000).toISOString() },
-  { id: 'm2', name: 'Meta Conta 02', externalId: 'act_1000000002', currency: 'USD', timezone: 'America/Los_Angeles', status: 'ok', lastSyncAt: new Date(Date.now() - 7 * 60000).toISOString() },
+  { id: 'm2', name: 'Meta Conta 02', externalId: 'act_1000000002', currency: 'USD', timezone: 'America/Los_Angeles', status: 'warn', lastSyncAt: new Date(Date.now() - 7 * 60000).toISOString(),
+    message: '14 linhas sem domínio fora do ROI (US$ 38,40 de custo · 212 cliques) em FB | 12 - TESTE - EN. O link do criativo não aponta para um domínio cadastrado e a campanha/conta não tem domínio: ligue a conta a um domínio em Domínios ou defina o domínio da campanha' },
   { id: 'm3', name: 'Meta Conta 03', externalId: 'act_1000000003', currency: 'BRL', timezone: 'America/Sao_Paulo', status: 'token', lastSyncAt: new Date(Date.now() - 9 * 60000).toISOString(), message: 'Token expira em 5 dias · reconectar' },
   { id: 'm4', name: 'Meta Conta 04', externalId: 'act_1000000004', currency: 'USD', timezone: 'America/Sao_Paulo', status: 'disconnected', lastSyncAt: null, message: 'Desconectada · autenticação necessária' },
 ];

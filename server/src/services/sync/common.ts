@@ -83,15 +83,8 @@ export async function domainResolver() {
     map.set(h, r!);
     return r!;
   };
-  /** Um domínio = uma rede do Ad Manager. Sem rede ainda: fica com a primeira que mostrar o site. Outra rede → false. */
-  const claimGam = async (d: { id: string; gam: string | null }, networkId: string) => {
-    if (d.gam === networkId) return true;
-    if (d.gam) return false;
-    await q('UPDATE domains SET gam_account_id = $2 WHERE id = $1 AND gam_account_id IS NULL', [d.id, networkId]);
-    d.gam = networkId;
-    return true;
-  };
-  return { byHost, byUrl, ensure, claimGam };
+  // (claimGam removido: a ligação domínio ↔ rede do Ad Manager é só manual, em Domínios → domains.gam_account_id)
+  return { byHost, byUrl, ensure };
 }
 
 export function parseUrl(url: string | null | undefined): URL | null {
@@ -207,8 +200,9 @@ export async function replaceFacts(source: Source, from: string, to: string, sco
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4;
 
 /** Estado da conta depois do sync (aparece na tela Contas). */
-export async function setAccountStatus(id: string, status: 'ok' | 'error' | 'permission' | 'token' | 'late', message: string | null) {
-  await q(`UPDATE integration_accounts SET status = $2, message = $3, last_sync_at = CASE WHEN $2 = 'ok' THEN now() ELSE last_sync_at END WHERE id = $1`, [id, status, message]);
+/** status 'warn' = sincronizou, mas descartou linhas (sem domínio, rede errada…); a mensagem diz o que corrigir. */
+export async function setAccountStatus(id: string, status: 'ok' | 'warn' | 'error' | 'permission' | 'token' | 'late', message: string | null) {
+  await q(`UPDATE integration_accounts SET status = $2, message = $3, last_sync_at = CASE WHEN $2 IN ('ok', 'warn') THEN now() ELSE last_sync_at END WHERE id = $1`, [id, status, message]);
 }
 export function statusFromError(e: unknown): 'error' | 'permission' | 'token' {
   const code = (e as SyncError)?.code;

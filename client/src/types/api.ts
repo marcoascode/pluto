@@ -326,7 +326,7 @@ export interface UtmDebugResponse {
 }
 
 /* ---------- integrações / contas ---------- */
-export type ConnStatus = 'ok' | 'late' | 'error' | 'permission' | 'token' | 'disconnected' | 'not_imported';
+export type ConnStatus = 'ok' | 'warn' | 'late' | 'error' | 'permission' | 'token' | 'disconnected' | 'not_imported';
 export interface AccountStatus {
   id: string;
   name: string;
@@ -341,7 +341,7 @@ export interface AccountStatus {
 export interface IntegrationsResponse {
   google: { connected: boolean; googleAccount: string; mccName: string; mccCustomerId: string; accountsFound: number; lastSyncAt: string | null; accounts: AccountStatus[] };
   meta: { connected: boolean; business: string; user: string; lastSyncAt: string | null; accounts: AccountStatus[] };
-  gam: { connected: boolean; googleAccount: string; networkName: string; networkCode: string; currency: Currency; timezone: string; status: ConnStatus; lastSyncAt: string | null };
+  gam: { connected: boolean; googleAccount: string; networkName: string; networkCode: string; currency: Currency; timezone: string; status: ConnStatus; lastSyncAt: string | null; accounts?: AccountStatus[] };
 }
 /* ---------- contas das integrações (CRUD) ---------- */
 export type Provider = 'google-ads' | 'meta' | 'gam';

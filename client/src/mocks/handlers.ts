@@ -8,7 +8,12 @@ import { addDays, lastMonths } from '@/lib/period';
 import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, type Row } from './db';
 import { PL_LABEL, placementRows, typeOf, type PRow } from './placements';
 
-const LS = { get: <V,>(k: string): V | null => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } }, set: (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+/** Guarda sessão/preferências do mock. Se o navegador bloquear o storage (prévia com sandbox, aba anônima), fica em memória. */
+const MEM = new Map<string, string>();
+const LS = {
+  get: <V,>(k: string): V | null => { let raw: string | null = null; try { raw = localStorage.getItem(k); } catch { /* sem storage */ } if (raw == null) raw = MEM.get(k) ?? null; try { return JSON.parse(raw || 'null'); } catch { return null; } },
+  set: (k: string, v: unknown) => { const raw = JSON.stringify(v); MEM.set(k, raw); try { localStorage.setItem(k, raw); } catch { /* sem storage */ } },
+};
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const me = (): (typeof USERS)[number] | null => USERS.find((u) => u.id === LS.get<string>('pluto_mock_session')) ?? null;
 /* ---- permissões (mesma regra do servidor) ---- */
@@ -40,7 +45,8 @@ const PROV_OF: Record<string, T.Provider> = { g: 'google-ads', m: 'meta', n: 'ga
 const ACCTS: T.IntegrationAccount[] = [
   ...GACC.map((a) => ({ id: a.id, provider: 'google-ads' as const, name: a.name, externalId: a.externalId, currency: a.currency, timezone: a.timezone, imported: !!a.imported, domains: [], status: a.status, lastSyncAt: a.lastSyncAt, message: a.message })),
   ...MACC.map((a) => ({ id: a.id, provider: 'meta' as const, name: a.name, externalId: a.externalId, currency: a.currency, timezone: a.timezone, imported: true, domains: [], status: a.status, lastSyncAt: a.lastSyncAt, message: a.message })),
-  { id: 'n1', provider: 'gam', name: 'Minha Rede GAM', externalId: '12345678', currency: 'USD', timezone: 'America/Sao_Paulo', imported: true, domains: [], status: 'ok', lastSyncAt: new Date(Date.now() - 6 * 60000).toISOString() },
+  { id: 'n1', provider: 'gam', name: 'Minha Rede GAM', externalId: '12345678', currency: 'USD', timezone: 'America/Sao_Paulo', imported: true, domains: [], status: 'warn', lastSyncAt: new Date(Date.now() - 6 * 60000).toISOString(),
+    message: '9 linhas sem site ignoradas (US$ 4,12): confira se utm_campaign e utm_content estão como dimensão personalizada nesta rede · 22 linhas de sites sem rede ligada ignoradas (US$ 61,30): dominioN.com. Ligue cada site a esta rede em Domínios' },
 ];
 const accDomains = (a: T.IntegrationAccount) => (a.provider === 'gam' ? [] : DOMAINS.filter((d) => (a.provider === 'google-ads' ? d.googleAccounts : d.metaAccounts).includes(a.id)).map((d) => d.hostname));
 const withDomains = (a: T.IntegrationAccount): T.IntegrationAccount => ({ ...a, domains: accDomains(a) });
@@ -277,7 +283,7 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path === '/admin/integrations') return out<T.IntegrationsResponse>({
     google: { connected: true, googleAccount: 'midia@exemplo.com', mccName: 'Pluto Media MCC', mccCustomerId: '123-456-7890', accountsFound: GACC.length, lastSyncAt: new Date(Date.now() - 4 * 60000).toISOString(), accounts: GACC },
     meta: { connected: true, business: 'Pluto Media BM', user: 'midia@exemplo.com', lastSyncAt: new Date(Date.now() - 7 * 60000).toISOString(), accounts: MACC },
-    gam: { connected: true, googleAccount: 'financeiro@exemplo.com', networkName: 'Minha Rede GAM', networkCode: '12345678', currency: 'USD', timezone: 'America/Sao_Paulo', status: 'ok', lastSyncAt: new Date(Date.now() - 6 * 60000).toISOString() } });
+    gam: { connected: true, googleAccount: 'financeiro@exemplo.com', networkName: 'Minha Rede GAM', networkCode: '12345678', currency: 'USD', timezone: 'America/Sao_Paulo', status: 'ok', lastSyncAt: new Date(Date.now() - 6 * 60000).toISOString(), accounts: ACCTS.filter((a) => a.provider === 'gam').map(({ provider: _p, domains: _d, ...a }) => a) } });
   if (/\/oauth\/start$/.test(path)) onlySuper(u);
   if (/\/oauth\/start$/.test(path)) return out<T.OAuthStartResponse>({ authorizeUrl: '#oauth-mock' });
   m = path.match(/^\/admin\/integrations\/(google-ads|meta|gam)\/accounts(?:\/([^/]+))?$/);

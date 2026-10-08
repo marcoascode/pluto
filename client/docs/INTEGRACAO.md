@@ -106,11 +106,20 @@ Janelas (editáveis por job em Integrações → Sincronização, só SuperAdmin
 
 **Erro numa conta não interrompe as outras**: cada conta Google/Meta e cada rede do Ad Manager roda no seu `try/catch` e fica com o próprio status; o job termina `success` se pelo menos uma deu certo (a mensagem lista as que falharam). Contas **inativas** na plataforma ficam fora (Google: `customer_client.status` ≠ ENABLED · Meta: `account_status` 2/100/101/202), gravado em `integration_accounts.platform_status`.
 
-**Várias redes do Ad Manager:** o worker roda todas as redes importadas. Cada domínio fica com uma rede (`domains.gam_account_id`); sem rede, fica com a primeira que mostrar o site. Cada rede só substitui as linhas dos domínios dela.
+**Várias redes do Ad Manager (validação estrita):** o worker roda todas as redes importadas. A ligação domínio ↔ rede é **só manual**, em Domínios (`domains.gam_account_id`); o worker nunca faz UPDATE nesse campo. Uma linha do relatório só entra se `domain.gam === rede atual`:
+- `SITE` vazio/inválido (normalmente key-values sem dimensão personalizada nesta rede) → ignorada e contada ("N linhas sem site ignoradas (US$ X)");
+- site sem rede ligada → ignorada, somada e listada ("N linhas de sites sem rede ligada ignoradas (US$ X): site1, site2…");
+- site ligado a outra rede → ignorada, somada e listada ("… ligados a outra rede …").
+Os avisos ficam no status da rede (`warn`, "Sincronizado com avisos") em Integrações → Ad Manager → Redes e em Contas. Cada rede só substitui as linhas dos domínios dela.
+
+**Meta: fatiamento e limites.** `level=ad × breakdowns=country × time_increment=1` em janelas longas faz a Meta recusar ("Please reduce the amount of data…") e baixar o limite da conta. O agendador não muda; dentro de `meta.ts` a janela é fatiada em blocos de no máximo `META_CHUNK_DAYS` (3) dias, do mais recente para o mais antigo, cada um paginado à parte, e tudo é unido e gravado de uma vez por conta (se um bloco falhar, nada da conta é trocado e o próximo ciclo tenta de novo).
+- Limite de uso (`#4/#17/#32/#613/#80000/#80004`, "too many calls to this ad-account"): pausa `META_RATE_LIMIT_WAIT_MS` (60 s) e repete a mesma página, até `META_RATE_LIMIT_RETRIES` (5) vezes seguidas.
+- "Reduce the amount of data" num bloco de vários dias → o bloco vira dias soltos; num dia só → a página cai pela metade (500 → 250 → … → 25).
 
 **Limpeza (`google-ads.cleanup`, `meta.cleanup`):** com "Exclua dados com mais de X dias" ligado, remove de `ads` e `ad_groups` o que o sync não vê há mais de X dias (`last_seen_at`) e sem métrica nesses X dias. Antes de excluir, as linhas de `daily_metrics` desses anúncios/grupos são somadas no nível de cima (anúncio → grupo → campanha), então os totais não mudam.
 
-**Domínio de cada campanha:** o mais comum entre os links dos anúncios dela (Meta: link do criativo · Google: URL final). Se não der, usa o domínio ligado à conta em Domínios (quando for um só). Sem domínio, a linha não entra e a conta mostra o aviso.
+**Domínio de cada linha (Meta):** 1) domínio do link do criativo; 2) se o criativo não tiver link, o link for de formato não suportado ou apontar para site não cadastrado, o domínio da campanha (o mais comum entre os links dos anúncios dela, ou o que já está gravado); 3) se a campanha também não tiver, o **único** domínio ligado à conta em Domínios (`domain_accounts`; com 2+ não adivinha). Só quando as três falham a linha fica de fora: a conta fica `warn` com quantas linhas, quanto de custo e cliques ficaram fora do ROI e em quais campanhas. As outras contas seguem normalmente.
+**Google Ads:** o mais comum entre as URLs finais dos anúncios da campanha; senão o domínio único da conta.
 
 **Atribuição da receita (Ad Manager):** o site manda no GPT `googletag.pubads().setTargeting('utm_campaign', …)` e `('utm_content', …)` com os valores da URL.
 No Ad Manager esses keys precisam estar como **dimensão personalizada** (Inventário → Key-values → "Report on values"). O worker procura os keys pelo nome (`GAM_KEY_CAMPAIGN`, `GAM_KEY_CONTENT`, `GAM_KEY_SOURCE`, `GAM_KEY_PATH` opcional) e:

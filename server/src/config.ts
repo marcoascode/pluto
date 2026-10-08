@@ -70,6 +70,12 @@ export const config = {
   sync: {
     /** Primeira importação de uma conta/rede: quantos dias para trás. */
     backfillDays: Number(process.env.SYNC_BACKFILL_DAYS ?? 30),
+    /** Meta Insights: tamanho máximo de cada bloco de datas (dias). Janelas maiores são fatiadas. */
+    metaChunkDays: Math.max(1, Number(process.env.META_CHUNK_DAYS ?? 3)),
+    /** Meta: espera quando a conta bate no limite de uso (#17, #80004…), em ms. */
+    metaRateLimitWaitMs: Number(process.env.META_RATE_LIMIT_WAIT_MS ?? 60_000),
+    /** Meta: quantas esperas seguidas antes de desistir da conta neste ciclo. */
+    metaRateLimitRetries: Number(process.env.META_RATE_LIMIT_RETRIES ?? 5),
   },
   fx: {
     /** Frankfurter (sem chave). Pode trocar por outra instância (self-host) se quiser. */

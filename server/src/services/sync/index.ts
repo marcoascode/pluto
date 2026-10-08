@@ -35,20 +35,14 @@ const RUNNERS: Record<string, Runner> = {
   'google-ads.structure': async () => runGoogleAds('structure', await windowFor('google-ads', 'recent')),
   'google-ads.metrics': async () => runGoogleAds('metrics', await windowFor('google-ads', 'recent', 'daily_metrics', 'google-ads.metrics')),
   'meta.structure': async () => runMeta('structure', await windowFor('meta', 'recent')),
-  // 'meta.metrics': async () => runMeta('metrics', await windowFor('meta', 'recent')),
-  // 'gam.revenue': async () => runGam(await windowFor('gam', 'recent')),
   'meta.metrics': async () => runMeta('metrics', await windowFor('meta', 'recent', 'daily_metrics', 'meta.metrics')),
   'gam.revenue': async () => runGam(await windowFor('gam', 'recent', 'daily_metrics', 'gam.revenue')),
   'gam.close': async () => {
-    // const a = await runGam(await windowFor('gam', 'close'), true);
-    // const b = await runGamPlacements(await windowFor('gam', 'close', 'placement_metrics'), true);
     const w = await windowFor('gam', 'close', 'daily_metrics', 'gam.close');
     const a = await runGam(w, true);
     const b = await runGamPlacements(w, true);
     return { status: a.status, message: `${a.message ?? ''} · placements: ${b.message ?? b.status}`.slice(0, 500) };
   },
-  // 'google-ads.placements': async () => runGoogleAdsPlacements(await windowFor('google-ads', 'recent', 'placement_metrics')),
-  // 'gam.placements': async () => runGamPlacements(await windowFor('gam', 'recent', 'placement_metrics')),
   'google-ads.placements': async () => runGoogleAdsPlacements(await windowFor('google-ads', 'recent', 'placement_metrics', 'google-ads.placements')),
   'gam.placements': async () => runGamPlacements(await windowFor('gam', 'recent', 'placement_metrics', 'gam.placements')),
   'google-ads.cleanup': async () => runCleanup('google-ads.cleanup', 'google'),

@@ -24,14 +24,16 @@ export default function AccountsPage() {
       </Card>
     </Grid>
   );
-  const gi = issues(data.google.accounts), mi = issues(data.meta.accounts);
+  const gi = issues(data.google.accounts), mi = issues(data.meta.accounts), ni = issues(data.gam.accounts ?? []);
+  /** Pior status da lista (erro > token > aviso/atraso > ok). */
+  const worst = (l: AccountStatus[], base = 'ok') => { const s = new Set(l.map((a) => a.status)); return s.has('disconnected') ? 'disconnected' : s.has('error') ? 'error' : s.has('permission') ? 'permission' : s.has('token') ? 'token' : s.has('late') ? 'late' : s.has('warn') ? 'warn' : base; };
   return (
     <>
       <PageHead title="Contas" sub="Status de todas as conexões. Problemas aparecem aqui primeiro." />
       <Grid container spacing={1.75}>
-        {card('Google Ads', '/admin/integracoes/google-ads', gi.some((a) => a.status === 'error') ? 'error' : 'ok', `${data.google.mccName} · último sync ${relTime(data.google.lastSyncAt)}`, gi)}
-        {card('Meta Ads', '/admin/integracoes/meta-ads', mi.length ? 'token' : 'ok', `${data.meta.business} · último sync ${relTime(data.meta.lastSyncAt)}`, mi)}
-        {card('Google Ad Manager', '/admin/integracoes/ad-manager', data.gam.status, `${data.gam.networkName} · ${data.gam.networkCode} · último sync ${relTime(data.gam.lastSyncAt)}`, [])}
+        {card('Google Ads', '/admin/integracoes/google-ads', worst(gi), `${data.google.mccName} · último sync ${relTime(data.google.lastSyncAt)}`, gi)}
+        {card('Meta Ads', '/admin/integracoes/meta-ads', worst(mi), `${data.meta.business} · último sync ${relTime(data.meta.lastSyncAt)}`, mi)}
+        {card('Google Ad Manager', '/admin/integracoes/ad-manager', data.gam.status === 'ok' ? worst(ni) : data.gam.status, `${data.gam.networkName} · ${data.gam.networkCode} · último sync ${relTime(data.gam.lastSyncAt)}`, ni)}
       </Grid>
     </>
   );

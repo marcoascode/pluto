@@ -1,7 +1,7 @@
 /** HTTP com retry/backoff para as APIs externas (429, 5xx, timeouts). */
 
 export class SyncError extends Error {
-  /** code: not_connected | not_configured | token | permission | rate_limit | api | fx_missing | config */
+  /** code: not_connected | not_configured | token | permission | rate_limit | too_much_data | api | fx_missing | config */
   constructor(public code: string, message: string) { super(message); }
 }
 
@@ -26,6 +26,8 @@ export async function requestJson<T = any>(url: string, o: ReqOpts = {}): Promis
       try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text.slice(0, 300) }; }
       if (r.ok) return j as T;
       const msg = errorMessage(j) ?? `HTTP ${r.status}`;
+      // Meta "Please reduce the amount of data…" (código 1, HTTP 500): repetir igual não adianta, quem chamou precisa pedir menos
+      if (TOO_MUCH_DATA.test(msg)) throw new SyncError('too_much_data', msg);
       if ([429, 500, 502, 503, 504].includes(r.status) && i < retries) { await sleep(retryAfter(r) ?? 1000 * 2 ** i); last = new SyncError('rate_limit', msg); continue; }
       if (r.status === 401) throw new SyncError('token', msg);
       if (r.status === 403) throw new SyncError('permission', msg);
@@ -54,8 +56,14 @@ function errorMessage(j: any): string | null {
   return null;
 }
 
+const TOO_MUCH_DATA = /reduce the amount of data/i;
+/** Meta: consulta pesada demais (janela longa × level=ad × country). Solução: janela menor ou página menor. */
+export function isMetaTooMuchData(e: unknown) {
+  return e instanceof SyncError && (e.code === 'too_much_data' || TOO_MUCH_DATA.test(e.message));
+}
+
 /** Meta: erro de limite de uso (códigos 4, 17, 32, 613, 80004) → espera e tenta de novo. */
 export function isMetaRateLimit(e: unknown) {
-  return e instanceof SyncError && /\(#(4|17|32|613|80004)\)|User request limit|too many calls/i.test(e.message);
+  return e instanceof SyncError && /\(#(4|17|32|613|80000|80004)\)|User request limit|too many calls|request limit reached/i.test(e.message);
 }
 export { sleep };

@@ -45,7 +45,7 @@ export function NoAccess({ msg }: { msg: string }) {
     </CardContent></Card>
   );
 }
-const STATUS: Record<string, [string, string]> = { ok: ['pos', 'Conectado'], late: ['warn', 'Sincronização atrasada'], error: ['neg', 'Erro na API'], permission: ['neg', 'Permissão insuficiente'], token: ['warn', 'Token expirando'], disconnected: ['neg', 'Desconectado'], not_imported: ['na', 'Não importada'] };
+const STATUS: Record<string, [string, string]> = { ok: ['pos', 'Conectado'], warn: ['warn', 'Sincronizado com avisos'], late: ['warn', 'Sincronização atrasada'], error: ['neg', 'Erro na API'], permission: ['neg', 'Permissão insuficiente'], token: ['warn', 'Token expirando'], disconnected: ['neg', 'Desconectado'], not_imported: ['na', 'Não importada'] };
 export function StatusChip({ status }: { status: string }) {
   const { pluto: p } = useTheme();
   const [k, l] = STATUS[status] ?? ['na', status];

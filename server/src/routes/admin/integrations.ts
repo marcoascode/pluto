@@ -50,7 +50,7 @@ integrationsRouter.get('/integrations', async (_req, res) => {
   res.json({
     google: { connected: !!c('google-ads').refresh_token_enc, googleAccount: c('google-ads').account_email ?? '—', mccName: c('google-ads').display_name ?? '—', mccCustomerId: c('google-ads').external_id ? displayId('google-ads', c('google-ads').external_id) : '—', accountsFound: of('google-ads').length, lastSyncAt: c('google-ads').last_sync_at ?? null, accounts: of('google-ads') },
     meta: { connected: !!c('meta').access_token_enc, business: c('meta').display_name ?? '—', user: c('meta').account_email ?? '—', lastSyncAt: c('meta').last_sync_at ?? null, accounts: of('meta') },
-    gam: { connected: !!c('gam').refresh_token_enc, googleAccount: c('gam').account_email ?? '—', networkName: gamAcc?.name ?? c('gam').display_name ?? '—', networkCode: gamAcc?.externalId ?? c('gam').external_id ?? '—', currency: gamAcc?.currency ?? 'USD', timezone: gamAcc?.timezone ?? config.appTz, status: c('gam').refresh_token_enc ? c('gam').status : 'disconnected', lastSyncAt: c('gam').last_sync_at ?? null },
+    gam: { connected: !!c('gam').refresh_token_enc, googleAccount: c('gam').account_email ?? '—', networkName: gamAcc?.name ?? c('gam').display_name ?? '—', networkCode: gamAcc?.externalId ?? c('gam').external_id ?? '—', currency: gamAcc?.currency ?? 'USD', timezone: gamAcc?.timezone ?? config.appTz, status: c('gam').refresh_token_enc ? c('gam').status : 'disconnected', lastSyncAt: c('gam').last_sync_at ?? null, accounts: of('gam') },
   });
 });
 
@@ -140,10 +140,7 @@ integrationsRouter.patch('/sync-settings/:id', requireSuperAdmin, async (req, re
     await q(`UPDATE sync_settings SET window_mode = COALESCE($2, window_mode), window_days = COALESCE($3, window_days),
                retention_days = CASE WHEN $4::boolean THEN $5::int ELSE retention_days END WHERE id = $1`,
       [req.params.id, b.windowMode ?? null, b.windowDays ?? (b.windowMode === 'days' && cur.days == null ? 3 : null), b.retentionDays !== undefined, b.retentionDays ?? null]);
-      // const r = await one(`UPDATE sync_settings SET every_minutes = COALESCE($2, every_minutes), enabled = COALESCE($3, enabled),
-      //     next_run_at = CASE WHEN COALESCE($3, enabled) THEN COALESCE(last_run_at, now()) + make_interval(mins => COALESCE($2, every_minutes)) ELSE NULL END
-      //   WHERE id = $1 RETURNING id`, [req.params.id, b.everyMinutes ?? null, b.enabled ?? null]);
-      const r = await one(`UPDATE sync_settings SET every_minutes = COALESCE($2, every_minutes), enabled = COALESCE($3, enabled),
+  const r = await one(`UPDATE sync_settings SET every_minutes = COALESCE($2, every_minutes), enabled = COALESCE($3, enabled),
       next_run_at = CASE WHEN COALESCE($3, enabled) THEN COALESCE(last_run_at, now()) + make_interval(mins => COALESCE($2, every_minutes)) ELSE NULL END
     WHERE id = $1 RETURNING id`, [req.params.id, b.everyMinutes ?? null, b.enabled ?? null]);
   if (!r) throw notFound('Job não encontrado.');

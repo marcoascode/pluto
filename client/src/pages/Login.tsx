@@ -19,8 +19,9 @@ export default function LoginPage() {
   const [err, setErr] = useState(''); const [sent, setSent] = useState(false); const [busy, setBusy] = useState(false);
   const { login, refresh } = useAuth();
   const navigate = useNavigate();
-  const run = (fn: () => Promise<void>) => async (e: FormEvent) => {
-    e.preventDefault(); setErr(''); setBusy(true);
+  // Sem depender do submit do formulário: em prévias com sandbox (sem allow-forms) o submit é bloqueado pelo navegador.
+  const run = (fn: () => Promise<void>) => async (e?: { preventDefault: () => void }) => {
+    e?.preventDefault(); if (busy) return; setErr(''); setBusy(true);
     try { await fn(); } catch (x) { setErr(x instanceof ApiError ? x.message : 'Algo deu errado.'); } finally { setBusy(false); }
   };
   const submitLogin = run(async () => { const u = await login(email, pw); if (u.mustChangePassword) setView('change'); else navigate('/', { replace: true }); });
@@ -36,10 +37,12 @@ export default function LoginPage() {
     await authApi.resetPassword(resetToken ?? '', pw);
     setPw(''); setPw2(''); setView('login'); setDone('Senha criada. Entre com o seu e-mail e a nova senha.'); navigate('/login', { replace: true });
   });
+  const current = view === 'login' ? submitLogin : view === 'forgot' ? submitForgot : view === 'reset' ? submitReset : submitChange;
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', px: 2, py: 4 }}>
-      <Card component="form" onSubmit={view === 'login' ? submitLogin : view === 'forgot' ? submitForgot : view === 'reset' ? submitReset : submitChange} sx={{ width: 'min(410px, 100%)', p: 3.5 }}>
+      <Card component="form" noValidate onSubmit={(e: FormEvent) => { e.preventDefault(); current(); }}
+        onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') { e.preventDefault(); current(); } }} sx={{ width: 'min(410px, 100%)', p: 3.5 }}>
         <Stack spacing={2.25}>
           <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }} ><Logo /><Box><Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 16.5 }}>Pluto Mídia</Typography><Typography variant="caption">Media Intelligence</Typography></Box></Stack>
           {view === 'login' && (<>
@@ -58,7 +61,7 @@ export default function LoginPage() {
             <TextField label="Repita a nova senha" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" required fullWidth />
           </>)}
           {err && <Alert severity="error" variant="outlined">{err}</Alert>}
-          <Button type="submit" variant="contained" size="large" disabled={busy}>{view === 'login' ? (busy ? 'Entrando…' : 'Entrar') : view === 'forgot' ? 'Enviar link' : view === 'reset' ? 'Salvar nova senha' : 'Salvar e entrar'}</Button>
+          <Button type="button" onClick={() => current()} variant="contained" size="large" disabled={busy}>{view === 'login' ? (busy ? 'Entrando…' : 'Entrar') : view === 'forgot' ? 'Enviar link' : view === 'reset' ? 'Salvar nova senha' : 'Salvar e entrar'}</Button>
           {view === 'login' ? <Button onClick={() => setView('forgot')}>Esqueci minha senha</Button> : view === 'forgot' && <Button onClick={() => { setView('login'); setSent(false); }}>Voltar para o login</Button>}
           {IS_MOCK && view === 'login' && (<>
             <Divider />

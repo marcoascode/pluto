@@ -187,7 +187,7 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
         const p = normPlacement(str(d[iPl]));
         if (!p) { noPl++; continue; }
         const domain = await dom.ensure(site);
-        if (!domain || domain.pending || !(await dom.claimGam(domain, net.id))) continue;
+        if (!domain || domain.pending || domain.gam !== net.id) continue;   // só domínios ligados a esta rede (manual, em Domínios)
         facts.push({ ...zero, date: day, domainId: domain.id, campaignId: cv && !EMPTY.test(cv) ? byExt.get(cv) ?? null : null, placement: p.key,
           revenueUsd: num(m[0]), impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]) });
       }
