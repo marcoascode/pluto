@@ -6,6 +6,5 @@ dist
 *.tsbuildinfo
 *copy.*
 /docs
-README.md
 /server/hash.ts
 pluto.jpg
