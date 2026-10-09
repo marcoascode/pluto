@@ -71,8 +71,10 @@ export interface UnassignedCampaign {
   id: string;
   externalId: string;
   name: string;
+  status: string;
   accountId: string;
   accountName: string;
+  platform?: string;
 }
 
 /* ---------- auth ---------- */
