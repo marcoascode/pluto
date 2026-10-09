@@ -68,3 +68,25 @@ export function useAdminMutation<A, R>(fn: (a: A) => Promise<R>, invalidate: rea
   const qc = useQueryClient();
   return useMutation({ mutationFn: fn, onSuccess: () => invalidate.forEach((k) => qc.invalidateQueries({ queryKey: k as unknown[] })) });
 }
+
+// CAMPANHAS SEM DOMÍNIO
+export function useUnassignedCampaigns(accountId?: string) {
+  return useQuery({
+    queryKey: ['admin', 'campaigns', 'unassigned', accountId],
+    queryFn: () => adminApi.unassignedCampaigns(accountId),
+    staleTime: 30_000,
+  });
+}
+
+export function useAssignCampaignDomain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, domainId }: { id: string; domainId: string | null }) =>
+      adminApi.assignCampaignDomain(id, domainId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'campaigns'] });
+      qc.invalidateQueries({ queryKey: qk.accounts('meta') });
+      qc.invalidateQueries({ queryKey: qk.integrations });
+    },
+  });
+}

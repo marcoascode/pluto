@@ -66,6 +66,15 @@ export interface Comparison {
   metrics: Metrics;
 }
 
+// TIPOS DAS RESPOSTAS PARA CAMPANHAS SEM DOMÍNIO
+export interface UnassignedCampaign {
+  id: string;
+  externalId: string;
+  name: string;
+  accountId: string;
+  accountName: string;
+}
+
 /* ---------- auth ---------- */
 export interface User {
   id: string;

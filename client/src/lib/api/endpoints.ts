@@ -123,4 +123,9 @@ export const adminApi = {
   saveFxDiscount: (b: { amount: number; validFrom?: string }) => api.put<T.FxDiscountResponse>('/admin/fx-discount', b),
   /** Força buscar a cotação agora na API de câmbio (o servidor também faz isso sozinho). */
   refreshFx: () => api.post<T.FxLatest>('/admin/fx/refresh'),
+  // -- NOVAS ROTAS (Campanhas sem domínio) --
+  unassignedCampaigns: (accountId?: string) =>
+    api.get<{ campaigns: T.UnassignedCampaign[] }>(`/admin/campaigns/unassigned${accountId ? `?accountId=${accountId}` : ''}`),
+  assignCampaignDomain: (id: string, domainId: string | null) =>
+    api.patch<{ id: string; domainId: string | null }>(`/admin/campaigns/${id}`, { domainId }),
 };

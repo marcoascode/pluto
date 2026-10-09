@@ -200,7 +200,14 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
       // ---- métricas em blocos de até 3 dias (chunking) ----
       const { rows, chunks } = await fetchInsightsChunked(acc, token, w);
       const facts: Fact[] = [];
-      const lost = { rows: 0, spendUsd: 0, clicks: 0, impressions: 0, campaigns: new Map<string, number>() };
+      const lost = {
+        rows: 0,
+        spendUsd: 0,
+        clicks: 0,
+        impressions: 0,
+        // campaigns: new Map<string, number>()
+        campaigns: new Map<string, { externalId: string; name: string; spendUsd: number }>(), // Ajustado para capturar o external_id (o ID da campanha na Meta) para que o frontend tenha a referência exata de qual registro atualizar.
+      };
       for (const r of rows) {
         // anúncio novo que a estrutura ainda não viu (ex.: criado agora)
         let c = st.camps.get(r.campaign_id);
@@ -215,8 +222,18 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
         const domainId = st.resolveDomain(a, c);
         if (!domainId) {
           // não dá para gravar sem domínio: soma o que ficou de fora para o aviso da conta
-          lost.rows++; lost.spendUsd += spendUsd; lost.clicks += clicks; lost.impressions += Number(r.impressions ?? 0);
-          lost.campaigns.set(r.campaign_name, (lost.campaigns.get(r.campaign_name) ?? 0) + spendUsd);
+          lost.rows++;
+          lost.spendUsd += spendUsd;
+          lost.clicks += clicks;
+          lost.impressions += Number(r.impressions ?? 0);
+          // lost.campaigns.set(r.campaign_name, (lost.campaigns.get(r.campaign_name) ?? 0) + spendUsd);
+          const current = lost.campaigns.get(r.campaign_id);
+          lost.campaigns.set(r.campaign_id, {
+            externalId: r.campaign_id, // Captura o ID externo da Meta
+            name: r.campaign_name,
+            spendUsd: (current?.spendUsd ?? 0) + spendUsd,
+          });
+
           continue;
         }
         facts.push(emptyFact({
@@ -234,7 +251,7 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
       ok++;
     } catch (e) {
       notes.push(`${acc.name}: ${(e as Error).message}`);
-      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => {});
+      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => { });
       // segue para a próxima conta: um erro numa conta não interrompe as outras
     }
   }
@@ -243,11 +260,30 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
   return { status: 'success', message: `${ok}/${accs.length - skippedInactive} contas · ${kind === 'structure' ? 'estrutura atualizada' : rowsTotal + ' linhas'}${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
 }
 
+// const usd = (n: number) => `US$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// /** Aviso da conta: quanto ficou de fora e em quais campanhas (as 3 de maior custo). */
+// function lostMessage(l: { rows: number; spendUsd: number; clicks: number; campaigns: Map<string, number> }) {
+//   const top = [...l.campaigns].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n);
+//   const more = l.campaigns.size > 3 ? ` e mais ${l.campaigns.size - 3}` : '';
+//   return `${l.rows} linhas sem domínio fora do ROI (${usd(l.spendUsd)} de custo · ${l.clicks} cliques) em ${top.join(', ')}${more}. `
+//     + 'O link do criativo não aponta para um domínio cadastrado e a campanha/conta não tem domínio: ligue a conta a um domínio em Domínios ou defina o domínio da campanha';
+// }
 const usd = (n: number) => `US$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 /** Aviso da conta: quanto ficou de fora e em quais campanhas (as 3 de maior custo). */
-function lostMessage(l: { rows: number; spendUsd: number; clicks: number; campaigns: Map<string, number> }) {
-  const top = [...l.campaigns].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n);
+function lostMessage(l: { 
+  rows: number; 
+  spendUsd: number; 
+  clicks: number; 
+  campaigns: Map<string, { externalId: string; name: string; spendUsd: number }> 
+}) {
+  const top = [...l.campaigns.values()]
+    .sort((a, b) => b.spendUsd - a.spendUsd)
+    .slice(0, 3)
+    .map(c => `"${c.name}" (${c.externalId})`);
+    
   const more = l.campaigns.size > 3 ? ` e mais ${l.campaigns.size - 3}` : '';
+  
   return `${l.rows} linhas sem domínio fora do ROI (${usd(l.spendUsd)} de custo · ${l.clicks} cliques) em ${top.join(', ')}${more}. `
     + 'O link do criativo não aponta para um domínio cadastrado e a campanha/conta não tem domínio: ligue a conta a um domínio em Domínios ou defina o domínio da campanha';
 }
