@@ -103,6 +103,8 @@ export const integrationsApi = {
 
 export const adminApi = {
   domains: () => api.get<{ domains: T.Domain[] }>('/admin/domains'),
+  unmappedCampaigns: (platform: T.Platform = 'meta', days = 30) => api.get<T.UnmappedCampaignsResponse>('/admin/campaigns/unmapped', { platform, days }),
+  setCampaignDomain: (a: { id: string; platform: T.Platform; domain: string | null }) => api.patch<T.SetCampaignDomainResponse>(`/admin/campaigns/${encodeURIComponent(a.id)}`, { platform: a.platform, domain: a.domain }),
   createDomain: (hostname: string) => api.post<T.Domain>('/admin/domains', { hostname }),
   updateDomain: (hostname: string, patch: T.DomainInput) => api.patch<T.Domain>(`/admin/domains/${encodeURIComponent(hostname)}`, patch),
   deleteDomain: (hostname: string) => api.del<void>(`/admin/domains/${encodeURIComponent(hostname)}`),
@@ -123,9 +125,4 @@ export const adminApi = {
   saveFxDiscount: (b: { amount: number; validFrom?: string }) => api.put<T.FxDiscountResponse>('/admin/fx-discount', b),
   /** Força buscar a cotação agora na API de câmbio (o servidor também faz isso sozinho). */
   refreshFx: () => api.post<T.FxLatest>('/admin/fx/refresh'),
-  // -- NOVAS ROTAS (Campanhas sem domínio) --
-  unassignedCampaigns: (accountId?: string) =>
-    api.get<{ campaigns: T.UnassignedCampaign[] }>(`/admin/campaigns/unassigned${accountId ? `?accountId=${accountId}` : ''}`),
-  assignCampaignDomain: (id: string, domainId: string | null) =>
-    api.patch<{ id: string; domainId: string | null }>(`/admin/campaigns/${id}`, { domainId }),
 };

@@ -34,3 +34,6 @@ export const relTime = (isoOrNull: string | null) => {
   return `há ${Math.round(m / 60)} h`;
 };
 export const initials = (n: string) => n.split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
+/** Domínio técnico (custo sem site identificável). Só Admin vê. */
+export const TECH_DOMAIN = 'sem-dominio';
+export const domainLabel = (h: string) => (h === TECH_DOMAIN ? 'Sem domínio' : h);

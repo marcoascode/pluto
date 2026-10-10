@@ -51,6 +51,18 @@ const RUNNERS: Record<string, Runner> = {
 
 /** Evita o mesmo job rodando duas vezes ao mesmo tempo neste processo. */
 const running = new Set<string>();
+/** Jobs pedidos enquanto já rodavam (ex.: domínio de campanha trocado no meio do sync): rodam de novo ao terminar. */
+const pending = new Set<string>();
+
+/**
+ * Pede uma execução em segundo plano. Se o job já está rodando, ele roda de novo logo que terminar
+ * (a execução em curso pode ter lido a estrutura antiga). Devolve 'started' ou 'queued'.
+ */
+export function requestRun(settingId: string): 'started' | 'queued' {
+  if (running.has(settingId)) { pending.add(settingId); return 'queued'; }
+  void runJob(settingId).catch((e) => console.error(`[sync] ${settingId}:`, (e as Error).message));
+  return 'started';
+}
 
 /** Executa um job agora, registrando em sync_jobs e atualizando sync_settings. */
 export async function runJob(settingId: string): Promise<JobResult> {
@@ -61,7 +73,10 @@ export async function runJob(settingId: string): Promise<JobResult> {
   const job = await one<{ id: string }>(`INSERT INTO sync_jobs (setting_id, provider, status, attempts) VALUES ($1, split_part($1, '.', 1), 'running', 1) RETURNING id::text`, [settingId]);
   await q(`UPDATE sync_settings SET last_status = 'running' WHERE id = $1`, [settingId]);
   let res: JobResult;
-  try { res = await runner(); } catch (e) { res = { status: 'failed', message: (e as Error).message.slice(0, 500) }; } finally { running.delete(settingId); }
+  try { res = await runner(); } catch (e) { res = { status: 'failed', message: (e as Error).message.slice(0, 500) }; } finally {
+    running.delete(settingId);
+    if (pending.delete(settingId)) setImmediate(() => { void runJob(settingId).catch(() => {}); });
+  }
   await q(`UPDATE sync_jobs SET status = $2, message = $3, finished_at = now() WHERE id = $1`, [job!.id, res.status, res.message ?? null]);
   await q(`UPDATE sync_settings SET last_run_at = now(), next_run_at = now() + make_interval(mins => every_minutes), last_status = $2 WHERE id = $1`,
     [settingId, res.status === 'failed' ? 'failed' : 'success']);

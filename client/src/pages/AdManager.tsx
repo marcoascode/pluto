@@ -31,7 +31,7 @@ export default function AdManagerPage() {
           ))}</TableBody>
         </Table></TableContainer>
       </Card>
-      <Typography variant="caption" component="p" sx={{ mt: 1.75 }}>* Sessões vêm do tracking próprio do Pluto, não do Ad Manager. RPS = Revenue / Sessions × 1000.</Typography>
+      <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>* Sessões vêm do tracking próprio do Pluto, não do Ad Manager. RPS = Revenue / Sessions × 1000.</Typography>
     </>
   );
 }

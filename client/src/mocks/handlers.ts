@@ -5,7 +5,7 @@
 import { ApiError } from '@/lib/api/client';
 import type * as T from '@/types/api';
 import { addDays, lastMonths } from '@/lib/period';
-import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, type Row } from './db';
+import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, TECH, type Row } from './db';
 import { PL_LABEL, placementRows, typeOf, type PRow } from './placements';
 
 /** Guarda sessão/preferências do mock. Se o navegador bloquear o storage (prévia com sandbox, aba anônima), fica em memória. */
@@ -325,10 +325,33 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   }
   if (/\/sync$/.test(path)) return out(undefined);
   if (path === '/admin/domains' && method === 'GET') return out({ domains: DOMAINS.map(domOut) });
+  /* ---- campanhas sem domínio (Prompt-05) ---- */
+  if (path === '/admin/campaigns/unmapped') {
+    const platform = (q.platform as T.Platform) || 'meta'; const days = Number(q.days) || 30;
+    const list = CAMPS.filter((c) => c.platform === platform && c.domain === TECH).map((c) => {
+      const rs = ROWS.filter((r) => r.camp === c.id && r.domain === TECH && r.di <= days);
+      const dis = rs.map((r) => r.di);
+      return { id: c.id, name: c.name, platform: c.platform, status: c.status, accountId: c.acc, accountName: accName(c.acc), spend: rs.reduce((a, r) => a + r.spendUSD * (1 + (r.src === 'meta' ? 0.1383 : 0)), 0), clicks: rs.reduce((a, r) => a + r.clk, 0), rows: rs.length,
+        firstDate: dis.length ? DATES[Math.max(...dis)] : null, lastDate: dis.length ? DATES[Math.min(...dis)] : null };
+    }).sort((a, b) => b.spend - a.spend);
+    return out<T.UnmappedCampaignsResponse>({ platform, days, campaigns: list, totals: { spend: list.reduce((a, c) => a + c.spend, 0), rows: list.reduce((a, c) => a + c.rows, 0) } });
+  }
+  m = path.match(/^\/admin\/campaigns\/([^/]+)$/);
+  if (m && method === 'PATCH') {
+    const c = CAMPS.find((x) => x.id === decodeURIComponent(m![1]) && x.platform === (b.platform ?? 'meta')); if (!c) throw new ApiError(404, 'not_found', 'Campanha não encontrada.');
+    const d = DOMAINS.find((x) => x.hostname === b.domain); if (!d) throw new ApiError(404, 'not_found', 'Domínio não encontrado.');
+    if (d.technical) throw new ApiError(409, 'technical_domain', 'Escolha um site: "Sem domínio" é o destino automático de quem não tem domínio.');
+    if (!d.active) throw new ApiError(409, 'domain_inactive', 'Este domínio está inativo. Ative em Domínios antes de usar.');
+    let moved = 0; for (const r of ROWS) if (r.camp === c.id && r.domain !== d.hostname) { r.domain = d.hostname; moved++; }
+    c.domain = d.hostname;
+    if (!CAMPS.some((x) => x.domain === TECH && x.acc === c.acc)) { const a = MACC.find((x) => x.id === c.acc); if (a && a.status === 'warn') { a.status = 'ok'; a.message = undefined; } const ac = ACCTS.find((x) => x.id === c.acc); if (ac && ac.status === 'warn') { ac.status = 'ok'; ac.message = undefined; } }
+    return out<T.SetCampaignDomainResponse>({ campaign: { id: c.id, platform: c.platform, name: c.name, domain: d.hostname, domainManual: true }, movedRows: moved, resync: 'started' });
+  }
   if (path === '/admin/domains' && method === 'POST') { const d: T.Domain = { hostname: String(b.hostname), revShare: Number(b.revShare ?? 0), revShareFrom: null, active: true, squadId: null, googleAccounts: [], metaAccounts: [], gamAccountId: null, managers: [], lastDataAt: null }; DOMAINS.push(d); return out(d); }
   m = path.match(/^\/admin\/domains\/(.+)$/);
   if (m) {
     const d = DOMAINS.find((x) => x.hostname === decodeURIComponent(m![1])); if (!d) throw new ApiError(404, 'not_found', 'Domínio não encontrado.');
+    if (d.technical) throw new ApiError(409, 'technical_domain', 'O domínio técnico "Sem domínio" é do sistema e não pode ser alterado. Para tirar campanhas dele, defina o domínio da campanha.');
     if (method === 'DELETE') { if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'domain_has_data', 'Este domínio tem dados históricos. Desative em vez de excluir.'); DOMAINS.splice(DOMAINS.indexOf(d), 1); SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); return out(undefined); }
     if (b.hostname && b.hostname !== d.hostname) { if (DOMAINS.find((x) => x.hostname === b.hostname)) throw new ApiError(409, 'domain_exists', 'Já existe um domínio com esse nome.'); if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'rename_mock', 'No modo mock não dá para renomear domínios com dados.'); SQUADS.forEach((s) => (s.domains = s.domains.map((x) => (x === d.hostname ? b.hostname : x)))); d.hostname = b.hostname; }
     if (b.squadId !== undefined) { SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); const s = SQUADS.find((x) => x.id === b.squadId); if (s) s.domains.push(d.hostname); d.squadId = s?.id ?? null; }
@@ -405,7 +428,7 @@ function setLinks(t: T.User, b: Record<string, any>, roleChanged = false) {
 
 function campaignRows(camps: typeof CAMPS, rows: Row[], recent: Row[], cur: T.Currency): T.CampaignRow[] {
   const g = group(rows, (r) => r.camp); const gr = group(recent, (r) => r.camp);
-  return camps.map((c) => ({ id: c.id, platform: c.platform, name: c.name, domain: c.domain, accountId: c.acc, accountName: accName(c.acc), status: c.status, metrics: agg(g.get(c.id) ?? [], cur), roiDays: roiDays(gr.get(c.id) ?? [], cur) }));
+  return camps.map((c) => ({ id: c.id, platform: c.platform, name: c.name, domain: c.domain, noDomain: c.domain === TECH, accountId: c.acc, accountName: accName(c.acc), status: c.status, metrics: agg(g.get(c.id) ?? [], cur), roiDays: roiDays(gr.get(c.id) ?? [], cur) }));
 }
 
 function debugUtm(raw: string): T.UtmDebugResponse {

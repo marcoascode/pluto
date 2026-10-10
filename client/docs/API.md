@@ -145,6 +145,16 @@ Implementado em `server/src/routes/admin/*`. Erros de regra de negócio voltam c
 | DELETE | `/admin/domains/:hostname` | — | 204. `409 domain_has_data` se tiver histórico (desative em vez de excluir) |
 | PUT | `/admin/utm-templates` | `{ google, meta }` | `UtmTemplates` |
 
+**Domínio técnico `sem-dominio` ("Sem domínio"):** vem em `/admin/domains` com `technical: true`. Recebe o custo de campanhas sem domínio identificável (ex.: Meta de mensagens/chatbot) para o spend e o IVA baterem com a fatura. Só Admin/SuperAdmin enxergam (em `/dashboard`, `/domains/*`, `/campaigns`…). Para Gestor/Gerente/sócio ele não existe: `?domain=sem-dominio` → `403`. PATCH/DELETE → `409 technical_domain`; não entra em Squad, gestor, conta nem rede do Ad Manager (também bloqueado no banco).
+
+### Campanhas sem domínio (mapeamento manual campanha → domínio)
+| Método | Rota | Corpo | Resposta / regra |
+|---|---|---|---|
+| GET | `/admin/campaigns/unmapped?platform=meta&days=30` | — | `{ platform, days, campaigns: UnmappedCampaign[], totals: { spend, rows } }`. Campanhas com custo em "Sem domínio" nos últimos `days` dias (as do aviso da conta) + as ativas ainda sem domínio. `spend` em USD com IVA |
+| PATCH | `/admin/campaigns/:id` | `{ domain: "site.com" \| null, platform?: "meta" \| "google", resync?: true }` (ou `domainId`) | `{ campaign: { id, platform, name, domain, domainManual }, movedRows, resync: "started" \| "queued" \| null }`. `:id` = id da campanha na plataforma. Grava `campaigns.domain_id` + `domain_manual` (o sync não troca e vale sobre o link dos anúncios). Move na hora as linhas já gravadas dessa campanha para o domínio (inclusive as de "Sem domínio") e roda o job de métricas da plataforma em segundo plano (`queued` = já estava rodando; roda de novo ao terminar). `domain: null` volta para o automático. `409 technical_domain` / `409 domain_inactive` / `404` |
+
+`GET /campaigns` traz `noDomain: true` (e `domain: "sem-dominio"`) nas campanhas sem domínio, só para Admin; a tela mostra o seletor de domínio no lugar do domínio. `domainManual: true` quando o domínio foi definido à mão.
+
 ### Integrações, contas e sincronização
 | Método | Rota | Corpo | Resposta / regra |
 |---|---|---|---|

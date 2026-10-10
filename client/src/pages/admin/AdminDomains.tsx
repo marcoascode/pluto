@@ -2,6 +2,7 @@ import { Alert, Button, Card, CardHeader, Checkbox, Dialog, DialogActions, Dialo
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { useState } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import { useAdminDomains, useAdminMutation, useIntegrationAccounts, useSquads } from '@/hooks/queries';
 import { adminApi } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
@@ -99,7 +100,8 @@ export default function AdminDomainsPage() {
   const remove = useAdminMutation(adminApi.deleteDomain, INV);
   if (error) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data) return <PageSkeleton />;
-  const d = data.domains; const act = d.filter((x) => x.active).length; const noSq = d.filter((x) => x.active && !x.squadId).length;
+  const tech = data.domains.find((x) => x.technical);
+  const d = data.domains.filter((x) => !x.technical); const act = d.filter((x) => x.active).length; const noSq = d.filter((x) => x.active && !x.squadId).length;
   const accName = (id: string) => [...(ga?.accounts ?? []), ...(ma?.accounts ?? [])].find((a) => a.id === id)?.name ?? id;
   const add = () => {
     const v = clean(host);
@@ -134,7 +136,16 @@ export default function AdminDomainsPage() {
                 <Tooltip title="Excluir"><IconButton size="small" onClick={() => setDel(x)} aria-label={`Excluir ${x.hostname}`}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip>
               </TableCell>
             </TableRow>
-          ))}</TableBody>
+          ))}
+          {tech && (
+            <TableRow sx={{ bgcolor: 'rgba(255,255,255,.02)' }}>
+              <TableCell><b>Sem domínio</b><Typography variant="caption" component="div">Domínio técnico: custo de campanhas sem site identificável (ex.: Meta de mensagens). Só Admin vê.</Typography></TableCell>
+              <TableCell colSpan={7} sx={{ color: 'text.secondary', whiteSpace: 'normal' }}>Não entra em Squad, gestor, conta nem Ad Manager. Para tirar uma campanha daqui, defina o domínio dela.</TableCell>
+              <TableCell>{relTime(tech.lastDataAt)}</TableCell>
+              <TableCell align="right"><Button size="small" variant="outlined" component={RouterLink} to="/admin/integracoes/meta-ads">Definir domínios</Button></TableCell>
+            </TableRow>
+          )}
+          </TableBody>
         </Table></TableContainer>
       </Card>
       {edit && <DomainDialog key={edit.hostname} d={edit} onClose={() => setEdit(null)} />}

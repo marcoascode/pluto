@@ -5,7 +5,7 @@ import { useDomainsSummary } from '@/hooks/queries';
 import { DomainCard } from '@/components/dashboard/DomainCard';
 import { ErrorBox, PageHead, PageSkeleton } from '@/components/ui/States';
 import { Money, Profit, RoiChip } from '@/components/ui/Values';
-import { int, longDate, pct } from '@/lib/format';
+import { domainLabel, int, longDate, pct } from '@/lib/format';
 
 export default function DomainsPage() {
   const f = useFilters();
@@ -22,7 +22,7 @@ export default function DomainsPage() {
           <TableHead><TableRow><TableCell>Domínio</TableCell>{['Revenue', 'Spend', 'Profit', 'ROI', 'Margem', 'RPS', 'eCPM', 'Sessões', 'Atribuição'].map((h) => <TableCell key={h} align="right">{h}</TableCell>)}</TableRow></TableHead>
           <TableBody>{list.map(({ domain, metrics: m }) => (
             <TableRow key={domain}>
-              <TableCell><Link component={RouterLink} to={`/dominios/${encodeURIComponent(domain)}`} color="inherit" underline="hover" sx={{ fontWeight: 600 }}>{domain}</Link></TableCell>
+              <TableCell><Link component={RouterLink} to={`/dominios/${encodeURIComponent(domain)}`} color="inherit" underline="hover" sx={{ fontWeight: 600 }}>{domainLabel(domain)}</Link></TableCell>
               <TableCell align="right"><Money v={m.revenue} /></TableCell><TableCell align="right"><Money v={m.spend} /></TableCell><TableCell align="right"><Profit v={m.profit} /></TableCell>
               <TableCell align="right"><RoiChip v={m.roi} /></TableCell><TableCell align="right">{pct(m.margin)}</TableCell><TableCell align="right"><Money v={m.rps} /></TableCell>
               <TableCell align="right"><Money v={m.ecpm} /></TableCell><TableCell align="right">{int(m.sessions)}</TableCell><TableCell align="right">{pct(m.attributionRate)}</TableCell>

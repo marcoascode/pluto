@@ -66,17 +66,6 @@ export interface Comparison {
   metrics: Metrics;
 }
 
-// TIPOS DAS RESPOSTAS PARA CAMPANHAS SEM DOMÍNIO
-export interface UnassignedCampaign {
-  id: string;
-  externalId: string;
-  name: string;
-  status: string;
-  accountId: string;
-  accountName: string;
-  platform?: string;
-}
-
 /* ---------- auth ---------- */
 export interface User {
   id: string;
@@ -187,11 +176,26 @@ export interface CampaignRow {
   platform: Platform;
   name: string;
   domain: string;
+  /** Sem domínio: o custo está no domínio técnico "Sem domínio" (só Admin vê) → mostrar o seletor de domínio. */
+  noDomain?: boolean;
+  /** Domínio definido à mão (PATCH /admin/campaigns/:id); o sync não troca. */
+  domainManual?: boolean;
   accountId: string;
   accountName: string;
   status: 'ENABLED' | 'PAUSED';
   metrics: Metrics;
   roiDays: RoiDays;
+}
+/** GET /admin/campaigns/unmapped: campanhas sem domínio (custo em "Sem domínio" nos últimos N dias, ou ativas sem domínio). */
+export interface UnmappedCampaign {
+  id: string; name: string; platform: Platform; status: string; accountId: string; accountName: string;
+  spend: number; clicks: number; rows: number; firstDate: string | null; lastDate: string | null;
+}
+export interface UnmappedCampaignsResponse { platform: Platform; days: number; campaigns: UnmappedCampaign[]; totals: { spend: number; rows: number } }
+export interface SetCampaignDomainResponse {
+  campaign: { id: string; platform: Platform; name: string; domain: string | null; domainManual: boolean };
+  movedRows: number;
+  resync: 'started' | 'queued' | null;
 }
 export interface CampaignsResponse {
   comparison: Comparison | null;
@@ -405,6 +409,8 @@ export interface DomainInput {
 }
 export interface Domain {
   hostname: string;
+  /** Domínio técnico "Sem domínio" (sistema): só Admin vê, não se edita nem se vincula. */
+  technical?: boolean;
   revShare: number; // % vigente hoje (só configuração; nunca aparece em relatório)
   revShareFrom: string | null;
   createdBySync?: boolean; // site que apareceu no Ad Manager e ainda não foi cadastrado

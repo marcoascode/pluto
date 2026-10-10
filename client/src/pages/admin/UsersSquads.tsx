@@ -132,7 +132,7 @@ function DomainLinksEditor({ value, onChange }: { value: DomainLink[]; onChange:
   const { data: ga } = useIntegrationAccounts('google-ads');
   const { data: ma } = useIntegrationAccounts('meta');
   const opts = (list?: { id: string; name: string; externalId: string }[]) => (list ?? []).map((a) => ({ id: a.id, name: a.name, sub: a.externalId }));
-  const free = (doms?.domains ?? []).filter((d) => d.active || value.some((v) => v.domain === d.hostname));
+  const free = (doms?.domains ?? []).filter((d) => !d.technical && (d.active || value.some((v) => v.domain === d.hostname)));
   const set = (i: number, patch: Partial<DomainLink>) => onChange(value.map((v, j) => (j === i ? { ...v, ...patch } : v)));
   return (
     <Stack spacing={1.25}>
@@ -232,7 +232,7 @@ function SquadsTab() {
   const [del, setDel] = useState<{ id: string; name: string } | null>(null);
   if (error) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data) return <PageSkeleton />;
-  const active = doms?.domains.filter((d) => d.active) ?? [];
+  const active = doms?.domains.filter((d) => d.active && !d.technical) ?? [];
   return (
     <>
       <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 1.75 }}>

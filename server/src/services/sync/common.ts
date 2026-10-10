@@ -61,7 +61,7 @@ export async function metaIvaRate(): Promise<number> {
 export const normHost = (h: string) => h.trim().toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
 
 export async function domainResolver() {
-  const rows = await q<{ id: string; hostname: string; active: boolean; pending: boolean; gam: string | null }>('SELECT id::text, hostname, active, created_by_sync AS pending, gam_account_id::text AS gam FROM domains');
+  const rows = await q<{ id: string; hostname: string; active: boolean; pending: boolean; gam: string | null }>('SELECT id::text, hostname, active, created_by_sync AS pending, gam_account_id::text AS gam FROM domains WHERE NOT is_technical');
   const map = new Map(rows.map((r) => [r.hostname, r]));
   /** Hostname exato ou domínio pai cadastrado (blog.site.com → site.com). */
   const byHost = (host: string | null | undefined) => {
@@ -115,13 +115,24 @@ export async function accountDomains(accountId: string): Promise<string[]> {
 
 /* ---------------- estrutura ---------------- */
 /** Cria/atualiza a campanha. Mantém o domínio já salvo quando o link não resolve. Devolve id e domínio final. */
-export async function upsertCampaign(accountId: string, platform: 'google' | 'meta', extId: string, name: string, status: string, domainId: string | null): Promise<{ id: string; domainId: string | null }> {
+/** Domínio técnico "Sem domínio" (migration 005): recebe o custo que não tem domínio identificável. */
+export async function technicalDomainId(): Promise<string> {
+  const r = await one<{ id: string }>('SELECT id::text FROM domains WHERE is_technical LIMIT 1');
+  if (!r) throw new SyncError('config', 'Domínio técnico "Sem domínio" não existe (rode as migrations).');
+  return r.id;
+}
+
+/**
+ * Campanha: cria/atualiza. O domínio que o sync calculou (voto dos links / domínio da conta) só entra se a campanha
+ * NÃO tiver domínio definido manualmente (campaigns.domain_manual, PATCH /admin/campaigns/:id). Manual sempre vence.
+ */
+export async function upsertCampaign(accountId: string, platform: 'google' | 'meta', extId: string, name: string, status: string, domainId: string | null): Promise<{ id: string; domainId: string | null; manual: boolean }> {
   const st = /PAUSED|INACTIVE|ADSET_PAUSED|CAMPAIGN_PAUSED/i.test(status) ? 'PAUSED' : /REMOVED|DELETED|ARCHIVED/i.test(status) ? 'REMOVED' : 'ENABLED';
-  const r = await one<{ id: string; domainId: string | null }>(`
+  const r = await one<{ id: string; domainId: string | null; manual: boolean }>(`
     INSERT INTO campaigns (account_id, platform, external_id, name, status, domain_id) VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (platform, external_id) DO UPDATE SET account_id = EXCLUDED.account_id, name = EXCLUDED.name, status = EXCLUDED.status,
-      domain_id = COALESCE(EXCLUDED.domain_id, campaigns.domain_id), updated_at = now()
-    RETURNING id::text, domain_id::text AS "domainId"`, [accountId, platform, extId, name.slice(0, 255) || extId, st, domainId]);
+      domain_id = CASE WHEN campaigns.domain_manual THEN campaigns.domain_id ELSE COALESCE(EXCLUDED.domain_id, campaigns.domain_id) END, updated_at = now()
+    RETURNING id::text, domain_id::text AS "domainId", domain_manual AS manual`, [accountId, platform, extId, name.slice(0, 255) || extId, st, domainId]);
   return r!;
 }
 export async function upsertAdGroup(campaignId: string, extId: string, name: string, status?: string): Promise<string> {
@@ -170,6 +181,10 @@ const ISO2 = /^[A-Z]{2}$/;
  * scope: ids de campanhas cujas linhas são desta execução (Google/Meta, por conta) ou 'all' (Ad Manager).
  */
 /** scope: ids de campanhas · 'all' (a origem inteira) · { domains } (Ad Manager: só os domínios daquela rede). */
+/** Colunas somáveis de daily_metrics e o alvo ON CONFLICT do índice de grão (daily_metrics_grain_uq). */
+export const METRIC_SUMS = ['spend_usd', 'iva_usd', 'revenue_usd', 'impressions', 'ad_requests', 'responses_served', 'ad_clicks', 'viewable', 'traffic_clicks', 'traffic_impressions'];
+export const GRAIN_CONFLICT = `(source, date, domain_id, (COALESCE(url_id, 0)), platform, (COALESCE(campaign_id, 0)), (COALESCE(ad_group_id, 0)), (COALESCE(ad_id, 0)), country, (COALESCE(unattributed_reason, '')))`;
+
 export async function replaceFacts(source: Source, from: string, to: string, scope: string[] | 'all' | { domains: string[] }, rows: Fact[], isFinal = false) {
   const data = mergeFacts(rows.filter((f) => f.date >= from && f.date <= to));   // nunca grava fora da janela que apagou
   await tx(async (c) => {

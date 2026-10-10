@@ -9,7 +9,7 @@ import { CampaignTable } from '@/components/campaigns/CampaignTable';
 import { MetricPicker } from '@/components/ui/MetricPicker';
 import { ErrorBox, NoAccess, PageHead, PageSkeleton, Provisional } from '@/components/ui/States';
 import { ApiError } from '@/lib/api/client';
-import { longDate } from '@/lib/format';
+import { domainLabel, longDate } from '@/lib/format';
 import { addDays, todayISO } from '@/lib/period';
 
 export default function DomainDetailPage() {
@@ -21,7 +21,7 @@ export default function DomainDetailPage() {
   if (error instanceof ApiError && error.status === 403) return <NoAccess msg="Este domínio não faz parte do seu Squad." />;
   return (
     <>
-      <PageHead title={domain} sub={`${longDate(f.from)} – ${longDate(f.to)}`} crumb={<Link component={RouterLink} to="/dominios" color="inherit">Domínios / Sites</Link>}
+      <PageHead title={domainLabel(domain)} sub={`${longDate(f.from)} – ${longDate(f.to)}`} crumb={<Link component={RouterLink} to="/dominios" color="inherit">Domínios / Sites</Link>}
         right={<Button variant="outlined" startIcon={<LinkRoundedIcon />} component={RouterLink} to={`/urls?domain=${encodeURIComponent(domain)}`}>URLs deste domínio</Button>} />
       <Provisional show={f.to >= addDays(todayISO(), -3)} />
       {isLoading && !data ? <PageSkeleton /> : error && !data ? <ErrorBox error={error} retry={() => refetch()} /> : data && (

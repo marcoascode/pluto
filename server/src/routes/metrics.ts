@@ -68,11 +68,18 @@ metricsRouter.get('/domains/summary', async (req, res) => {
   res.json({ domains: sc.ids.map((id, i) => ({ domain: sc.hosts[i], metrics: by.get(id) ?? toMetrics() })) });
 });
 
-interface CampRow { id: string; db_id: string; domain_id: string; platform: 'google' | 'meta'; name: string; domain: string; account_id: string; account_name: string; status: 'ENABLED' | 'PAUSED' }
+interface CampRow { id: string; db_id: string; domain_id: string; platform: 'google' | 'meta'; name: string; domain: string; account_id: string; account_name: string; status: 'ENABLED' | 'PAUSED'; no_domain: boolean; domain_manual: boolean }
+/**
+ * Campanha sem domínio (campaigns.domain_id nulo) aparece no domínio técnico "Sem domínio", que só está no escopo
+ * de Admin/SuperAdmin; para os outros papéis ela simplesmente não existe. noDomain = mostrar o seletor de domínio.
+ */
 const CAMP_SQL = `
-  SELECT c.external_id AS id, c.id::text AS db_id, c.domain_id::text, c.platform, c.name, d.hostname AS domain, a.id::text AS account_id, a.name AS account_name, c.status
-    FROM campaigns c JOIN domains d ON d.id = c.domain_id JOIN integration_accounts a ON a.id = c.account_id
-   WHERE c.domain_id = ANY($1::bigint[]) AND c.status <> 'REMOVED'`;
+  SELECT c.external_id AS id, c.id::text AS db_id, d.id::text AS domain_id, c.platform, c.name, d.hostname AS domain, a.id::text AS account_id, a.name AS account_name, c.status,
+         (c.domain_id IS NULL) AS no_domain, c.domain_manual
+    FROM campaigns c
+    JOIN domains d ON d.id = COALESCE(c.domain_id, (SELECT t.id FROM domains t WHERE t.is_technical LIMIT 1))
+    JOIN integration_accounts a ON a.id = c.account_id
+   WHERE d.id = ANY($1::bigint[]) AND c.status <> 'REMOVED'`;
 
 /** Só as campanhas liberadas no escopo (Gestor: contas dele em cada domínio). */
 const visible = (sc: Scope, camps: CampRow[]) => camps.filter((c) => canSeeCampaign(sc, c.db_id, c.domain_id));
@@ -84,7 +91,7 @@ async function campaignRows(camps: CampRow[], base: { domainIds: string[]; filte
     aggregate({ ...base, from, to, groupBy: 'm.campaign_id', where: 'm.campaign_id = ANY($5::bigint[])', params: [ids] }),
     roiDays({ ...base, key: 'm.campaign_id', today: t, d3: d3(t), where: 'm.campaign_id = ANY($5::bigint[])', params: [ids] }),
   ]);
-  return camps.map((c) => ({ id: c.id, platform: c.platform, name: c.name, domain: c.domain, accountId: c.account_id, accountName: c.account_name, status: c.status === 'PAUSED' ? 'PAUSED' : 'ENABLED', metrics: by.get(c.db_id) ?? toMetrics(), roiDays: rd(c.db_id) }));
+  return camps.map((c) => ({ id: c.id, platform: c.platform, name: c.name, domain: c.domain, noDomain: c.no_domain, domainManual: c.domain_manual, accountId: c.account_id, accountName: c.account_name, status: c.status === 'PAUSED' ? 'PAUSED' : 'ENABLED', metrics: by.get(c.db_id) ?? toMetrics(), roiDays: rd(c.db_id) }));
 }
 
 metricsRouter.get('/domains/:hostname', async (req, res) => {

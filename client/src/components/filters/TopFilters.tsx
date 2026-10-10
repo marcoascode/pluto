@@ -2,7 +2,7 @@ import { MenuItem, Select, Stack, Tooltip, Typography } from '@mui/material';
 import { useLocation } from 'react-router-dom';
 import { useFilters } from '@/context/FiltersContext';
 import { useFx, useMyDomains } from '@/hooks/queries';
-import { relTime } from '@/lib/format';
+import { domainLabel, relTime } from '@/lib/format';
 import type { Currency } from '@/types/api';
 import { DateFilter } from './DateFilter';
 import { CompanyPicker } from './CompanyPicker';
@@ -19,7 +19,7 @@ export function TopFilters() {
       {pathname !== '/relatorios' && <DateFilter />}
       {pathname !== '/placements' && <Select size="small" value={f.domain} displayEmpty onChange={(e) => f.setDomain(e.target.value)} inputProps={{ 'aria-label': 'Domínio' }} sx={{ minWidth: 170, flexShrink: 0 }}>
         <MenuItem value="">Todos os domínios</MenuItem>
-        {doms?.domains.map((d) => <MenuItem key={d} value={d}>{d}</MenuItem>)}
+        {doms?.domains.map((d) => <MenuItem key={d} value={d}>{domainLabel(d)}</MenuItem>)}
       </Select>}
       <Select size="small" value={f.currency} onChange={(e) => f.setCurrency(e.target.value as Currency)} inputProps={{ 'aria-label': 'Moeda' }} sx={{ flexShrink: 0 }}>
         {(['USD', 'BRL', 'EUR'] as Currency[]).map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}

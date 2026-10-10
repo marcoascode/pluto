@@ -29,6 +29,7 @@ export const qk = {
   utmTemplates: ['utmTemplates'] as const,
   integrations: ['integrations'] as const,
   adminDomains: ['adminDomains'] as const,
+  unmapped: (p: string) => ['unmapped', p] as const,
   squads: ['squads'] as const,
   users: ['users'] as const,
   permissions: ['permissions'] as const,

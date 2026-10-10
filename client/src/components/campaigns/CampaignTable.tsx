@@ -1,4 +1,4 @@
-import { Box, Grid, IconButton, Link, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Tooltip, Typography, useMediaQuery, useTheme } from '@mui/material';
+import { Box, Grid, IconButton, Link, Snackbar, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Tooltip, Typography, useMediaQuery, useTheme } from '@mui/material';
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
@@ -9,6 +9,8 @@ import { MetricValue, RoiChip } from '@/components/ui/Values';
 import { METRIC_DEFS, metricValue, type MetricKey, type PICKERS } from '@/lib/metrics';
 import type { CampaignRow, ChildRow, Metrics, RoiDays } from '@/types/api';
 import { CountryDrawer } from './CountryDrawer';
+import { CampaignDomainSelect } from './CampaignDomainSelect';
+import { domainLabel } from '@/lib/format';
 
 interface Props { screen: keyof typeof PICKERS; campaigns: CampaignRow[]; totals: Metrics; totalsRoiDays: RoiDays; showDomain?: boolean; showPlatform?: boolean }
 type Sort = { k: MetricKey | 'name'; d: 'asc' | 'desc' };
@@ -26,6 +28,7 @@ export function CampaignTable({ screen, campaigns, totals, totalsRoiDays, showDo
   const [sort, setSort] = useState<Sort>({ k: 'spend', d: 'desc' });
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [countries, setCountries] = useState<CampaignRow | null>(null);
+  const [saved, setSaved] = useState('');
   const toggle = (id: string) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const rows = useMemo(() => campaigns.slice().sort((a, b) => {
     const dir = sort.d === 'asc' ? 1 : -1;
@@ -39,11 +42,13 @@ export function CampaignTable({ screen, campaigns, totals, totalsRoiDays, showDo
   );
   const sub = (c: CampaignRow) => {
     const parts: ReactNode[] = [];
-    if (showDomain) parts.push(<Link key="d" component={RouterLink} to={`/dominios/${encodeURIComponent(c.domain)}`} color="inherit" underline="hover">{c.domain}</Link>);
+    // campanha sem domínio (custo em "Sem domínio"): no lugar do domínio, o seletor para definir (só Admin vê essas campanhas)
+    if (c.noDomain) parts.push(<CampaignDomainSelect key="d" id={c.id} platform={c.platform} name={c.name} width={200} dense onSaved={setSaved} />);
+    else if (showDomain) parts.push(<Link key="d" component={RouterLink} to={`/dominios/${encodeURIComponent(c.domain)}`} color="inherit" underline="hover">{domainLabel(c.domain)}</Link>);
     parts.push(c.accountName);
     if (showPlatform) parts.push(c.platform === 'google' ? 'Google Ads' : 'Meta Ads');
     if (c.status === 'PAUSED') parts.push('Pausada');
-    return <Typography variant="caption" component="div">{parts.map((x, i) => <Fragment key={i}>{i > 0 && ' · '}{x}</Fragment>)}</Typography>;
+    return <Typography variant="caption" component="div" sx={c.noDomain ? { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5, mt: 0.5 } : undefined}>{parts.map((x, i) => <Fragment key={i}>{i > 0 && ' · '}{x}</Fragment>)}</Typography>;
   };
   const globe = (c: CampaignRow) => <Tooltip title="Países da campanha"><IconButton size="small" onClick={() => setCountries(c)} aria-label="Países da campanha"><PublicRoundedIcon fontSize="small" /></IconButton></Tooltip>;
   const neg = (m: Metrics) => m.profit < 0 && m.spend > 0;
@@ -66,6 +71,7 @@ export function CampaignTable({ screen, campaigns, totals, totalsRoiDays, showDo
         ))}
         {!rows.length && <Typography variant="caption" sx={{ p: 4, display: 'block', textAlign: 'center' }}>Nenhuma campanha para os filtros atuais.</Typography>}
         {countries && <CountryDrawer c={countries} onClose={() => setCountries(null)} />}
+        <Snackbar open={!!saved} autoHideDuration={4500} onClose={() => setSaved('')} message={saved} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
       </Box>
     );
   }
@@ -92,6 +98,7 @@ export function CampaignTable({ screen, campaigns, totals, totalsRoiDays, showDo
         </Table>
       </TableContainer>
       {countries && <CountryDrawer c={countries} onClose={() => setCountries(null)} />}
+      <Snackbar open={!!saved} autoHideDuration={4500} onClose={() => setSaved('')} message={saved} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
     </>
   );
 }

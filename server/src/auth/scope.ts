@@ -5,7 +5,7 @@ import { isAdminRole } from './permissions.js';
 
 /**
  * Quem vê o quê (TODA consulta de métricas passa por aqui):
- * - Admin / SuperAdmin: todos os domínios ativos.
+ * - Admin / SuperAdmin: todos os domínios ativos, inclusive o técnico "Sem domínio" (só eles veem).
  * - Sócio de uma Empresa (qualquer papel): todos os domínios dos Squads da Empresa, completos.
  * - Gerente: todos os domínios dos Squads dados a ele (vários), completos.
  * - Gestor: os domínios que ele gere (domain_managers), mas só as campanhas das contas Google/Meta ligadas a
@@ -21,7 +21,8 @@ export interface RowFilter {
 export interface Scope { ids: string[]; hosts: string[]; filter: RowFilter | null }
 
 type Dom = { id: string; hostname: string };
-const DOMS = (where: string) => `SELECT DISTINCT d.id::text, d.hostname FROM domains d ${where} AND d.active ORDER BY d.hostname`;
+/** Domínios ativos. O domínio técnico "Sem domínio" (custo sem site identificável) só entra para Admin/SuperAdmin. */
+const DOMS = (where: string, withTechnical = false) => `SELECT DISTINCT d.id::text, d.hostname FROM domains d ${where} AND d.active${withTechnical ? '' : ' AND NOT d.is_technical'} ORDER BY d.hostname`;
 
 /** Empresas que o usuário enxerga (ids). Admin: todas. */
 export async function visibleCompanyIds(req: Request): Promise<string[]> {
@@ -39,7 +40,7 @@ async function compute(req: Request, companyParam: unknown = req.query.company):
   const u = req.user!;
   let full: Dom[] = [], restricted: Dom[] = [];
   let filter: RowFilter | null = null;
-  if (isAdminRole(u.role)) full = await q<Dom>(DOMS('WHERE true'));
+  if (isAdminRole(u.role)) full = await q<Dom>(DOMS('WHERE true', true));
   else {
     // sócio: Empresa inteira · Gerente: Squads dele (Gestor não ganha domínio pelo Squad, só pelo vínculo de gestor)
     full = await q<Dom>(DOMS(`JOIN squad_domains sd ON sd.domain_id = d.id JOIN squads s ON s.id = sd.squad_id

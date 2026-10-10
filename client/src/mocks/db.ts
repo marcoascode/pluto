@@ -39,9 +39,10 @@ Object.assign(GACC[3], { status: 'late', lastSyncAt: new Date(Date.now() - 52 * 
 Object.assign(GACC[4], { status: 'error', message: 'Erro na API · RESOURCE_EXHAUSTED · nova tentativa em 16s' });
 Object.assign(GACC[8], { status: 'permission', message: 'Permissão insuficiente · a MCC não tem acesso de leitura' });
 export const MACC: AccountStatus[] = [
-  { id: 'm1', name: 'Meta Conta 01', externalId: 'act_1000000001', currency: 'USD', timezone: 'America/Sao_Paulo', status: 'ok', lastSyncAt: new Date(Date.now() - 7 * 60000).toISOString() },
+  { id: 'm1', name: 'Meta Conta 01', externalId: 'act_1000000001', currency: 'USD', timezone: 'America/Sao_Paulo', status: 'warn', lastSyncAt: new Date(Date.now() - 7 * 60000).toISOString(),
+    message: '9 linhas sem domínio gravadas em "Sem domínio" (US$ 21,70 de custo · 140 cliques) em FB | 14 - MENSAGENS - WHATSAPP - LATAM. Defina o domínio dessas campanhas em Integrações → Meta Ads ("Campanhas sem domínio") ou na tela Meta Ads' },
   { id: 'm2', name: 'Meta Conta 02', externalId: 'act_1000000002', currency: 'USD', timezone: 'America/Los_Angeles', status: 'warn', lastSyncAt: new Date(Date.now() - 7 * 60000).toISOString(),
-    message: '14 linhas sem domínio fora do ROI (US$ 38,40 de custo · 212 cliques) em FB | 12 - TESTE - EN. O link do criativo não aponta para um domínio cadastrado e a campanha/conta não tem domínio: ligue a conta a um domínio em Domínios ou defina o domínio da campanha' },
+    message: '14 linhas sem domínio gravadas em "Sem domínio" (US$ 38,40 de custo · 212 cliques) em FB | 12 - MENSAGENS - CHATBOT - BR. Defina o domínio dessas campanhas em Integrações → Meta Ads ("Campanhas sem domínio") ou na tela Meta Ads' },
   { id: 'm3', name: 'Meta Conta 03', externalId: 'act_1000000003', currency: 'BRL', timezone: 'America/Sao_Paulo', status: 'token', lastSyncAt: new Date(Date.now() - 9 * 60000).toISOString(), message: 'Token expira em 5 dias · reconectar' },
   { id: 'm4', name: 'Meta Conta 04', externalId: 'act_1000000004', currency: 'USD', timezone: 'America/Sao_Paulo', status: 'disconnected', lastSyncAt: null, message: 'Desconectada · autenticação necessária' },
 ];
@@ -54,7 +55,10 @@ export const DOMAINS: Domain[] = [
   { hostname: 'dominioA.com', revShare: 7, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g4'], metaAccounts: ['m2'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 52 * 60000).toISOString() },
   { hostname: 'dominioB.com', revShare: 12, revShareFrom: null, active: true, squadId: null, googleAccounts: ['g5'], metaAccounts: ['m3'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 22 * 60000).toISOString() },
   { hostname: 'dominioC.com', revShare: 0, revShareFrom: null, active: false, squadId: null, googleAccounts: [], metaAccounts: [], gamAccountId: null, managers: [], lastDataAt: null },
+  // domínio técnico: custo de campanhas sem site identificável (ex.: Meta de mensagens). Só Admin vê.
+  { hostname: 'sem-dominio', technical: true, revShare: 0, revShareFrom: null, active: true, squadId: null, googleAccounts: [], metaAccounts: [], gamAccountId: null, managers: [], lastDataAt: new Date(Date.now() - 7 * 60000).toISOString() },
 ];
+export const TECH = 'sem-dominio';
 export const SQUADS: Squad[] = [
   { id: 's1', name: 'Squad 01', companyId: 'c1', domains: ['dominioX.com', 'dominioY.com'], userIds: [] },
   { id: 's2', name: 'Squad 02', companyId: 'c2', domains: ['dominioZ.com', 'dominioA.com'], userIds: [] },
@@ -102,6 +106,9 @@ const defs: [Camp['platform'], string, string, string, string[], number, number,
   ['meta', 'm1', 'dominioZ.com', 'FB | 06 - FINANÇAS - LATAM | ABO', ['MX', 'CO', 'CL'], 90, 0.08, '/fin/url-01/'],
   ['meta', 'm2', 'dominioA.com', 'FB | 08 - SAÚDE - EUA/CAN | Advantage+', ['US', 'CA'], 240, 0.42, '/saude/url-01/'],
   ['meta', 'm3', 'dominioB.com', 'FB | 11 - QUIZ - CHILE', ['CL'], 40, -0.12, '/quiz/url-02/'],
+  // campanhas de mensagens (chatbot): o link do site vem num botão da conversa, então não há domínio no criativo
+  ['meta', 'm2', 'sem-dominio', 'FB | 12 - MENSAGENS - CHATBOT - BR', ['BR'], 26, 0, '/'],
+  ['meta', 'm1', 'sem-dominio', 'FB | 14 - MENSAGENS - WHATSAPP - LATAM', ['MX', 'CO'], 18, 0, '/'],
 ];
 for (const [platform, acc, domain, name, countries, base, bias, url, paused] of defs) {
   const id = platform === 'google' ? digits(11) : '1202' + digits(14);
@@ -138,6 +145,7 @@ for (const c of CAMPS) {
       const roi = Math.max(-0.92, c.bias + CBIAS[k] + c.cOff[k] + g.bias + ad.bias + 0.16 * Math.sin(di / 38 + 0.6) + gauss() * 0.22); const rev = spend * (1 + roi); const ct = CT[k];
       const adImps = Math.max(1, Math.round((rev * 1000) / (ct.ecpm * Math.exp(gauss() * 0.1))));
       const clk = Math.max(1, Math.round(spend / (ct.cpc * Math.exp(gauss() * 0.15) * (c.platform === 'meta' ? 1.25 : 1))));
+      if (c.domain === TECH) { ROWS.push({ di, src: c.platform, acc: c.acc, camp: c.id, grp: g.id, ad: ad.id, domain: c.domain, url: c.url, country: k, spendUSD: spend, revUSD: 0, grossUSD: 0, sess: 0, adImps: 0, rsv: 0, adReq: 0, adClk: 0, view: 0, clk, tImps: Math.round(clk / rn(0.025, 0.07)) }); return; }
       const rsv = served(c.domain, c.url, adImps);
       ROWS.push({ di, src: c.platform, acc: c.acc, camp: c.id, grp: g.id, ad: ad.id, domain: c.domain, url: c.url, country: k, spendUSD: spend, revUSD: rev, grossUSD: rev / (1 - (DOMSHARE[c.domain] ?? 0)),
         sess: Math.max(1, Math.round((rev * 1000) / (ct.rps * Math.exp(gauss() * 0.12)))), adImps, rsv, adReq: Math.round(rsv / rn(0.84, 0.96)), adClk: Math.round(adImps * rn(0.009, 0.024)), view: adImps * rn(0.88, 0.96), clk, tImps: Math.round(clk / rn(0.025, 0.07)) });
@@ -152,7 +160,7 @@ function pushUn(di: number, domain: string, url: string, country: string, rev: n
 }
 {
   const byDom = new Map<string, number>(); for (const r of ROWS) byDom.set(r.domain + '|' + r.di, (byDom.get(r.domain + '|' + r.di) ?? 0) + r.revUSD);
-  for (const [k, v] of byDom) { const [dom, dis] = k.split('|'); pushUn(+dis, dom, pick(URLS[dom]), CAMPS.find((c) => c.domain === dom)!.countries[0], v * (dom === 'dominioB.com' ? rn(0.08, 0.12) : rn(0.012, 0.035)), pick(REASONS_BY_DOMAIN[dom])); }
+  for (const [k, v] of byDom) { const [dom, dis] = k.split('|'); if (dom === TECH) continue; pushUn(+dis, dom, pick(URLS[dom]), CAMPS.find((c) => c.domain === dom)!.countries[0], v * (dom === 'dominioB.com' ? rn(0.08, 0.12) : rn(0.012, 0.035)), pick(REASONS_BY_DOMAIN[dom])); }
   for (let di = 0; di < DAYS; di++) pushUn(di, UNKNOWN_DOMAIN, '/', 'US', rn(3, 8) * (di === 0 ? 0.4 : 1) * volOf(di), 'unknown_domain');
 }
 

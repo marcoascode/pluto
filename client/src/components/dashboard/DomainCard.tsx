@@ -1,7 +1,7 @@
 import { Avatar, Box, Card, CardActionArea, Chip, Grid, LinearProgress, Stack, Typography, useTheme } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import { Money, Profit, RoiChip, RoiText, useRoiColors } from '@/components/ui/Values';
-import { pct, pct0 } from '@/lib/format';
+import { domainLabel, pct, pct0 } from '@/lib/format';
 import { roiClass } from '@/lib/metrics';
 import type { DomainSummary } from '@/types/api';
 
@@ -20,7 +20,7 @@ export function DomainCard({ d, rank, rankLabel }: { d: DomainSummary; rank?: nu
         <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }} >
           <Avatar variant="rounded" sx={{ width: 36, height: 36, fontFamily: 'Sora', fontWeight: 700, fontSize: 15, color: '#fff', borderRadius: 2.5, background: `linear-gradient(135deg,hsl(${h} 62% 50%),hsl(${(h + 36) % 360} 58% 32%))` }}>{init(d.domain)}</Avatar>
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography variant="h3" sx={{ fontSize: 15, overflowWrap: 'anywhere' }}>{d.domain}</Typography>
+            <Typography variant="h3" sx={{ fontSize: 15, overflowWrap: 'anywhere' }}>{domainLabel(d.domain)}</Typography>
             {rank && <Chip size="small" variant="outlined" label={`#${rank} em ${rankLabel}`} sx={{ height: 18, fontSize: 11, fontWeight: 500, mt: 0.25, color: rank === 1 ? '#f2c94c' : 'text.secondary', borderColor: rank === 1 ? 'rgba(242,201,76,.5)' : p.line2 }} />}
           </Box>
           <RoiChip v={m.roi} />

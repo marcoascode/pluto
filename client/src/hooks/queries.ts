@@ -58,7 +58,17 @@ export function useFxHistory() { return useQuery({ queryKey: qk.fxHistory, query
 
 /* ---- admin ---- */
 export function useIntegrations() { return useQuery({ queryKey: qk.integrations, queryFn: integrationsApi.status }); }
-export function useAdminDomains() { return useQuery({ queryKey: qk.adminDomains, queryFn: adminApi.domains }); }
+export function useAdminDomains(enabled = true) { return useQuery({ queryKey: qk.adminDomains, queryFn: adminApi.domains, enabled }); }
+export function useUnmappedCampaigns(p: Platform = 'meta', enabled = true) { return useQuery({ queryKey: qk.unmapped(p), queryFn: () => adminApi.unmappedCampaigns(p), enabled }); }
+/** Define o domínio de uma campanha. Atualiza tudo que mostra custo por domínio/campanha. */
+export function useSetCampaignDomain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: adminApi.setCampaignDomain,
+    onSuccess: () => ['unmapped', 'campaigns', 'dashboard', 'domains', 'domain', 'children', 'reportDaily', 'reportMonthly', 'integrations', 'accounts', 'companyOverview']
+      .forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
+  });
+}
 export function useSquads() { return useQuery({ queryKey: qk.squads, queryFn: adminApi.squads }); }
 export function useUsers() { return useQuery({ queryKey: qk.users, queryFn: adminApi.users }); }
 export function usePermissions() { return useQuery({ queryKey: qk.permissions, queryFn: adminApi.permissions }); }
@@ -67,26 +77,4 @@ export function useSyncSettings() { return useQuery({ queryKey: qk.syncSettings,
 export function useAdminMutation<A, R>(fn: (a: A) => Promise<R>, invalidate: readonly (readonly unknown[])[]) {
   const qc = useQueryClient();
   return useMutation({ mutationFn: fn, onSuccess: () => invalidate.forEach((k) => qc.invalidateQueries({ queryKey: k as unknown[] })) });
-}
-
-// CAMPANHAS SEM DOMÍNIO
-export function useUnassignedCampaigns(accountId?: string) {
-  return useQuery({
-    queryKey: ['admin', 'campaigns', 'unassigned', accountId],
-    queryFn: () => adminApi.unassignedCampaigns(accountId),
-    staleTime: 30_000,
-  });
-}
-
-export function useAssignCampaignDomain() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, domainId }: { id: string; domainId: string | null }) =>
-      adminApi.assignCampaignDomain(id, domainId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin', 'campaigns'] });
-      qc.invalidateQueries({ queryKey: qk.accounts('meta') });
-      qc.invalidateQueries({ queryKey: qk.integrations });
-    },
-  });
 }

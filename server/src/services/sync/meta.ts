@@ -5,13 +5,14 @@
  *               em blocos de até 3 dias (CHUNKING, ver chunkWindow/fetchInsightsChunked)
  * Custo vai para USD pela taxa do dia; IVA = custo × alíquota (app_settings.meta_iva_rate, 13,83%).
  * Limite de uso da Meta: pausa 60 s e repete (metaGet). Consulta pesada: bloco → dias soltos → página menor (paginate).
- * Domínio de cada linha: criativo → campanha → domínio único da conta (resolveDomain). Sem nenhum: aviso na conta.
+ * Domínio de cada linha: manual → criativo → campanha → domínio único da conta (resolveDomain). Sem nenhum: domínio
+ * técnico "Sem domínio" (só Admin vê) + aviso na conta.
  * Erro numa conta não interrompe as outras.
  */
 import { config } from '../../config.js';
 import { q } from '../../db.js';
 import { addDays } from '../../lib/dates.js';
-import { accountDomains, domainResolver, emptyFact, fxToUsd, metaIvaRate, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
+import { accountDomains, domainResolver, technicalDomainId, emptyFact, fxToUsd, metaIvaRate, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
 import { isMetaRateLimit, isMetaTooMuchData, requestJson, sleep, SyncError } from './http.js';
 import { metaAccessToken } from './tokens.js';
 import type { JobResult } from './index.js';
@@ -151,7 +152,7 @@ async function syncStructure(acc: Acc, token: string, dom: Awaited<ReturnType<ty
     votes.get(cid)!.set(d.id, (votes.get(cid)!.get(d.id) ?? 0) + 1);
   }
   const campDomain = (cid: string) => { const v = votes.get(cid); if (v?.size) return [...v].sort((a, b) => b[1] - a[1])[0][0]; return accountDomain; };
-  const camps = new Map<string, { id: string; domainId: string | null }>(), groups = new Map<string, string>();
+  const camps = new Map<string, { id: string; domainId: string | null; manual: boolean }>(), groups = new Map<string, string>();
   const adsMap = new Map<string, { id: string; path: string | null; domainId: string | null }>();
   for (const ad of ads) {
     if (!ad.campaign) continue;
@@ -165,13 +166,14 @@ async function syncStructure(acc: Acc, token: string, dom: Awaited<ReturnType<ty
   }
   /**
    * VALIDAÇÃO DE DOMÍNIO (ordem de tentativa) para cada linha de métrica:
+   *  0. domínio definido MANUALMENTE na campanha (PATCH /admin/campaigns/:id) — vale sobre tudo
    *  1. domínio do link do próprio criativo (adLink → domínio cadastrado)
-   *  2. domínio da campanha (voto dos anúncios, ou o que já está gravado/ajustado em campaigns.domain_id)
+   *  2. domínio da campanha (voto dos anúncios, ou o que já está gravado em campaigns.domain_id)
    *  3. domínio único da conta em domain_accounts (conta recém-importada, campanha ainda sem domínio)
-   * Só quando as três falham a linha fica "sem domínio".
+   * Só quando todas falham a linha vai para o domínio técnico "Sem domínio" (não é mais descartada).
    */
-  const resolveDomain = (ad: { domainId: string | null } | undefined, camp: { domainId: string | null }) =>
-    ad?.domainId ?? camp.domainId ?? accountDomain;
+  const resolveDomain = (ad: { domainId: string | null } | undefined, camp: { domainId: string | null; manual: boolean }) =>
+    (camp.manual ? camp.domainId : null) ?? ad?.domainId ?? camp.domainId ?? accountDomain;
   return { camps, groups, ads: adsMap, campDomain, resolveDomain };
 }
 
@@ -184,6 +186,7 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
   const toUsd = kind === 'metrics' ? await fxToUsd(w.from, w.to) : null;
   const iva = await metaIvaRate();
   const url = urlCache();
+  const tech = kind === 'metrics' ? await technicalDomainId() : null;
   const notes: string[] = [];
   let ok = 0, rowsTotal = 0;
   for (const acc of accs) {
@@ -200,14 +203,7 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
       // ---- métricas em blocos de até 3 dias (chunking) ----
       const { rows, chunks } = await fetchInsightsChunked(acc, token, w);
       const facts: Fact[] = [];
-      const lost = {
-        rows: 0,
-        spendUsd: 0,
-        clicks: 0,
-        impressions: 0,
-        // campaigns: new Map<string, number>()
-        campaigns: new Map<string, { externalId: string; name: string; spendUsd: number }>(), // Ajustado para capturar o external_id (o ID da campanha na Meta) para que o frontend tenha a referência exata de qual registro atualizar.
-      };
+      const lost = { rows: 0, spendUsd: 0, clicks: 0, impressions: 0, campaigns: new Map<string, number>() };
       for (const r of rows) {
         // anúncio novo que a estrutura ainda não viu (ex.: criado agora)
         let c = st.camps.get(r.campaign_id);
@@ -218,26 +214,17 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
         if (!a) { a = { id: await upsertAd(g, r.ad_id, r.ad_name), path: null, domainId: null }; st.ads.set(r.ad_id, a); }
         const spendUsd = toUsd!(Number(r.spend ?? 0), acc.currency, r.date_start);
         const clicks = Number(r.inline_link_clicks ?? r.clicks ?? 0);
-        // criativo → campanha → domínio único da conta (ver resolveDomain)
-        const domainId = st.resolveDomain(a, c);
-        if (!domainId) {
-          // não dá para gravar sem domínio: soma o que ficou de fora para o aviso da conta
-          lost.rows++;
-          lost.spendUsd += spendUsd;
-          lost.clicks += clicks;
-          lost.impressions += Number(r.impressions ?? 0);
-          // lost.campaigns.set(r.campaign_name, (lost.campaigns.get(r.campaign_name) ?? 0) + spendUsd);
-          const current = lost.campaigns.get(r.campaign_id);
-          lost.campaigns.set(r.campaign_id, {
-            externalId: r.campaign_id, // Captura o ID externo da Meta
-            name: r.campaign_name,
-            spendUsd: (current?.spendUsd ?? 0) + spendUsd,
-          });
-
-          continue;
+        // manual → criativo → campanha → domínio único da conta (ver resolveDomain)
+        const resolved = st.resolveDomain(a, c);
+        if (!resolved) {
+          // sem domínio identificável (ex.: campanha de mensagens/chatbot): grava no domínio técnico "Sem domínio"
+          // para o custo e o IVA não sumirem, e soma para o aviso da conta
+          lost.rows++; lost.spendUsd += spendUsd; lost.clicks += clicks; lost.impressions += Number(r.impressions ?? 0);
+          lost.campaigns.set(r.campaign_name, (lost.campaigns.get(r.campaign_name) ?? 0) + spendUsd);
         }
+        const domainId = resolved ?? tech!;
         facts.push(emptyFact({
-          date: r.date_start, domainId, urlId: await url(domainId, a.domainId === domainId ? a.path : null), platform: 'meta',
+          date: r.date_start, domainId, urlId: resolved && a.domainId === resolved ? await url(resolved, a.path) : null, platform: 'meta',
           campaignId: c.id, adGroupId: g, adId: a.id, country: (r.country ?? 'ZZ').toUpperCase(),
           spendUsd, ivaUsd: spendUsd * iva, trafficImpressions: Number(r.impressions ?? 0), trafficClicks: clicks,
         }));
@@ -251,7 +238,7 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
       ok++;
     } catch (e) {
       notes.push(`${acc.name}: ${(e as Error).message}`);
-      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => { });
+      await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => {});
       // segue para a próxima conta: um erro numa conta não interrompe as outras
     }
   }
@@ -260,30 +247,11 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
   return { status: 'success', message: `${ok}/${accs.length - skippedInactive} contas · ${kind === 'structure' ? 'estrutura atualizada' : rowsTotal + ' linhas'}${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
 }
 
-// const usd = (n: number) => `US$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-// /** Aviso da conta: quanto ficou de fora e em quais campanhas (as 3 de maior custo). */
-// function lostMessage(l: { rows: number; spendUsd: number; clicks: number; campaigns: Map<string, number> }) {
-//   const top = [...l.campaigns].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n);
-//   const more = l.campaigns.size > 3 ? ` e mais ${l.campaigns.size - 3}` : '';
-//   return `${l.rows} linhas sem domínio fora do ROI (${usd(l.spendUsd)} de custo · ${l.clicks} cliques) em ${top.join(', ')}${more}. `
-//     + 'O link do criativo não aponta para um domínio cadastrado e a campanha/conta não tem domínio: ligue a conta a um domínio em Domínios ou defina o domínio da campanha';
-// }
 const usd = (n: number) => `US$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
 /** Aviso da conta: quanto ficou de fora e em quais campanhas (as 3 de maior custo). */
-function lostMessage(l: { 
-  rows: number; 
-  spendUsd: number; 
-  clicks: number; 
-  campaigns: Map<string, { externalId: string; name: string; spendUsd: number }> 
-}) {
-  const top = [...l.campaigns.values()]
-    .sort((a, b) => b.spendUsd - a.spendUsd)
-    .slice(0, 3)
-    .map(c => `"${c.name}" (${c.externalId})`);
-    
+function lostMessage(l: { rows: number; spendUsd: number; clicks: number; campaigns: Map<string, number> }) {
+  const top = [...l.campaigns].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n);
   const more = l.campaigns.size > 3 ? ` e mais ${l.campaigns.size - 3}` : '';
-  
-  return `${l.rows} linhas sem domínio fora do ROI (${usd(l.spendUsd)} de custo · ${l.clicks} cliques) em ${top.join(', ')}${more}. `
-    + 'O link do criativo não aponta para um domínio cadastrado e a campanha/conta não tem domínio: ligue a conta a um domínio em Domínios ou defina o domínio da campanha';
+  return `${l.rows} linhas sem domínio gravadas em "Sem domínio" (${usd(l.spendUsd)} de custo · ${l.clicks} cliques) em ${top.join(', ')}${more}. `
+    + 'Defina o domínio dessas campanhas em Integrações → Meta Ads ("Campanhas sem domínio") ou na tela Meta Ads';
 }

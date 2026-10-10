@@ -83,7 +83,7 @@ function AccountDialog({ provider, initial, onClose }: { provider: Provider; ini
           {provider !== 'gam' && (
             <TextField select label="Domínios desta conta" value={f.domains} onChange={(e) => setF({ ...f, domains: typeof e.target.value === 'string' ? e.target.value.split(',') : (e.target.value as string[]) })} fullWidth
               slotProps={{ select: { multiple: true, renderValue: (v) => (v as string[]).join(', ') || 'Nenhum' } }} helperText="O custo desta conta entra nesses domínios.">
-              {doms?.domains.map((d) => <MenuItem key={d.hostname} value={d.hostname}><Checkbox size="small" checked={f.domains.includes(d.hostname)} /><ListItemText primary={d.hostname} /></MenuItem>)}
+              {doms?.domains.filter((d) => !d.technical).map((d) => <MenuItem key={d.hostname} value={d.hostname}><Checkbox size="small" checked={f.domains.includes(d.hostname)} /><ListItemText primary={d.hostname} /></MenuItem>)}
             </TextField>
           )}
           <FormControlLabel control={<Switch checked={f.imported} onChange={(e) => setF({ ...f, imported: e.target.checked })} />} label="Importar no sync" />

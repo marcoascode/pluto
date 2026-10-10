@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0
+- **Domínio técnico "Sem domínio"** (`migrations/005_dominio_tecnico_mapeamento.sql`, hostname `sem-dominio`): o custo de campanhas Meta sem domínio identificável (ex.: mensagens/chatbot) é gravado nele em vez de descartado. Spend e IVA batem com a fatura e o ROI dos sites não fica inflado. Só Admin/SuperAdmin veem (`scope.ts`); não entra em Squad, gestor, conta nem Ad Manager (rotas + triggers no banco); não se edita nem exclui.
+- **Mapeamento manual campanha → domínio**:
+  - `GET /admin/campaigns/unmapped` (as campanhas do aviso "linhas sem domínio") e `PATCH /admin/campaigns/:id { domain }`;
+  - o domínio manual vale sobre o link dos anúncios e o sync não troca (`campaigns.domain_manual`, `domain_set_by`, `domain_set_at`);
+  - ao salvar: as linhas já gravadas da campanha mudam de domínio na hora (transação, somando no mesmo grão) e o job `meta.metrics` (ou `google-ads.metrics`) roda em segundo plano; se já estiver rodando, roda de novo ao terminar (`requestRun`).
+- **Telas**: cartão "Campanhas sem domínio" com seletor em Integrações → Meta Ads; na lista de campanhas (Meta Ads), a campanha sem domínio mostra o seletor no lugar do domínio; "Sem domínio" aparece no Dashboard/Domínios do Admin e como linha de sistema em Domínios.
+- Aviso da conta Meta: "N linhas sem domínio gravadas em "Sem domínio" (US$ …) em … Defina o domínio dessas campanhas…".
+
 ## 0.8.0
 - **Meta Ads (`server/src/services/sync/meta.ts`)**:
   - **chunking**: a janela `w.from → w.to` é fatiada em blocos de no máximo 3 dias (`META_CHUNK_DAYS`), do mais recente ao mais antigo; cada bloco é paginado à parte e os resultados são unidos e gravados uma vez por conta. O agendador (`index.ts`) não mudou;

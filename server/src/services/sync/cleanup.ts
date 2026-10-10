@@ -7,10 +7,9 @@
  * no nível de cima (anúncio → grupo, grupo → campanha). Totais por dia, domínio, campanha e país continuam iguais.
  */
 import { one, tx } from '../../db.js';
+import { GRAIN_CONFLICT, METRIC_SUMS as SUMS } from './common.js';
 import type { JobResult } from './index.js';
 
-const SUMS = ['spend_usd', 'iva_usd', 'revenue_usd', 'impressions', 'ad_requests', 'responses_served', 'ad_clicks', 'viewable', 'traffic_clicks', 'traffic_impressions'];
-const GRAIN_CONFLICT = `(source, date, domain_id, (COALESCE(url_id, 0)), platform, (COALESCE(campaign_id, 0)), (COALESCE(ad_group_id, 0)), (COALESCE(ad_id, 0)), country, (COALESCE(unattributed_reason, '')))`;
 
 /** Soma as linhas de daily_metrics que apontam para os ids da tabela temporária no nível de cima e apaga as originais. */
 function rollupSql(level: 'ad' | 'group', tmp: string) {

@@ -13,7 +13,7 @@ const HOST = z.string().trim().toLowerCase().transform((v) => v.replace(/^https?
 /** "Hoje" no fuso da organização (o banco pode estar em UTC). */
 const TODAY_SQL = `(now() AT TIME ZONE '${config.appTz.replace(/[^A-Za-z0-9_/+-]/g, '')}')::date`;
 const DOMAIN_SQL = `
-  SELECT d.hostname, d.active, sd.squad_id::text AS "squadId", d.last_data_at AS "lastDataAt", d.created_by_sync AS "createdBySync",
+  SELECT d.hostname, d.active, d.is_technical AS technical, sd.squad_id::text AS "squadId", d.last_data_at AS "lastDataAt", d.created_by_sync AS "createdBySync",
          COALESCE((SELECT round(rs.rev_share * 100, 3) FROM domain_rev_shares rs WHERE rs.domain_id = d.id AND rs.valid_from <= ${TODAY_SQL} ORDER BY rs.valid_from DESC LIMIT 1), 0)::float AS "revShare",
          (SELECT rs.valid_from::text FROM domain_rev_shares rs WHERE rs.domain_id = d.id AND rs.valid_from <= ${TODAY_SQL} ORDER BY rs.valid_from DESC LIMIT 1) AS "revShareFrom",
          COALESCE(array_agg(a.id::text ORDER BY a.name) FILTER (WHERE a.provider = 'google-ads'), '{}') AS "googleAccounts",
@@ -31,7 +31,13 @@ const GROUP = ' GROUP BY d.id, sd.squad_id';
 /* Gestores do domínio (e as contas de cada um) são editados em Usuários → gestor → Domínios. */
 const get = (host: string) => one(`${DOMAIN_SQL} WHERE d.hostname = $1${GROUP}`, [host]);
 
-domainsRouter.get('/domains', async (_req, res) => { res.json({ domains: await q(`${DOMAIN_SQL}${GROUP} ORDER BY d.active DESC, d.hostname`) }); });
+/** O domínio técnico "Sem domínio" é do sistema: não se edita, renomeia, liga nem exclui. */
+async function rejectTechnical(host: string) {
+  if (await one('SELECT 1 FROM domains WHERE hostname = $1 AND is_technical', [String(host).toLowerCase()]))
+    throw conflict('technical_domain', 'O domínio técnico "Sem domínio" é do sistema e não pode ser alterado. Para tirar campanhas dele, defina o domínio da campanha.');
+}
+
+domainsRouter.get('/domains', async (_req, res) => { res.json({ domains: await q(`${DOMAIN_SQL}${GROUP} ORDER BY d.is_technical, d.active DESC, d.hostname`) }); });
 
 const revShare = z.number().min(0).max(99.999);   // percentual (20 = 20%)
 const ISO = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
@@ -58,6 +64,7 @@ domainsRouter.post('/domains', async (req, res) => {
 });
 
 domainsRouter.patch('/domains/:hostname', async (req, res) => {
+  await rejectTechnical(req.params.hostname);
   const host = parse(HOST, req.params.hostname);
   const b = parse(z.object({
     hostname: HOST.optional(), active: z.boolean().optional(), squadId: z.string().regex(/^\d+$/).nullable().optional(),
@@ -102,6 +109,7 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
 
 /** Só exclui domínio sem histórico. Com dados, a saída é desativar. */
 domainsRouter.delete('/domains/:hostname', async (req, res) => {
+  await rejectTechnical(req.params.hostname);
   const host = parse(HOST, req.params.hostname);
   const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
   if (!d) throw notFound('Domínio não encontrado.');
