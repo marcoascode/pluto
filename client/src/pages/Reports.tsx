@@ -5,7 +5,7 @@ import { useFilters } from '@/context/FiltersContext';
 import { useDailyReport, useMonthlyReport } from '@/hooks/queries';
 import { MetricPicker, usePicked } from '@/components/ui/MetricPicker';
 import { ErrorBox, PageHead } from '@/components/ui/States';
-import { MetricValue, Money, Profit, RoiText0 } from '@/components/ui/Values';
+import { MetricValue, Money, Profit } from '@/components/ui/Values';
 import { pct0 } from '@/lib/format';
 import { marginClass, METRIC_DEFS, metricValue, type MetricKey } from '@/lib/metrics';
 import { lastMonths, monthLabel } from '@/lib/period';
@@ -13,23 +13,22 @@ import type { Metrics, ReportRow } from '@/types/api';
 
 const REPORT_MONTHS = 14;
 
-// Barrinha de preenchimento de dinheiro nas colunas de custo e receita
+// Barrinha de preenchimento para colunas financeiras
 const BAR = new Set<MetricKey>(['spend', 'revenue', 'profit', 'googleSpend', 'metaSpend', 'iva', 'adManagerRevenue']);
 
-// 1. Métricas obrigatórias que NÃO dependem do MetricPicker
+// 1. Definição das Métricas Fixas (Inalteráveis pelo MetricPicker)
 const BLOCKS_MANDATORY = {
   resultado: ['revenue', 'spend', 'iva', 'roi'] as MetricKey[],
   despesas: ['metaSpend', 'googleSpend'] as MetricKey[],
   receita: ['adManagerRevenue'] as MetricKey[],
 };
 
-// 2. Ordem estrita das métricas opcionais para cada bloco (só aparecem se "ms" contiver)
+// 2. Ordem Estrita das Métricas Opcionais (Só aparecem se o usuário selecionar no MetricPicker)
+// Nota: a chave "margin" age visualmente como ROI % nos resultados.
 const BLOCKS_OPTIONAL = {
   resultado: ['margin', 'profit', 'unattributedRevenue', 'attributionRate'] as MetricKey[],
-  // Nota: A chave "margin" assume o papel do "ROI %"
   despesas: ['googleSpend', 'metaSpend', 'iva', 'googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc'] as MetricKey[],
-  // Obs: Se Custo Google/Meta forem os mesmos que os obrigatórios, decida se eles devem repetir (aqui mantivemos as chaves conforme solicitado na lista)
-  receita: ['adManagerImpressions', 'adManagerClicks', 'adManagerCpc', 'ctr', 'adManagerEcpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOff', 'fillRate'] as MetricKey[],
+  receita: ['adManagerImpressions', 'adManagerClicks', 'adManagerCpc', 'ctr', 'adManagerEcpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate'] as MetricKey[],
 };
 
 const dayLabel = (iso: string) => iso.split('-').reverse().join('/');
@@ -45,15 +44,50 @@ function Bar({ v, max, neg }: { v: number | null; max: number; neg?: boolean }) 
   );
 }
 
+// 3. Renderização Dinâmica e Cálculos Locais de Front-End (para eCPM, CPC e ROI%)
 function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: number; bold?: boolean }) {
   const { pluto: p } = useTheme();
-  const v = metricValue(m, undefined, k);
+  
+  // Resgata o valor padrão, mas cria sobreposições calculadas se necessário.
+  let v = metricValue(m, undefined, k);
+
+  // Calcula dinamicamente as métricas cruzadas que derivam de outros resultados
+  if (k === 'adManagerEcpm') {
+    const rev = metricValue(m, undefined, 'adManagerRevenue') ?? metricValue(m, undefined, 'revenue') ?? 0;
+    const imp = metricValue(m, undefined, 'adManagerImpressions') ?? 0;
+    v = imp > 0 ? (rev / imp) * 1000 : 0;
+  }
+  
+  if (k === 'metaCpc') {
+    const metaSpend = metricValue(m, undefined, 'metaSpend') ?? 0;
+    const metaClicks = metricValue(m, undefined, 'metaClicks') ?? 0;
+    v = metaClicks > 0 ? metaSpend / metaClicks : 0;
+  }
+
+  if (k === 'adManagerCpc') {
+    const rev = metricValue(m, undefined, 'adManagerRevenue') ?? metricValue(m, undefined, 'revenue') ?? 0;
+    const clicks = metricValue(m, undefined, 'adManagerClicks') ?? 0;
+    v = clicks > 0 ? rev / clicks : 0;
+  }
+
+  if (k === 'rps') {
+    const rev = metricValue(m, undefined, 'revenue') ?? 0;
+    const sessions = metricValue(m, undefined, 'sessions') ?? 0;
+    v = sessions > 0 ? (rev / sessions) * 1000 : 0;
+  }
+
+  // Margin atua visualmente como ROI %
   if (k === 'margin') {
     const c = marginClass(v);
     const tone = { neg: [p.neg, 0.28, '#ffc2c9'], lo: [p.neg, 0.13, '#ff9aa5'], mid: [p.warn, 0.15, p.warn], hi: [p.pos, 0.15, p.pos], na: [p.na, 0, p.fg] }[c] as [string, number, string];
     return <TableCell align="right" sx={{ boxShadow: `inset 0 0 0 999px ${alpha(tone[0], tone[1])}`, color: tone[2], fontWeight: 600 }}>{pct0(v)}</TableCell>;
   }
-  if (k === 'roi') return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}><RoiText0 v={v} /></TableCell>;
+
+  if (k === 'roi') {
+      const roiVal = v != null ? <Money v={v} /> : '—';
+      return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined, color: (v ?? 0) < 0 ? p.neg : p.pos }}>{roiVal}</TableCell>;
+  }
+
   if (k === 'metaShare' || k === 'googleShare') return <TableCell align="right" sx={{ color: bold ? 'text.primary' : p.muted, fontWeight: bold ? 600 : undefined }}>{pct0(v)}</TableCell>;
   if (BAR.has(k)) {
     const val = k === 'profit' ? <Profit v={v} /> : <Money v={v} />;
@@ -81,7 +115,7 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
   const { pluto: p } = useTheme();
   const [sort, setSort] = useState<{ k: SortKey; d: 'asc' | 'desc' }>({ k: 'key', d: 'desc' });
 
-  // 3. Montagem da lista final consolidada (Obrigatórias + Opcionais Ativadas)
+  // 4. Estruturação Reativa de Cabeçalhos e Agrupamentos Baseado no Filtro 'ms'
   const activeResultado = useMemo(() => [
     ...BLOCKS_MANDATORY.resultado,
     ...BLOCKS_OPTIONAL.resultado.filter(k => ms.includes(k))
@@ -126,14 +160,13 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
     <TableContainer>
       <Table size="small" sx={{ '& td, & th': { px: 1.1, py: 1.1 } }}>
         <TableHead>
-          {/* Cabeçalhos Fixos por Bloco */}
+          {/* O colSpan do Agrupamento adapta-se à quantidade de opções ativadas no bloco. */}
           <TableRow>
             <TableCell sx={{ position: 'sticky', left: 0, zIndex: 4, bgcolor: p.panel, borderBottom: 'none' }}></TableCell>
             {activeResultado.length > 0 && <TableCell colSpan={activeResultado.length} align="center" sx={blockHeadStyle}>Bloco 1: Resultado</TableCell>}
             {activeDespesas.length > 0 && <TableCell colSpan={activeDespesas.length} align="center" sx={blockHeadStyle}>Bloco 2: Despesas (Ads)</TableCell>}
             {activeReceita.length > 0 && <TableCell colSpan={activeReceita.length} align="center" sx={{ ...blockHeadStyle, borderRight: 'none' }}>Bloco 3: Receita (AD Manager)</TableCell>}
           </TableRow>
-          {/* Títulos das colunas */}
           <TableRow>
             {head('key', first)}
             {allMs.map((k) => head(k, METRIC_DEFS[k]?.label || k))}
@@ -196,8 +229,8 @@ export default function ReportsPage() {
           : <ReportTable first="Mês" rows={monthly.data.months} total={monthly.data.total} totalLabel={`Total ${REPORT_MONTHS} meses`} label={monthTitle} ms={ms} onRowClick={goMonth} />}
       </Card>
       <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
-        Receita = receita do Ad Manager já sem a parte da Network (revShare do domínio) · Despesas (Ads) = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o gasto da Meta ·
-        Meta % e Google % = participação na despesa · Margem (ROI %) e ROI sobre a Receita · Drop-off = respostas servidas que não viraram impressão.
+        Receita = receita bruta do Ad Manager · Despesas (Ads) = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o gasto da Meta ·
+        Meta % e Google % = participação na despesa · ROI monetário = Receita - Despesas · ROI % (Margem) = ROI / Despesas · Drop-off = respostas servidas que não viraram impressão.
       </Typography>
     </>
   );
