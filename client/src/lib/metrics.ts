@@ -39,7 +39,7 @@ export type MetricKey =
   | 'googleShare' | 'metaShare' | 'metaImpressions' | 'metaClicks' | 'metaCpc'
   // Ativáveis - Bloco 3: Receita (AD Manager)
   | 'adManagerImpressions' | 'adManagerClicks' | 'adManagerCpc' | 'ctr' | 'adManagerEcpm' 
-  | 'sessions' | 'rps' | 'responsesServed' | 'viewability' | 'dropOff' | 'fillRate'
+  | 'sessions' | 'rps' | 'responsesServed' | 'viewability' | 'dropOffRate' | 'fillRate'
   // Outras / Padrão legado de outras telas do sistema
   | 'trafficImpressions' | 'trafficClicks' | 'trafficCtr' | 'cpc' | 'ecpm'
   | 'impressions' | 'adRequests' | 'adClicks'
@@ -79,7 +79,7 @@ export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind }> = {
   rps: { label: 'RPS', kind: 'money' },
   responsesServed: { label: 'Respostas servidas', kind: 'int' },
   viewability: { label: 'Viewability', kind: 'pct' },
-  dropOff: { label: 'Drop-off', kind: 'drop' },
+  dropOffRate: { label: 'Drop-off', kind: 'drop' }, // <-- Chave original restaurada para não quebrar outras telas
   fillRate: { label: 'Fill Rate', kind: 'pct' },
 
   // === Outras Métricas Originais / Legadas ===
@@ -108,19 +108,19 @@ export function roiLast(keys: MetricKey[]): MetricKey[] {
 
 /** Conjuntos por tela: todas as opções + o padrão. */
 const PICKERS_RAW: Record<string, { all: MetricKey[]; def: MetricKey[] }> = {
-  home: { all: ['rps', 'ecpm', 'dropOff', 'impressions', 'adRequests', 'responsesServed', 'fillRate', 'ctr', 'adClicks', 'viewability', 'sessions'], def: ['rps', 'ecpm', 'dropOff', 'impressions', 'ctr'] },
+  home: { all: ['rps', 'ecpm', 'dropOffRate', 'impressions', 'adRequests', 'responsesServed', 'fillRate', 'ctr', 'adClicks', 'viewability', 'sessions'], def: ['rps', 'ecpm', 'dropOffRate', 'impressions', 'ctr'] },
   reports: {
     // ATENÇÃO: Métricas obrigatórias já não estão mais neste array.
-    all: ['margin', 'profit', 'unattributedRevenue', 'attributionRate', 'googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc', 'adManagerImpressions', 'adManagerClicks', 'adManagerCpc', 'ctr', 'adManagerEcpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOff', 'fillRate'],
-    def: ['margin', 'profit', 'googleShare', 'metaShare', 'sessions', 'rps', 'dropOff'], // Valores que virão marcados por padrão além dos fixos
+    all: ['margin', 'profit', 'unattributedRevenue', 'attributionRate', 'googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc', 'adManagerImpressions', 'adManagerClicks', 'adManagerCpc', 'ctr', 'adManagerEcpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate'],
+    def: ['margin', 'profit', 'googleShare', 'metaShare', 'sessions', 'rps', 'dropOffRate'], // Valores que virão marcados por padrão além dos fixos
   },
   google: { all: ['spend', 'revenue', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'rps', 'r1', 'r2', 'r3'] },
   meta: { all: ['spend', 'metaSpend', 'iva', 'revenue', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'trafficCtr', 'cpc', 'rps'] },
   domain: { all: ['spend', 'revenue', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'rps', 'ecpm'] },
-  urls: { all: ['revenue', 'spend', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'dropOff', 'sessions', 'ctr', 'viewability', 'impressions', 'responsesServed', 'adRequests', 'fillRate', 'attributionRate'], def: ['revenue', 'spend', 'profit', 'roi', 'rps', 'ecpm', 'dropOff', 'sessions'] },
-  gam: { all: ['revenue', 'ecpm', 'rps', 'dropOff', 'impressions', 'responsesServed', 'adRequests', 'fillRate', 'ctr', 'adClicks', 'viewability', 'sessions', 'attributionRate'], def: ['revenue', 'ecpm', 'rps', 'dropOff', 'impressions', 'fillRate', 'viewability'] },
+  urls: { all: ['revenue', 'spend', 'profit', 'roi', 'margin', 'rps', 'ecpm', 'dropOffRate', 'sessions', 'ctr', 'viewability', 'impressions', 'responsesServed', 'adRequests', 'fillRate', 'attributionRate'], def: ['revenue', 'spend', 'profit', 'roi', 'rps', 'ecpm', 'dropOffRate', 'sessions'] },
+  gam: { all: ['revenue', 'ecpm', 'rps', 'dropOffRate', 'impressions', 'responsesServed', 'adRequests', 'fillRate', 'ctr', 'adClicks', 'viewability', 'sessions', 'attributionRate'], def: ['revenue', 'ecpm', 'rps', 'dropOffRate', 'impressions', 'fillRate', 'viewability'] },
   placements: {
-    all: ['spend', 'revenue', 'sessions', 'rps', 'profit', 'margin', 'trafficClicks', 'cpc', 'trafficImpressions', 'trafficCtr', 'ecpm', 'impressions', 'dropOff', 'roi', 'r0', 'r1', 'r2', 'r3'],
+    all: ['spend', 'revenue', 'sessions', 'rps', 'profit', 'margin', 'trafficClicks', 'cpc', 'trafficImpressions', 'trafficCtr', 'ecpm', 'impressions', 'dropOffRate', 'roi', 'r0', 'r1', 'r2', 'r3'],
     def: ['spend', 'revenue', 'sessions', 'rps', 'profit', 'margin', 'roi', 'r1', 'r2', 'r3'],
   },
 };
