@@ -13,22 +13,20 @@ import type { Metrics, ReportRow } from '@/types/api';
 
 const REPORT_MONTHS = 14;
 
-// Barrinha de preenchimento para colunas financeiras
-const BAR = new Set<MetricKey>(['spend', 'revenue', 'profit', 'googleSpend', 'metaSpend', 'iva', 'adManagerRevenue']);
+const BAR = new Set<string>(['spend', 'revenue', 'profit', 'googleSpend', 'metaSpend', 'iva', 'adManagerRevenue', 'roiMonetary']);
 
-// 1. Definição das Métricas Fixas (Inalteráveis pelo MetricPicker)
+// 1. Definição das Métricas Fixas como string pura (convertida depois) para não conflitar
 const BLOCKS_MANDATORY = {
-  resultado: ['revenue', 'spend', 'iva', 'roi'] as MetricKey[],
-  despesas: ['metaSpend', 'googleSpend'] as MetricKey[],
-  receita: ['adManagerRevenue'] as MetricKey[],
+  resultado: ['revenue', 'spend', 'iva', 'roiMonetary'],
+  despesas: ['metaSpend', 'googleSpend'],
+  receita: ['adManagerRevenue'],
 };
 
-// 2. Ordem Estrita das Métricas Opcionais (Só aparecem se o usuário selecionar no MetricPicker)
-// Nota: a chave "margin" age visualmente como ROI % nos resultados.
+// 2. Ordem Estrita das Métricas Opcionais 
 const BLOCKS_OPTIONAL = {
-  resultado: ['margin', 'profit', 'unattributedRevenue', 'attributionRate'] as MetricKey[],
-  despesas: ['googleSpend', 'metaSpend', 'iva', 'googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc'] as MetricKey[],
-  receita: ['adManagerImpressions', 'adManagerClicks', 'adManagerCpc', 'ctr', 'adManagerEcpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate'] as MetricKey[],
+  resultado: ['roi', 'profit', 'margin', 'unattributedRevenue', 'attributionRate'],
+  despesas: ['googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc'],
+  receita: ['impressions', 'adClicks', 'adCpc', 'ctr', 'ecpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate'],
 };
 
 const dayLabel = (iso: string) => iso.split('-').reverse().join('/');
@@ -44,63 +42,77 @@ function Bar({ v, max, neg }: { v: number | null; max: number; neg?: boolean }) 
   );
 }
 
-// 3. Renderização Dinâmica e Cálculos Locais de Front-End (para eCPM, CPC e ROI%)
+// 3. Renderização Dinâmica e Cálculos Locais de Front-End
 function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: number; bold?: boolean }) {
   const { pluto: p } = useTheme();
   
-  // Resgata o valor padrão, mas cria sobreposições calculadas se necessário.
-  let v = metricValue(m, undefined, k);
+  // Utiliza a chave estrita apenas para resgate de base
+  let v = metricValue(m, undefined, k as MetricKey);
+  const keyStr = k as string; 
 
-  // Calcula dinamicamente as métricas cruzadas que derivam de outros resultados
-  if (k === 'adManagerEcpm') {
-    const rev = metricValue(m, undefined, 'adManagerRevenue') ?? metricValue(m, undefined, 'revenue') ?? 0;
-    const imp = metricValue(m, undefined, 'adManagerImpressions') ?? 0;
+  // Cálculos dinâmicos matemáticos de Front-End
+  if (keyStr === 'roiMonetary') {
+    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
+    const sp = metricValue(m, undefined, 'spend' as MetricKey) ?? 0;
+    v = rev - sp; 
+  }
+  
+  if (keyStr === 'adManagerEcpm' || keyStr === 'ecpm') {
+    const rev = metricValue(m, undefined, 'adManagerRevenue' as MetricKey) ?? metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
+    const imp = metricValue(m, undefined, 'impressions' as MetricKey) ?? metricValue(m, undefined, 'adManagerImpressions' as MetricKey) ?? 0;
     v = imp > 0 ? (rev / imp) * 1000 : 0;
   }
   
-  if (k === 'metaCpc') {
-    const metaSpend = metricValue(m, undefined, 'metaSpend') ?? 0;
-    const metaClicks = metricValue(m, undefined, 'metaClicks') ?? 0;
+  if (keyStr === 'metaCpc') {
+    const metaSpend = metricValue(m, undefined, 'metaSpend' as MetricKey) ?? 0;
+    const metaClicks = metricValue(m, undefined, 'metaClicks' as MetricKey) ?? 0;
     v = metaClicks > 0 ? metaSpend / metaClicks : 0;
   }
 
-  if (k === 'adManagerCpc') {
-    const rev = metricValue(m, undefined, 'adManagerRevenue') ?? metricValue(m, undefined, 'revenue') ?? 0;
-    const clicks = metricValue(m, undefined, 'adManagerClicks') ?? 0;
+  if (keyStr === 'adManagerCpc' || keyStr === 'cpc') {
+    const rev = metricValue(m, undefined, 'adManagerRevenue' as MetricKey) ?? metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
+    const clicks = metricValue(m, undefined, 'adClicks' as MetricKey) ?? metricValue(m, undefined, 'adManagerClicks' as MetricKey) ?? 0;
     v = clicks > 0 ? rev / clicks : 0;
   }
 
-  if (k === 'rps') {
-    const rev = metricValue(m, undefined, 'revenue') ?? 0;
-    const sessions = metricValue(m, undefined, 'sessions') ?? 0;
+  if (keyStr === 'rps') {
+    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
+    const sessions = metricValue(m, undefined, 'sessions' as MetricKey) ?? 0;
     v = sessions > 0 ? (rev / sessions) * 1000 : 0;
   }
 
-  // Margin atua visualmente como ROI %
-  if (k === 'margin') {
-    const c = marginClass(v);
-    const tone = { neg: [p.neg, 0.28, '#ffc2c9'], lo: [p.neg, 0.13, '#ff9aa5'], mid: [p.warn, 0.15, p.warn], hi: [p.pos, 0.15, p.pos], na: [p.na, 0, p.fg] }[c] as [string, number, string];
-    return <TableCell align="right" sx={{ boxShadow: `inset 0 0 0 999px ${alpha(tone[0], tone[1])}`, color: tone[2], fontWeight: 600 }}>{pct0(v)}</TableCell>;
+  if (keyStr === 'roi') {
+    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
+    const sp = metricValue(m, undefined, 'spend' as MetricKey) ?? 0;
+    v = sp > 0 ? ((rev - sp) / sp) * 100 : 0; 
   }
 
-  if (k === 'roi') {
+  // Renderizações Específicas
+  if (keyStr === 'margin' || keyStr === 'roi') {
+    const c = marginClass(v);
+    const tone = { neg: [p.neg, 0.28, '#ffc2c9'], lo: [p.neg, 0.13, '#ff9aa5'], mid: [p.warn, 0.15, p.warn], hi: [p.pos, 0.15, p.pos], na: [p.na, 0, p.fg] }[c] as [string, number, string];
+    return <TableCell align="right" sx={{ boxShadow: keyStr === 'margin' ? `inset 0 0 0 999px ${alpha(tone[0], tone[1])}` : 'none', color: tone[2], fontWeight: 600 }}>{pct0(v)}</TableCell>;
+  }
+
+  if (keyStr === 'roiMonetary') {
       const roiVal = v != null ? <Money v={v} /> : '—';
       return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined, color: (v ?? 0) < 0 ? p.neg : p.pos }}>{roiVal}</TableCell>;
   }
 
-  if (k === 'metaShare' || k === 'googleShare') return <TableCell align="right" sx={{ color: bold ? 'text.primary' : p.muted, fontWeight: bold ? 600 : undefined }}>{pct0(v)}</TableCell>;
-  if (BAR.has(k)) {
-    const val = k === 'profit' ? <Profit v={v} /> : <Money v={v} />;
+  if (keyStr === 'metaShare' || keyStr === 'googleShare') return <TableCell align="right" sx={{ color: bold ? 'text.primary' : p.muted, fontWeight: bold ? 600 : undefined }}>{pct0(v)}</TableCell>;
+  
+  if (BAR.has(keyStr)) {
+    const val = keyStr === 'profit' ? <Profit v={v} /> : <Money v={v} />;
     return (
       <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}>
-        {max == null ? val : <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }}><span>{val}</span><Bar v={v} max={max} neg={k === 'profit' && (v ?? 0) < 0} /></Stack>}
+        {max == null ? val : <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }}><span>{val}</span><Bar v={v} max={max} neg={(keyStr === 'profit' || keyStr === 'roiMonetary') && (v ?? 0) < 0} /></Stack>}
       </TableCell>
     );
   }
-  return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}><MetricValue k={k} v={v} /></TableCell>;
+  return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}><MetricValue k={k as MetricKey} v={v} /></TableCell>;
 }
 
-type SortKey = 'key' | MetricKey;
+type SortKey = 'key' | string;
 interface TableProps {
   first: string;
   rows: ReportRow[];
@@ -115,36 +127,36 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
   const { pluto: p } = useTheme();
   const [sort, setSort] = useState<{ k: SortKey; d: 'asc' | 'desc' }>({ k: 'key', d: 'desc' });
 
-  // 4. Estruturação Reativa de Cabeçalhos e Agrupamentos Baseado no Filtro 'ms'
+  // Forçamos o casting das arrays após a união para desarmar as validações cruzadas
   const activeResultado = useMemo(() => [
     ...BLOCKS_MANDATORY.resultado,
-    ...BLOCKS_OPTIONAL.resultado.filter(k => ms.includes(k))
-  ], [ms]);
+    ...BLOCKS_OPTIONAL.resultado.filter(k => ms.includes(k as MetricKey))
+  ] as string[], [ms]);
 
   const activeDespesas = useMemo(() => [
     ...BLOCKS_MANDATORY.despesas,
-    ...BLOCKS_OPTIONAL.despesas.filter(k => ms.includes(k))
-  ], [ms]);
+    ...BLOCKS_OPTIONAL.despesas.filter(k => ms.includes(k as MetricKey))
+  ] as string[], [ms]);
 
   const activeReceita = useMemo(() => [
     ...BLOCKS_MANDATORY.receita,
-    ...BLOCKS_OPTIONAL.receita.filter(k => ms.includes(k))
-  ], [ms]);
+    ...BLOCKS_OPTIONAL.receita.filter(k => ms.includes(k as MetricKey))
+  ] as string[], [ms]);
 
   const allMs = useMemo(() => [
     ...activeResultado, 
     ...activeDespesas, 
     ...activeReceita
-  ] as MetricKey[], [activeResultado, activeDespesas, activeReceita]);
+  ], [activeResultado, activeDespesas, activeReceita]);
 
   const list = useMemo(() => rows.slice().sort((a, b) => {
     const dir = sort.d === 'asc' ? 1 : -1;
     if (sort.k === 'key') return a.key.localeCompare(b.key) * dir;
-    return ((metricValue(a.metrics, undefined, sort.k) ?? -Infinity) - (metricValue(b.metrics, undefined, sort.k) ?? -Infinity)) * dir;
+    return ((metricValue(a.metrics, undefined, sort.k as MetricKey) ?? -Infinity) - (metricValue(b.metrics, undefined, sort.k as MetricKey) ?? -Infinity)) * dir;
   }), [rows, sort]);
 
   const max = useMemo(() => Object.fromEntries(
-      allMs.filter((k) => BAR.has(k)).map((k) => [k, Math.max(0, ...rows.map((r) => Math.abs(metricValue(r.metrics, undefined, k) ?? 0)))]))
+      allMs.filter((k) => BAR.has(k)).map((k) => [k, Math.max(0, ...rows.map((r) => Math.abs(metricValue(r.metrics, undefined, k as MetricKey) ?? 0)))]))
   , [rows, allMs]);
 
   const head = (k: SortKey, l: string) => (
@@ -160,7 +172,6 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
     <TableContainer>
       <Table size="small" sx={{ '& td, & th': { px: 1.1, py: 1.1 } }}>
         <TableHead>
-          {/* O colSpan do Agrupamento adapta-se à quantidade de opções ativadas no bloco. */}
           <TableRow>
             <TableCell sx={{ position: 'sticky', left: 0, zIndex: 4, bgcolor: p.panel, borderBottom: 'none' }}></TableCell>
             {activeResultado.length > 0 && <TableCell colSpan={activeResultado.length} align="center" sx={blockHeadStyle}>Bloco 1: Resultado</TableCell>}
@@ -169,13 +180,13 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
           </TableRow>
           <TableRow>
             {head('key', first)}
-            {allMs.map((k) => head(k, METRIC_DEFS[k]?.label || k))}
+            {allMs.map((k) => head(k, METRIC_DEFS[k as MetricKey]?.label || k))}
           </TableRow>
         </TableHead>
         <TableBody>
           <TableRow sx={{ '& > td': { bgcolor: `${p.panel2} !important`, borderBottomColor: p.line2 } }}>
             <TableCell sx={{ ...firstCell, bgcolor: p.panel2, fontWeight: 600 }}>{totalLabel}</TableCell>
-            {allMs.map((k) => <ReportCell key={k} k={k} m={total} bold />)}
+            {allMs.map((k) => <ReportCell key={k} k={k as MetricKey} m={total} bold />)}
           </TableRow>
           {list.map((r) => (
             <TableRow key={r.key} hover={!!onRowClick} onClick={onRowClick ? () => onRowClick(r.key) : undefined} sx={{ cursor: onRowClick ? 'pointer' : undefined }}>
@@ -185,7 +196,7 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
                   {r.partial && <Chip size="small" label="parcial" title="Hoje e D-1 a D-3 podem sofrer ajustes" sx={{ height: 18, fontSize: 11, color: p.warn, bgcolor: alpha(p.warn, 0.15) }} />}
                 </Stack>
               </TableCell>
-              {allMs.map((k) => <ReportCell key={k} k={k} m={r.metrics} max={max[k]} />)}
+              {allMs.map((k) => <ReportCell key={k} k={k as MetricKey} m={r.metrics} max={max[k]} />)}
             </TableRow>
           ))}
           {!list.length && <TableRow><TableCell colSpan={allMs.length + 1} align="center" sx={{ py: 4, color: 'text.disabled' }}>Sem dados.</TableCell></TableRow>}
@@ -230,7 +241,7 @@ export default function ReportsPage() {
       </Card>
       <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
         Receita = receita bruta do Ad Manager · Despesas (Ads) = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o gasto da Meta ·
-        Meta % e Google % = participação na despesa · ROI monetário = Receita - Despesas · ROI % (Margem) = ROI / Despesas · Drop-off = respostas servidas que não viraram impressão.
+        Meta % e Google % = participação na despesa · ROI monetário = Receita - Despesas · ROI % = ROI / Despesas · Drop-off = respostas servidas que não viraram impressão.
       </Typography>
     </>
   );

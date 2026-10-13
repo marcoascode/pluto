@@ -22,15 +22,16 @@ export interface Metrics {
   ctr: number | null; adClicks: number; viewability: number | null; sessions: number;
   trafficClicks: number; trafficImpressions: number; trafficCtr: number | null; cpc: number | null;
   attributedRevenue: number; unattributedRevenue: number; attributionRate: number | null;
+  metaImpressions: number; metaClicks: number; metaCpc: number | null; adCpc: number | null;
 }
-interface Sums { spend: number; gs: number; ms: number; iva: number; rev: number; gross: number; un: number; sess: number; ai: number; ar: number; rsv: number; ac: number; vw: number; clk: number; ti: number; n: number }
+interface Sums { spend: number; gs: number; ms: number; iva: number; rev: number; gross: number; un: number; sess: number; ai: number; ar: number; rsv: number; ac: number; vw: number; clk: number; ti: number; n: number; meta_ti: number; meta_clk: number }
 
 const n = (v: unknown) => (v == null ? 0 : Number(v));
 const div = (a: number, b: number, k = 1) => (b ? (a / b) * k : null);
 
 /** Mesmas fórmulas do front (docs/API.md). */
 export function toMetrics(r?: Partial<Sums> | null): Metrics {
-  const s: Sums = { spend: n(r?.spend), gs: n(r?.gs), ms: n(r?.ms), iva: n(r?.iva), rev: n(r?.rev), gross: n(r?.gross), un: n(r?.un), sess: n(r?.sess), ai: n(r?.ai), ar: n(r?.ar), rsv: n(r?.rsv), ac: n(r?.ac), vw: n(r?.vw), clk: n(r?.clk), ti: n(r?.ti), n: n(r?.n) };
+  const s: Sums = { spend: n(r?.spend), gs: n(r?.gs), ms: n(r?.ms), iva: n(r?.iva), rev: n(r?.rev), gross: n(r?.gross), un: n(r?.un), sess: n(r?.sess), ai: n(r?.ai), ar: n(r?.ar), rsv: n(r?.rsv), ac: n(r?.ac), vw: n(r?.vw), clk: n(r?.clk), ti: n(r?.ti), n: n(r?.n), meta_ti: n(r?.meta_ti), meta_clk: n(r?.meta_clk) };
   const profit = s.rev - s.spend;
   const att = s.rev - s.un;
   return {
@@ -42,6 +43,7 @@ export function toMetrics(r?: Partial<Sums> | null): Metrics {
     ctr: div(s.ac, s.ai, 100), adClicks: s.ac, viewability: div(s.vw, s.ai, 100), sessions: s.sess,
     trafficClicks: s.clk, trafficImpressions: s.ti, trafficCtr: div(s.clk, s.ti, 100), cpc: div(s.spend, s.clk),
     attributedRevenue: att, unattributedRevenue: s.un, attributionRate: div(att, s.rev, 100),
+    metaImpressions: s.meta_ti, metaClicks: s.meta_clk, metaCpc: div(s.ms, s.meta_clk), adCpc: div(s.rev, s.ac),
   };
 }
 
@@ -80,6 +82,8 @@ export async function aggregate(o: AggOpts): Promise<Map<string, Metrics>> {
       SUM(CASE WHEN m.platform = 'none' THEN m.revenue_usd * (1 - rs.share) * r.fr ELSE 0 END) AS un,
       SUM(m.sessions) AS sess, SUM(m.impressions) AS ai, SUM(m.ad_requests) AS ar, SUM(m.responses_served) AS rsv,
       SUM(m.ad_clicks) AS ac, SUM(m.viewable) AS vw, SUM(m.traffic_clicks) AS clk, SUM(m.traffic_impressions) AS ti,
+      SUM(CASE WHEN m.platform = 'meta' THEN m.traffic_impressions ELSE 0 END) AS meta_ti,
+      SUM(CASE WHEN m.platform = 'meta' THEN m.traffic_clicks ELSE 0 END) AS meta_clk,
       COUNT(*) AS n
     FROM daily_metrics m
     LEFT JOIN currency_rates fx ON fx.currency = $1 AND fx.date = m.date
