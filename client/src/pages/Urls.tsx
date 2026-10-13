@@ -1,278 +1,127 @@
-import { Box, Card, CardHeader, Chip, MenuItem, Select, Skeleton, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Typography, alpha, useTheme } from '@mui/material';
-import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined';
-import { useMemo, useRef, useState } from 'react';
+import { Avatar, Box, Card, CardContent, CardHeader, Grid, MenuItem, Select, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, TextField, Typography, alpha, useTheme } from '@mui/material';
+import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useFilters } from '@/context/FiltersContext';
-import { useDailyReport, useMonthlyReport } from '@/hooks/queries';
+import { useMyDomains, useUrls } from '@/hooks/queries';
 import { MetricPicker, usePicked } from '@/components/ui/MetricPicker';
-import { ErrorBox, PageHead } from '@/components/ui/States';
-import { MetricValue, Money } from '@/components/ui/Values';
-import { pct0 } from '@/lib/format';
-import { marginClass, METRIC_DEFS, metricValue, type MetricKey } from '@/lib/metrics';
-import { lastMonths, monthLabel } from '@/lib/period';
-import type { Metrics, ReportRow } from '@/types/api';
+import { ErrorBox, PageHead, PageSkeleton, Provisional, Tag } from '@/components/ui/States';
+import { DropOff, MetricValue, RoiChip } from '@/components/ui/Values';
+import { int, longDate, money } from '@/lib/format';
+import { DROP_MIN_RESPONSES, METRIC_DEFS, metricValue, type MetricKey } from '@/lib/metrics';
+import { addDays, todayISO } from '@/lib/period';
 
-const REPORT_MONTHS = 14;
+const RANK: [MetricKey, string][] = [['roi', 'ROI'], ['revenue', 'Receita'], ['rps', 'RPS'], ['ecpm', 'eCPM'], ['dropOffRate', 'Drop-off (maior)']];
+const MEDAL = ['#f2c94c', '#cdd6e4', '#d99a5b'];
 
-// Barrinha de preenchimento para as colunas financeiras (com cast de string para aceitar virtuais)
-const BAR = new Set<string>(['spend', 'revenue', 'googleSpend', 'metaSpend', 'iva', 'roiMonetary']);
-
-// 1. Definição das Métricas Fixas (As que não podem ser desativadas e nem listadas no MetricPicker)
-const BLOCKS_MANDATORY = {
-  resultado: ['revenue', 'spend', 'iva', 'roiMonetary'],
-  despesas: ['metaSpend', 'googleSpend'],
-  receita: [],
-};
-
-// 2. Ordem Estrita das Métricas Opcionais (Só aparecem se selecionadas em "Selecionar Métricas")
-const BLOCKS_OPTIONAL = {
-  resultado: ['roi', 'margin', 'unattributedRevenue', 'attributionRate'],
-  despesas: ['googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc'],
-  receita: ['impressions', 'adClicks', 'adCpc', 'ctr', 'ecpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate'],
-};
-
-const dayLabel = (iso: string) => iso.split('-').reverse().join('/');
-const monthTitle = (ym: string) => monthLabel(ym).replace(/^./, (c) => c.toUpperCase());
-
-function Bar({ v, max, neg }: { v: number | null; max: number; neg?: boolean }) {
-  const { pluto: p } = useTheme();
-  const w = max > 0 && v != null ? Math.max(2, Math.min(100, (Math.abs(v) / max) * 100)) : 0;
-  return (
-    <Box sx={{ display: { xs: 'none', md: 'block' }, width: 36, height: 6, borderRadius: 3, bgcolor: p.panel3, overflow: 'hidden', flexShrink: 0 }}>
-      <Box sx={{ width: `${w}%`, height: '100%', borderRadius: 3, bgcolor: neg ? p.neg : p.accent }} />
-    </Box>
-  );
-}
-
-// 3. Renderização Dinâmica e Cálculos Locais de Front-End
-function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: number; bold?: boolean }) {
-  const { pluto: p } = useTheme();
-  
-  // Utiliza a chave estrita para resgatar os valores normais diretamente da API
-  let v = metricValue(m, undefined, k as MetricKey);
-  const keyStr = k as string; 
-
-  // ============================================
-  // CÁLCULOS DINÂMICOS MATEMÁTICOS
-  // ============================================
-
-  // ROI Financeiro = Receita Ad Manager - (Meta Ads + Google Ads + IVA)
-  if (keyStr === 'roiMonetary') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const metaSp = metricValue(m, undefined, 'metaSpend' as MetricKey) ?? 0;
-    const googleSp = metricValue(m, undefined, 'googleSpend' as MetricKey) ?? 0;
-    const iva = metricValue(m, undefined, 'iva' as MetricKey) ?? 0;
-    const totalDespesas = metaSp + googleSp + iva;
-    v = rev - totalDespesas; 
-  }
-
-  // ROI Percentual
-  if (keyStr === 'roi') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const metaSp = metricValue(m, undefined, 'metaSpend' as MetricKey) ?? 0;
-    const googleSp = metricValue(m, undefined, 'googleSpend' as MetricKey) ?? 0;
-    const iva = metricValue(m, undefined, 'iva' as MetricKey) ?? 0;
-    const totalDespesas = metaSp + googleSp + iva;
-    // O ROI negativo não pode ser matematicamente inferior a -100% (-1 em decimal).
-    const calculatedRoi = totalDespesas > 0 ? ((rev - totalDespesas) / totalDespesas) * 100 : 0;
-    v = Math.max(-100, calculatedRoi);
-  }
-  
-  // CPC Meta
-  if (keyStr === 'metaCpc') {
-    const metaSpend = metricValue(m, undefined, 'metaSpend' as MetricKey) ?? 0;
-    const metaClicks = metricValue(m, undefined, 'metaClicks' as MetricKey) ?? 0;
-    v = metaClicks > 0 ? metaSpend / metaClicks : 0;
-  }
-
-  // CPC ADX
-  if (keyStr === 'adCpc' || keyStr === 'cpc') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const clicks = metricValue(m, undefined, 'adClicks' as MetricKey) ?? 0;
-    v = clicks > 0 ? rev / clicks : 0;
-  }
-
-  // eCPM
-  if (keyStr === 'ecpm') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const imp = metricValue(m, undefined, 'impressions' as MetricKey) ?? 0;
-    v = imp > 0 ? (rev / imp) * 1000 : 0;
-  }
-
-  // RPS (Receita Por Mil Sessões)
-  if (keyStr === 'rps') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const sessions = metricValue(m, undefined, 'sessions' as MetricKey) ?? 0;
-    v = sessions > 0 ? (rev / sessions) * 1000 : 0;
-  }
-
-  // ============================================
-  // RENDERIZAÇÕES CONDICIONAIS DE CORES
-  // ============================================
-
-  // Cores dinâmicas para a Margem e o ROI%
-  if (keyStr === 'margin' || keyStr === 'roi') {
-    const c = marginClass(v);
-    const tone = { neg: [p.neg, 0.28, '#ffc2c9'], lo: [p.neg, 0.13, '#ff9aa5'], mid: [p.warn, 0.15, p.warn], hi: [p.pos, 0.15, p.pos], na: [p.na, 0, p.fg] }[c] as [string, number, string];
-    return <TableCell align="right" sx={{ boxShadow: keyStr === 'margin' ? `inset 0 0 0 999px ${alpha(tone[0], tone[1])}` : 'none', color: tone[2], fontWeight: 600 }}>{pct0(v)}</TableCell>;
-  }
-
-  // Renderização financeira colorida para o ROI Monetário
-  if (keyStr === 'roiMonetary') {
-      const roiVal = v != null ? <Money v={v} /> : '—';
-      return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined, color: (v ?? 0) < 0 ? p.neg : p.pos }}>{roiVal}</TableCell>;
-  }
-
-  // Desbotamento para participações de gastos da Meta/Google
-  if (keyStr === 'metaShare' || keyStr === 'googleShare') return <TableCell align="right" sx={{ color: bold ? 'text.primary' : p.muted, fontWeight: bold ? 600 : undefined }}>{pct0(v)}</TableCell>;
-  
-  // Renderização de Barras
-  if (BAR.has(keyStr)) {
-    const val = <Money v={v} />;
-    return (
-      <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}>
-        {max == null ? val : <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }}><span>{val}</span><Bar v={v} max={max} neg={(keyStr === 'roiMonetary') && (v ?? 0) < 0} /></Stack>}
-      </TableCell>
-    );
-  }
-
-  // Fallback seguro usando MetricValue
-  return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}><MetricValue k={k as MetricKey} v={v} /></TableCell>;
-}
-
-type SortKey = 'key' | string;
-interface TableProps {
-  first: string;
-  rows: ReportRow[];
-  total: Metrics;
-  totalLabel: string;
-  label: (key: string) => string;
-  ms: MetricKey[];
-  onRowClick?: (key: string) => void;
-}
-
-function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: TableProps) {
-  const { pluto: p } = useTheme();
-  const [sort, setSort] = useState<{ k: SortKey; d: 'asc' | 'desc' }>({ k: 'key', d: 'desc' });
-
-  // Forçamos o casting das arrays unidas como 'string[]' para desarmar o TS nas validações de overlap cruzado
-  const activeResultado = useMemo(() => [
-    ...BLOCKS_MANDATORY.resultado,
-    ...BLOCKS_OPTIONAL.resultado.filter(k => ms.includes(k as MetricKey))
-  ] as string[], [ms]);
-
-  const activeDespesas = useMemo(() => [
-    ...BLOCKS_MANDATORY.despesas,
-    ...BLOCKS_OPTIONAL.despesas.filter(k => ms.includes(k as MetricKey))
-  ] as string[], [ms]);
-
-  const activeReceita = useMemo(() => [
-    ...BLOCKS_MANDATORY.receita,
-    ...BLOCKS_OPTIONAL.receita.filter(k => ms.includes(k as MetricKey))
-  ] as string[], [ms]);
-
-  // Junta as configurações para desenhar a Tabela de baixo
-  const allMs = useMemo(() => [
-    ...activeResultado, 
-    ...activeDespesas, 
-    ...activeReceita
-  ], [activeResultado, activeDespesas, activeReceita]);
-
-  const list = useMemo(() => rows.slice().sort((a, b) => {
-    const dir = sort.d === 'asc' ? 1 : -1;
-    if (sort.k === 'key') return a.key.localeCompare(b.key) * dir;
-    return ((metricValue(a.metrics, undefined, sort.k as MetricKey) ?? -Infinity) - (metricValue(b.metrics, undefined, sort.k as MetricKey) ?? -Infinity)) * dir;
-  }), [rows, sort]);
-
-  const max = useMemo(() => Object.fromEntries(
-      allMs.filter((k) => BAR.has(k)).map((k) => [k, Math.max(0, ...rows.map((r) => Math.abs(metricValue(r.metrics, undefined, k as MetricKey) ?? 0)))]))
-  , [rows, allMs]);
-
-  const head = (k: SortKey, l: string) => (
-    <TableCell key={k} align={k === 'key' ? 'left' : 'right'} sx={k === 'key' ? { position: 'sticky', left: 0, zIndex: 3 } : undefined}>
-      <TableSortLabel active={sort.k === k} direction={sort.k === k ? sort.d : 'desc'} onClick={() => setSort({ k, d: sort.k === k && sort.d === 'desc' ? 'asc' : 'desc' })}>{l}</TableSortLabel>
-    </TableCell>
-  );
-
-  const firstCell = { position: 'sticky', left: 0, zIndex: 1, bgcolor: p.panel, boxShadow: `inset -1px 0 0 ${p.line}` } as const;
-  const blockHeadStyle = { bgcolor: p.panel2, borderBottom: `1px solid ${p.line2}`, borderRight: `1px solid ${p.line}`, fontWeight: 600, px: 1, py: 0.5 };
-
-  return (
-    <TableContainer>
-      <Table size="small" sx={{ '& td, & th': { px: 1.1, py: 1.1 } }}>
-        <TableHead>
-          {/* Cabeçalho de Agrupamento Dinâmico (ColSpan adaptável) */}
-          <TableRow>
-            <TableCell sx={{ position: 'sticky', left: 0, zIndex: 4, bgcolor: p.panel, borderBottom: 'none' }}></TableCell>
-            {activeResultado.length > 0 && <TableCell colSpan={activeResultado.length} align="center" sx={blockHeadStyle}>Bloco 1: Resultado</TableCell>}
-            {activeDespesas.length > 0 && <TableCell colSpan={activeDespesas.length} align="center" sx={blockHeadStyle}>Bloco 2: Despesas (Ads)</TableCell>}
-            {activeReceita.length > 0 && <TableCell colSpan={activeReceita.length} align="center" sx={{ ...blockHeadStyle, borderRight: 'none' }}>Bloco 3: Receita (AD Manager)</TableCell>}
-          </TableRow>
-          {/* Títulos Individuais das Colunas */}
-          <TableRow>
-            {head('key', first)}
-            {allMs.map((k) => head(k, METRIC_DEFS[k as MetricKey]?.label || k))}
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          <TableRow sx={{ '& > td': { bgcolor: `${p.panel2} !important`, borderBottomColor: p.line2 } }}>
-            <TableCell sx={{ ...firstCell, bgcolor: p.panel2, fontWeight: 600 }}>{totalLabel}</TableCell>
-            {allMs.map((k) => <ReportCell key={k} k={k as MetricKey} m={total} bold />)}
-          </TableRow>
-          {list.map((r) => (
-            <TableRow key={r.key} hover={!!onRowClick} onClick={onRowClick ? () => onRowClick(r.key) : undefined} sx={{ cursor: onRowClick ? 'pointer' : undefined }}>
-              <TableCell sx={firstCell}>
-                <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
-                  <Typography component="span" sx={{ fontSize: 'inherit', color: onRowClick ? 'primary.light' : 'inherit' }}>{label(r.key)}</Typography>
-                  {r.partial && <Chip size="small" label="parcial" title="Hoje e D-1 a D-3 podem sofrer ajustes" sx={{ height: 18, fontSize: 11, color: p.warn, bgcolor: alpha(p.warn, 0.15) }} />}
-                </Stack>
-              </TableCell>
-              {allMs.map((k) => <ReportCell key={k} k={k as MetricKey} m={r.metrics} max={max[k]} />)}
-            </TableRow>
-          ))}
-          {!list.length && <TableRow><TableCell colSpan={allMs.length + 1} align="center" sx={{ py: 4, color: 'text.disabled' }}>Sem dados.</TableCell></TableRow>}
-        </TableBody>
-      </Table>
-    </TableContainer>
-  );
-}
-
-export default function ReportsPage() {
+export default function UrlsPage() {
   const f = useFilters();
-  const months = useMemo(() => lastMonths(REPORT_MONTHS), []);
-  const [month, setMonth] = useState(months[0]);
-  const ms = usePicked('reports');
-  const daily = useDailyReport(month);
-  const monthly = useMonthlyReport(REPORT_MONTHS);
-  const top = useRef<HTMLDivElement>(null);
-  const goMonth = (m: string) => { setMonth(m); top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
-  const loading = <Box sx={{ p: 2 }}><Skeleton variant="rounded" height={260} /></Box>;
+  const { pluto: p } = useTheme();
+  const [params] = useSearchParams();
+  const [dom, setDom] = useState(params.get('domain') ?? f.domain);
+  const [q, setQ] = useState('');
+  const [rk, setRk] = useState<MetricKey>('roi');
+  const [sort, setSort] = useState<{ k: MetricKey | 'path'; d: 'asc' | 'desc' }>({ k: 'revenue', d: 'desc' });
+  const ms = usePicked('urls');
+  const { data: doms } = useMyDomains();
+  const { data, error, isLoading, refetch } = useUrls(dom);
+  const list = useMemo(() => (data?.urls ?? []).filter((u) => !q || (u.domain + u.path).toLowerCase().includes(q.toLowerCase())).sort((a, b) => {
+    const dir = sort.d === 'asc' ? 1 : -1;
+    return sort.k === 'path' ? (a.domain + a.path).localeCompare(b.domain + b.path) * dir : ((metricValue(a.metrics, undefined, sort.k) ?? -Infinity) - (metricValue(b.metrics, undefined, sort.k) ?? -Infinity)) * dir;
+  }), [data, q, sort]);
+  const isDrop = rk === 'dropOffRate';
+  const top = useMemo(() => (data?.urls ?? []).filter((u) => (isDrop ? u.metrics.responsesServed >= DROP_MIN_RESPONSES : u.metrics.sessions >= 100) && (rk !== 'roi' || u.metrics.spend > 0) && metricValue(u.metrics, undefined, rk) != null)
+    .sort((a, b) => metricValue(b.metrics, undefined, rk)! - metricValue(a.metrics, undefined, rk)!).slice(0, 5), [data, rk, isDrop]);
+  /** Painel de drop-off: soma do período + URLs acima de 20% (mín. de respostas servidas) + receita estimada perdida pelo eCPM da própria URL. */
+  const drop = useMemo(() => {
+    const urls = data?.urls ?? [];
+    const rsv = urls.reduce((a, u) => a + u.metrics.responsesServed, 0), imps = urls.reduce((a, u) => a + u.metrics.impressions, 0);
+    const big = urls.filter((u) => u.metrics.responsesServed >= DROP_MIN_RESPONSES && u.metrics.dropOffRate != null);
+    const hot = big.filter((u) => u.metrics.dropOffRate! >= 20).sort((a, b) => b.metrics.dropOffRate! - a.metrics.dropOffRate!);
+    return { rate: rsv ? ((rsv - imps) / rsv) * 100 : null, lostResp: rsv - imps, rsv, hot, warn: big.filter((u) => u.metrics.dropOffRate! >= 12 && u.metrics.dropOffRate! < 20).length,
+      lost: hot.reduce((a, u) => a + ((u.metrics.ecpm ?? 0) * (u.metrics.responsesServed - u.metrics.impressions)) / 1000, 0) };
+  }, [data]);
+  const cell = { p: 1.75, minWidth: 0, borderColor: 'divider' } as const;
+  const head = (k: MetricKey | 'path', l: string, num = true) => <TableCell key={k} align={num ? 'right' : 'left'}><TableSortLabel active={sort.k === k} direction={sort.k === k ? sort.d : 'desc'} onClick={() => setSort({ k, d: sort.k === k && sort.d === 'desc' ? 'asc' : 'desc' })}>{l}</TableSortLabel></TableCell>;
   return (
     <>
-      <PageHead title="Relatórios" sub={`${f.domain || 'Todos os domínios'} · valores em ${f.currency}`} right={<MetricPicker screen="reports" />} />
-      <Card ref={top} sx={{ scrollMarginTop: 80 }}>
-        <CardHeader title="Resultados diários" subheader={daily.data ? `${monthLabel(month)} · ${daily.data.days.length} ${daily.data.days.length === 1 ? 'dia' : 'dias'}` : monthLabel(month)}
-          action={
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-              <CalendarMonthOutlinedIcon sx={{ fontSize: 18, color: 'text.disabled' }} />
-              <Select size="small" value={month} onChange={(e) => setMonth(e.target.value)} inputProps={{ 'aria-label': 'Mês do relatório diário' }}>
-                {months.map((m) => <MenuItem key={m} value={m}>{monthLabel(m)}</MenuItem>)}
-              </Select>
-            </Stack>
-          } />
-        {daily.error && !daily.data ? <Box sx={{ p: 2 }}><ErrorBox error={daily.error} retry={() => daily.refetch()} /></Box>
-          : !daily.data ? loading
-          : <ReportTable first="Dia" rows={daily.data.days} total={daily.data.total} totalLabel="Total do mês" label={dayLabel} ms={ms} />}
-      </Card>
-      <Card sx={{ mt: 1.75 }}>
-        <CardHeader title="Resultados mensais" subheader={`Últimos ${REPORT_MONTHS} meses · clique no mês para ver os dias`} />
-        {monthly.error && !monthly.data ? <Box sx={{ p: 2 }}><ErrorBox error={monthly.error} retry={() => monthly.refetch()} /></Box>
-          : !monthly.data ? loading
-          : <ReportTable first="Mês" rows={monthly.data.months} total={monthly.data.total} totalLabel={`Total ${REPORT_MONTHS} meses`} label={monthTitle} ms={ms} onRowClick={goMonth} />}
-      </Card>
-      <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
-        Receita = receita bruta do Ad Manager · Despesas (Ads) = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o gasto da Meta ·
-        Meta % e Google % = participação na despesa · ROI Monetário = Receita - Despesas · ROI % = ROI / Despesas · Drop-off = respostas servidas que não viraram impressão.
-      </Typography>
+      <PageHead title="URLs" sub={`${dom || 'Todos os domínios'} · ${longDate(f.from)} – ${longDate(f.to)}`} />
+      <Provisional show={f.to >= addDays(todayISO(), -3)} />
+      {isLoading && !data ? <PageSkeleton /> : error && !data ? <ErrorBox error={error} retry={() => refetch()} /> : (
+        <Grid container spacing={1.75}>
+          <Grid size={12}>
+            <Card>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', lg: 'repeat(3, minmax(0,1fr)) minmax(0,1.4fr)' } }}>
+                <Box sx={{ ...cell, borderRight: 1, borderBottom: { xs: 1, lg: 0 } }}>
+                  <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}><Typography variant="caption" sx={{ color: 'text.secondary' }}>Drop-off do período</Typography><Tag tone="accent">GAM</Tag></Stack>
+                  <Typography component="div" sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 22, my: 0.5 }}><DropOff v={drop.rate} /></Typography>
+                  <Typography variant="caption">{int(drop.lostResp)} de {int(drop.rsv)} respostas servidas não viraram impressão</Typography>
+                </Box>
+                <Box sx={{ ...cell, borderRight: { lg: 1 }, borderBottom: { xs: 1, lg: 0 } }}>
+                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>URLs acima de 20%</Typography>
+                  <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 22, my: 0.5, color: drop.hot.length ? p.neg : 'inherit' }}>{drop.hot.length}</Typography>
+                  <Typography variant="caption">{drop.warn} entre 12% e 20%</Typography>
+                </Box>
+                <Box sx={{ ...cell, borderRight: 1 }}>
+                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>Receita estimada perdida</Typography>
+                  <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 22, my: 0.5, color: drop.lost > 0 ? p.warn : 'inherit' }}>{money(drop.lost, f.currency)}</Typography>
+                  <Typography variant="caption">nas URLs acima de 20%, pelo eCPM da própria URL</Typography>
+                </Box>
+                <Stack spacing={0.75} sx={{ ...cell, justifyContent: 'center' }}>
+                  {drop.hot.slice(0, 3).map((u) => (
+                    <Stack key={u.domain + u.path} direction="row" spacing={1} sx={{ justifyContent: 'space-between', alignItems: 'center', minWidth: 0 }}>
+                      <Typography noWrap sx={{ fontFamily: 'IBM Plex Mono', fontSize: 12.5, minWidth: 0 }}>{u.path}{!dom && <Typography component="span" variant="caption"> {u.domain}</Typography>}</Typography>
+                      <DropOff v={u.metrics.dropOffRate} />
+                    </Stack>
+                  ))}
+                  {!drop.hot.length && <Typography variant="caption">Nenhuma URL com drop-off alto.</Typography>}
+                </Stack>
+              </Box>
+              <Typography variant="caption" component="div" sx={{ px: 1.75, py: 1, borderTop: 1, borderColor: 'divider' }}>
+                Drop-off = (Respostas servidas − Impressões) ÷ Respostas servidas. Alto drop-off costuma indicar página lenta, anúncio abaixo da dobra, refresh agressivo ou saída rápida do usuário.
+              </Typography>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, lg: 8 }}>
+            <Card>
+              <Stack direction="row" spacing={1.25} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', p: 1.75, borderBottom: 1, borderColor: 'divider' }}>
+                <Select size="small" displayEmpty value={dom} onChange={(e) => setDom(e.target.value)} inputProps={{ 'aria-label': 'Domínio' }}><MenuItem value="">Todos os domínios</MenuItem>{doms?.domains.map((d) => <MenuItem key={d} value={d}>{d}</MenuItem>)}</Select>
+                <TextField size="small" placeholder="Filtrar URL" value={q} onChange={(e) => setQ(e.target.value)} sx={{ width: 200 }} />
+                <Box sx={{ flex: 1 }} /><MetricPicker screen="urls" />
+              </Stack>
+              <TableContainer><Table>
+                <TableHead><TableRow>{head('path', 'URL', false)}{ms.map((k) => head(k, METRIC_DEFS[k].label))}</TableRow></TableHead>
+                <TableBody>{list.map((u) => (
+                  <TableRow key={u.domain + u.path}>
+                    <TableCell>
+                      <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+                        <Typography sx={{ fontFamily: 'IBM Plex Mono', fontSize: 12.5 }}>{u.path}</Typography>
+                        {(u.metrics.dropOffRate ?? 0) >= 20 && u.metrics.responsesServed >= DROP_MIN_RESPONSES && <Box component="span" sx={{ fontSize: 11, px: 0.75, borderRadius: 1, color: p.neg, bgcolor: alpha(p.neg, 0.15) }}>drop-off alto</Box>}
+                      </Stack>
+                      {!dom && <Typography variant="caption">{u.domain}</Typography>}
+                    </TableCell>
+                    {ms.map((k) => <TableCell key={k} align="right"><MetricValue k={k} v={metricValue(u.metrics, undefined, k)} /></TableCell>)}
+                  </TableRow>
+                ))}</TableBody>
+              </Table></TableContainer>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, lg: 4 }}>
+            <Card>
+              <CardHeader title={isDrop ? 'Maior drop-off' : 'Top URLs'} subheader={`${dom || 'Todos os domínios'} · ${isDrop ? `mín. ${DROP_MIN_RESPONSES} respostas servidas` : 'mín. 100 sessões'}`} action={<Select size="small" value={rk} onChange={(e) => setRk(e.target.value as MetricKey)}>{RANK.map(([k, l]) => <MenuItem key={k} value={k}>Por {l}</MenuItem>)}</Select>} />
+              <CardContent>
+                {top.map((u, i) => (
+                  <Stack key={u.domain + u.path} direction="row" spacing={1.25} sx={{ alignItems: 'center', py: 1.1, borderBottom: i < top.length - 1 ? 1 : 0, borderColor: 'divider' }}>
+                    <Avatar sx={{ width: 26, height: 26, fontSize: 12, fontWeight: 700, ...(isDrop ? { bgcolor: alpha(p.neg, 0.15), color: p.neg } : { bgcolor: MEDAL[i] ?? 'action.selected', color: i < 3 ? '#1a1300' : 'text.secondary' }) }}>{i + 1}</Avatar>
+                    <Box sx={{ flex: 1, minWidth: 0 }}><Typography sx={{ fontFamily: 'IBM Plex Mono', fontSize: 12.5, overflowWrap: 'anywhere' }}>{u.path}</Typography>{!dom && <Typography variant="caption">{u.domain}</Typography>}</Box>
+                    <b>{rk === 'roi' ? <RoiChip v={u.metrics.roi} /> : isDrop ? <DropOff v={u.metrics.dropOffRate} /> : money(metricValue(u.metrics, undefined, rk), f.currency)}</b>
+                  </Stack>
+                ))}
+                {!top.length && <Typography variant="caption">Sem dados suficientes.</Typography>}
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
     </>
   );
 }
