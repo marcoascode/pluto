@@ -5,7 +5,7 @@ import { useFilters } from '@/context/FiltersContext';
 import { useDailyReport, useMonthlyReport } from '@/hooks/queries';
 import { MetricPicker, usePicked } from '@/components/ui/MetricPicker';
 import { ErrorBox, PageHead } from '@/components/ui/States';
-import { MetricValue, Money, Profit } from '@/components/ui/Values';
+import { MetricValue, Money } from '@/components/ui/Values';
 import { pct0 } from '@/lib/format';
 import { marginClass, METRIC_DEFS, metricValue, type MetricKey } from '@/lib/metrics';
 import { lastMonths, monthLabel } from '@/lib/period';
@@ -13,18 +13,17 @@ import type { Metrics, ReportRow } from '@/types/api';
 
 const REPORT_MONTHS = 14;
 
-const BAR = new Set<string>(['spend', 'revenue', 'profit', 'googleSpend', 'metaSpend', 'iva', 'adManagerRevenue', 'roiMonetary']);
+// Atualizado: Profit removido. roiMonetary e revenue formam a barra.
+const BAR = new Set<string>(['spend', 'revenue', 'googleSpend', 'metaSpend', 'iva', 'roiMonetary']);
 
-// 1. Definição das Métricas Fixas como string pura (convertida depois) para não conflitar
 const BLOCKS_MANDATORY = {
   resultado: ['revenue', 'spend', 'iva', 'roiMonetary'],
   despesas: ['metaSpend', 'googleSpend'],
-  receita: ['adManagerRevenue'],
+  receita: [],
 };
 
-// 2. Ordem Estrita das Métricas Opcionais 
 const BLOCKS_OPTIONAL = {
-  resultado: ['roi', 'profit', 'margin', 'unattributedRevenue', 'attributionRate'],
+  resultado: ['roi', 'margin', 'unattributedRevenue', 'attributionRate'],
   despesas: ['googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc'],
   receita: ['impressions', 'adClicks', 'adCpc', 'ctr', 'ecpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate'],
 };
@@ -42,24 +41,16 @@ function Bar({ v, max, neg }: { v: number | null; max: number; neg?: boolean }) 
   );
 }
 
-// 3. Renderização Dinâmica e Cálculos Locais de Front-End
 function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: number; bold?: boolean }) {
   const { pluto: p } = useTheme();
   
-  // Utiliza a chave estrita apenas para resgate de base
   let v = metricValue(m, undefined, k as MetricKey);
   const keyStr = k as string; 
 
-  // Cálculos dinâmicos matemáticos de Front-End
-  if (keyStr === 'roiMonetary') {
+  // Cálculos dinâmicos
+  if (keyStr === 'ecpm') {
     const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const sp = metricValue(m, undefined, 'spend' as MetricKey) ?? 0;
-    v = rev - sp; 
-  }
-  
-  if (keyStr === 'adManagerEcpm' || keyStr === 'ecpm') {
-    const rev = metricValue(m, undefined, 'adManagerRevenue' as MetricKey) ?? metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const imp = metricValue(m, undefined, 'impressions' as MetricKey) ?? metricValue(m, undefined, 'adManagerImpressions' as MetricKey) ?? 0;
+    const imp = metricValue(m, undefined, 'impressions' as MetricKey) ?? 0;
     v = imp > 0 ? (rev / imp) * 1000 : 0;
   }
   
@@ -69,9 +60,9 @@ function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: numbe
     v = metaClicks > 0 ? metaSpend / metaClicks : 0;
   }
 
-  if (keyStr === 'adManagerCpc' || keyStr === 'cpc') {
-    const rev = metricValue(m, undefined, 'adManagerRevenue' as MetricKey) ?? metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const clicks = metricValue(m, undefined, 'adClicks' as MetricKey) ?? metricValue(m, undefined, 'adManagerClicks' as MetricKey) ?? 0;
+  if (keyStr === 'adCpc' || keyStr === 'cpc') {
+    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
+    const clicks = metricValue(m, undefined, 'adClicks' as MetricKey) ?? 0;
     v = clicks > 0 ? rev / clicks : 0;
   }
 
@@ -87,7 +78,6 @@ function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: numbe
     v = sp > 0 ? ((rev - sp) / sp) * 100 : 0; 
   }
 
-  // Renderizações Específicas
   if (keyStr === 'margin' || keyStr === 'roi') {
     const c = marginClass(v);
     const tone = { neg: [p.neg, 0.28, '#ffc2c9'], lo: [p.neg, 0.13, '#ff9aa5'], mid: [p.warn, 0.15, p.warn], hi: [p.pos, 0.15, p.pos], na: [p.na, 0, p.fg] }[c] as [string, number, string];
@@ -102,10 +92,10 @@ function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: numbe
   if (keyStr === 'metaShare' || keyStr === 'googleShare') return <TableCell align="right" sx={{ color: bold ? 'text.primary' : p.muted, fontWeight: bold ? 600 : undefined }}>{pct0(v)}</TableCell>;
   
   if (BAR.has(keyStr)) {
-    const val = keyStr === 'profit' ? <Profit v={v} /> : <Money v={v} />;
+    const val = <Money v={v} />;
     return (
       <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}>
-        {max == null ? val : <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }}><span>{val}</span><Bar v={v} max={max} neg={(keyStr === 'profit' || keyStr === 'roiMonetary') && (v ?? 0) < 0} /></Stack>}
+        {max == null ? val : <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }}><span>{val}</span><Bar v={v} max={max} neg={(keyStr === 'roiMonetary') && (v ?? 0) < 0} /></Stack>}
       </TableCell>
     );
   }
@@ -127,7 +117,6 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
   const { pluto: p } = useTheme();
   const [sort, setSort] = useState<{ k: SortKey; d: 'asc' | 'desc' }>({ k: 'key', d: 'desc' });
 
-  // Forçamos o casting das arrays após a união para desarmar as validações cruzadas
   const activeResultado = useMemo(() => [
     ...BLOCKS_MANDATORY.resultado,
     ...BLOCKS_OPTIONAL.resultado.filter(k => ms.includes(k as MetricKey))
