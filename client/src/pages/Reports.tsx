@@ -12,8 +12,25 @@ import { lastMonths, monthLabel } from '@/lib/period';
 import type { Metrics, ReportRow } from '@/types/api';
 
 const REPORT_MONTHS = 14;
-/** Colunas de dinheiro que ganham a barrinha proporcional ao maior valor da tabela. */
-const BAR = new Set<MetricKey>(['spend', 'revenue', 'profit', 'googleSpend', 'metaSpend', 'iva']);
+
+// Barrinha de preenchimento de dinheiro nas colunas de custo e receita
+const BAR = new Set<MetricKey>(['spend', 'revenue', 'profit', 'googleSpend', 'metaSpend', 'iva', 'adManagerRevenue']);
+
+// 1. Métricas obrigatórias que NÃO dependem do MetricPicker
+const BLOCKS_MANDATORY = {
+  resultado: ['revenue', 'spend', 'iva', 'roi'] as MetricKey[],
+  despesas: ['metaSpend', 'googleSpend'] as MetricKey[],
+  receita: ['adManagerRevenue'] as MetricKey[],
+};
+
+// 2. Ordem estrita das métricas opcionais para cada bloco (só aparecem se "ms" contiver)
+const BLOCKS_OPTIONAL = {
+  resultado: ['margin', 'profit', 'unattributedRevenue', 'attributionRate'] as MetricKey[],
+  // Nota: A chave "margin" assume o papel do "ROI %"
+  despesas: ['googleSpend', 'metaSpend', 'iva', 'googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc'] as MetricKey[],
+  // Obs: Se Custo Google/Meta forem os mesmos que os obrigatórios, decida se eles devem repetir (aqui mantivemos as chaves conforme solicitado na lista)
+  receita: ['adManagerImpressions', 'adManagerClicks', 'adManagerCpc', 'ctr', 'adManagerEcpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOff', 'fillRate'] as MetricKey[],
+};
 
 const dayLabel = (iso: string) => iso.split('-').reverse().join('/');
 const monthTitle = (ym: string) => monthLabel(ym).replace(/^./, (c) => c.toUpperCase());
@@ -28,7 +45,6 @@ function Bar({ v, max, neg }: { v: number | null; max: number; neg?: boolean }) 
   );
 }
 
-/** Uma célula do relatório: Margem com fundo colorido, ROI colorido, % de custo apagado, dinheiro com barra. */
 function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: number; bold?: boolean }) {
   const { pluto: p } = useTheme();
   const v = metricValue(m, undefined, k);
@@ -60,29 +76,73 @@ interface TableProps {
   ms: MetricKey[];
   onRowClick?: (key: string) => void;
 }
+
 function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: TableProps) {
   const { pluto: p } = useTheme();
   const [sort, setSort] = useState<{ k: SortKey; d: 'asc' | 'desc' }>({ k: 'key', d: 'desc' });
+
+  // 3. Montagem da lista final consolidada (Obrigatórias + Opcionais Ativadas)
+  const activeResultado = useMemo(() => [
+    ...BLOCKS_MANDATORY.resultado,
+    ...BLOCKS_OPTIONAL.resultado.filter(k => ms.includes(k))
+  ], [ms]);
+
+  const activeDespesas = useMemo(() => [
+    ...BLOCKS_MANDATORY.despesas,
+    ...BLOCKS_OPTIONAL.despesas.filter(k => ms.includes(k))
+  ], [ms]);
+
+  const activeReceita = useMemo(() => [
+    ...BLOCKS_MANDATORY.receita,
+    ...BLOCKS_OPTIONAL.receita.filter(k => ms.includes(k))
+  ], [ms]);
+
+  const allMs = useMemo(() => [
+    ...activeResultado, 
+    ...activeDespesas, 
+    ...activeReceita
+  ] as MetricKey[], [activeResultado, activeDespesas, activeReceita]);
+
   const list = useMemo(() => rows.slice().sort((a, b) => {
     const dir = sort.d === 'asc' ? 1 : -1;
     if (sort.k === 'key') return a.key.localeCompare(b.key) * dir;
     return ((metricValue(a.metrics, undefined, sort.k) ?? -Infinity) - (metricValue(b.metrics, undefined, sort.k) ?? -Infinity)) * dir;
   }), [rows, sort]);
-  const max = useMemo(() => Object.fromEntries(ms.filter((k) => BAR.has(k)).map((k) => [k, Math.max(0, ...rows.map((r) => Math.abs(metricValue(r.metrics, undefined, k) ?? 0)))])), [rows, ms]);
+
+  const max = useMemo(() => Object.fromEntries(
+      allMs.filter((k) => BAR.has(k)).map((k) => [k, Math.max(0, ...rows.map((r) => Math.abs(metricValue(r.metrics, undefined, k) ?? 0)))]))
+  , [rows, allMs]);
+
   const head = (k: SortKey, l: string) => (
     <TableCell key={k} align={k === 'key' ? 'left' : 'right'} sx={k === 'key' ? { position: 'sticky', left: 0, zIndex: 3 } : undefined}>
       <TableSortLabel active={sort.k === k} direction={sort.k === k ? sort.d : 'desc'} onClick={() => setSort({ k, d: sort.k === k && sort.d === 'desc' ? 'asc' : 'desc' })}>{l}</TableSortLabel>
     </TableCell>
   );
+
   const firstCell = { position: 'sticky', left: 0, zIndex: 1, bgcolor: p.panel, boxShadow: `inset -1px 0 0 ${p.line}` } as const;
+  const blockHeadStyle = { bgcolor: p.panel2, borderBottom: `1px solid ${p.line2}`, borderRight: `1px solid ${p.line}`, fontWeight: 600, px: 1, py: 0.5 };
+
   return (
     <TableContainer>
       <Table size="small" sx={{ '& td, & th': { px: 1.1, py: 1.1 } }}>
-        <TableHead><TableRow>{head('key', first)}{ms.map((k) => head(k, METRIC_DEFS[k].label))}</TableRow></TableHead>
+        <TableHead>
+          {/* Cabeçalhos Fixos por Bloco */}
+          <TableRow>
+            <TableCell sx={{ position: 'sticky', left: 0, zIndex: 4, bgcolor: p.panel, borderBottom: 'none' }}></TableCell>
+            {activeResultado.length > 0 && <TableCell colSpan={activeResultado.length} align="center" sx={blockHeadStyle}>Bloco 1: Resultado</TableCell>}
+            {activeDespesas.length > 0 && <TableCell colSpan={activeDespesas.length} align="center" sx={blockHeadStyle}>Bloco 2: Despesas (Ads)</TableCell>}
+            {activeReceita.length > 0 && <TableCell colSpan={activeReceita.length} align="center" sx={{ ...blockHeadStyle, borderRight: 'none' }}>Bloco 3: Receita (AD Manager)</TableCell>}
+          </TableRow>
+          {/* Títulos das colunas */}
+          <TableRow>
+            {head('key', first)}
+            {allMs.map((k) => head(k, METRIC_DEFS[k]?.label || k))}
+          </TableRow>
+        </TableHead>
         <TableBody>
           <TableRow sx={{ '& > td': { bgcolor: `${p.panel2} !important`, borderBottomColor: p.line2 } }}>
             <TableCell sx={{ ...firstCell, bgcolor: p.panel2, fontWeight: 600 }}>{totalLabel}</TableCell>
-            {ms.map((k) => <ReportCell key={k} k={k} m={total} bold />)}
+            {allMs.map((k) => <ReportCell key={k} k={k} m={total} bold />)}
           </TableRow>
           {list.map((r) => (
             <TableRow key={r.key} hover={!!onRowClick} onClick={onRowClick ? () => onRowClick(r.key) : undefined} sx={{ cursor: onRowClick ? 'pointer' : undefined }}>
@@ -92,17 +152,16 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
                   {r.partial && <Chip size="small" label="parcial" title="Hoje e D-1 a D-3 podem sofrer ajustes" sx={{ height: 18, fontSize: 11, color: p.warn, bgcolor: alpha(p.warn, 0.15) }} />}
                 </Stack>
               </TableCell>
-              {ms.map((k) => <ReportCell key={k} k={k} m={r.metrics} max={max[k]} />)}
+              {allMs.map((k) => <ReportCell key={k} k={k} m={r.metrics} max={max[k]} />)}
             </TableRow>
           ))}
-          {!list.length && <TableRow><TableCell colSpan={ms.length + 1} align="center" sx={{ py: 4, color: 'text.disabled' }}>Sem dados.</TableCell></TableRow>}
+          {!list.length && <TableRow><TableCell colSpan={allMs.length + 1} align="center" sx={{ py: 4, color: 'text.disabled' }}>Sem dados.</TableCell></TableRow>}
         </TableBody>
       </Table>
     </TableContainer>
   );
 }
 
-/** Relatórios: resultados por dia (mês escolhido) e por mês (últimos 14). Usa só Domínio e Moeda do topo. */
 export default function ReportsPage() {
   const f = useFilters();
   const months = useMemo(() => lastMonths(REPORT_MONTHS), []);
@@ -137,8 +196,8 @@ export default function ReportsPage() {
           : <ReportTable first="Mês" rows={monthly.data.months} total={monthly.data.total} totalLabel={`Total ${REPORT_MONTHS} meses`} label={monthTitle} ms={ms} onRowClick={goMonth} />}
       </Card>
       <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
-        Revenue = receita do Ad Manager já sem a parte da Network (revShare do domínio) · Spend = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o gasto da Meta ·
-        Meta % e Google % = participação na despesa · Margem e ROI sobre o Revenue · Drop-off = respostas servidas que não viraram impressão.
+        Receita = receita do Ad Manager já sem a parte da Network (revShare do domínio) · Despesas (Ads) = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o gasto da Meta ·
+        Meta % e Google % = participação na despesa · Margem (ROI %) e ROI sobre a Receita · Drop-off = respostas servidas que não viraram impressão.
       </Typography>
     </>
   );
