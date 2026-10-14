@@ -156,18 +156,22 @@ export interface Fact {
   campaignId: string | null; adGroupId: string | null; adId: string | null; country: string; reason: string | null;
   spendUsd: number; ivaUsd: number; revenueUsd: number; sessions: number; impressions: number; adRequests: number;
   responsesServed: number; adClicks: number; viewable: number; trafficClicks: number; trafficImpressions: number;
+  /** Meta (actions): cliques no link, conversas por mensagem iniciadas (7d) e leads. */
+  metaLinkClicks: number; metaResults: number; metaLeads: number;
+  /** utm_source da visita (Ad Manager), normalizado. Retenção (push, whatsapp…) vira origem própria na tela URLs. */
+  utmSource: string | null;
 }
 export const emptyFact = (p: Partial<Fact> & Pick<Fact, 'date' | 'domainId' | 'platform'>): Fact => ({
-  urlId: null, campaignId: null, adGroupId: null, adId: null, country: 'ZZ', reason: null,
-  spendUsd: 0, ivaUsd: 0, revenueUsd: 0, sessions: 0, impressions: 0, adRequests: 0, responsesServed: 0, adClicks: 0, viewable: 0, trafficClicks: 0, trafficImpressions: 0, ...p,
+  urlId: null, campaignId: null, adGroupId: null, adId: null, country: 'ZZ', reason: null, utmSource: null,
+  spendUsd: 0, ivaUsd: 0, revenueUsd: 0, sessions: 0, impressions: 0, adRequests: 0, responsesServed: 0, adClicks: 0, viewable: 0, trafficClicks: 0, trafficImpressions: 0, metaLinkClicks: 0, metaResults: 0, metaLeads: 0, ...p,
 });
-const NUM: (keyof Fact)[] = ['spendUsd', 'ivaUsd', 'revenueUsd', 'sessions', 'impressions', 'adRequests', 'responsesServed', 'adClicks', 'viewable', 'trafficClicks', 'trafficImpressions'];
+const NUM: (keyof Fact)[] = ['spendUsd', 'ivaUsd', 'revenueUsd', 'sessions', 'impressions', 'adRequests', 'responsesServed', 'adClicks', 'viewable', 'trafficClicks', 'trafficImpressions', 'metaLinkClicks', 'metaResults', 'metaLeads'];
 
 /** Soma linhas que caem no mesmo grão (a chave única da tabela). */
 export function mergeFacts(rows: Fact[]): Fact[] {
   const m = new Map<string, Fact>();
   for (const f of rows) {
-    const k = [f.date, f.domainId, f.urlId ?? 0, f.platform, f.campaignId ?? 0, f.adGroupId ?? 0, f.adId ?? 0, f.country, f.reason ?? ''].join('|');
+    const k = [f.date, f.domainId, f.urlId ?? 0, f.platform, f.campaignId ?? 0, f.adGroupId ?? 0, f.adId ?? 0, f.country, f.reason ?? '', f.utmSource ?? ''].join('|');
     const e = m.get(k);
     if (!e) { m.set(k, { ...f }); continue; }
     for (const n of NUM) (e[n] as number) += f[n] as number;
@@ -182,8 +186,10 @@ const ISO2 = /^[A-Z]{2}$/;
  */
 /** scope: ids de campanhas · 'all' (a origem inteira) · { domains } (Ad Manager: só os domínios daquela rede). */
 /** Colunas somáveis de daily_metrics e o alvo ON CONFLICT do índice de grão (daily_metrics_grain_uq). */
-export const METRIC_SUMS = ['spend_usd', 'iva_usd', 'revenue_usd', 'impressions', 'ad_requests', 'responses_served', 'ad_clicks', 'viewable', 'traffic_clicks', 'traffic_impressions'];
-export const GRAIN_CONFLICT = `(source, date, domain_id, (COALESCE(url_id, 0)), platform, (COALESCE(campaign_id, 0)), (COALESCE(ad_group_id, 0)), (COALESCE(ad_id, 0)), country, (COALESCE(unattributed_reason, '')))`;
+export const METRIC_SUMS = ['spend_usd', 'iva_usd', 'revenue_usd', 'impressions', 'ad_requests', 'responses_served', 'ad_clicks', 'viewable', 'traffic_clicks', 'traffic_impressions', 'meta_link_clicks', 'meta_results', 'meta_leads'];
+export const GRAIN_CONFLICT = `(source, date, domain_id, (COALESCE(url_id, 0)), platform, (COALESCE(campaign_id, 0)), (COALESCE(ad_group_id, 0)), (COALESCE(ad_id, 0)), country, (COALESCE(unattributed_reason, '')), (COALESCE(utm_source, '')))`;
+/** Colunas de chave (fora as somáveis) usadas ao regravar/somar linhas. */
+export const GRAIN_COLS = 'source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source';
 
 export async function replaceFacts(source: Source, from: string, to: string, scope: string[] | 'all' | { domains: string[] }, rows: Fact[], isFinal = false) {
   const data = mergeFacts(rows.filter((f) => f.date >= from && f.date <= to));   // nunca grava fora da janela que apagou
@@ -196,16 +202,19 @@ export async function replaceFacts(source: Source, from: string, to: string, sco
       const col = <K extends keyof Fact>(k: K) => ch.map((f) => f[k]);
       await c.query(`
         INSERT INTO daily_metrics (source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason,
-          spend_usd, iva_usd, revenue_usd, sessions, impressions, ad_requests, responses_served, ad_clicks, viewable, traffic_clicks, traffic_impressions, is_final, updated_at)
-        SELECT $1, d, dom, u, p, c, g, a, co, re, sp, iv, rv, se, im, ar, rs, ac, vw, tc, ti, $22, now()
+          spend_usd, iva_usd, revenue_usd, sessions, impressions, ad_requests, responses_served, ad_clicks, viewable, traffic_clicks, traffic_impressions, is_final, updated_at,
+          meta_link_clicks, meta_results, meta_leads, utm_source)
+        SELECT $1, d, dom, u, p, c, g, a, co, re, sp, iv, rv, se, im, ar, rs, ac, vw, tc, ti, $22, now(), lc, rr, ld, us
           FROM unnest($2::date[], $3::bigint[], $4::bigint[], $5::text[], $6::bigint[], $7::bigint[], $8::bigint[], $9::text[], $10::text[],
-                      $11::numeric[], $12::numeric[], $13::numeric[], $14::int[], $15::bigint[], $16::bigint[], $17::bigint[], $18::bigint[], $19::bigint[], $20::bigint[], $21::bigint[])
-            AS t(d, dom, u, p, c, g, a, co, re, sp, iv, rv, se, im, ar, rs, ac, vw, tc, ti)`,
+                      $11::numeric[], $12::numeric[], $13::numeric[], $14::int[], $15::bigint[], $16::bigint[], $17::bigint[], $18::bigint[], $19::bigint[], $20::bigint[], $21::bigint[],
+                      $23::bigint[], $24::bigint[], $25::bigint[], $26::text[])
+            AS t(d, dom, u, p, c, g, a, co, re, sp, iv, rv, se, im, ar, rs, ac, vw, tc, ti, lc, rr, ld, us)`,
         [source, col('date'), col('domainId'), col('urlId'), col('platform'), col('campaignId'), col('adGroupId'), col('adId'),
           ch.map((f) => (ISO2.test(f.country) ? f.country : 'ZZ')), col('reason'),
           ch.map((f) => round4(f.spendUsd)), ch.map((f) => round4(f.ivaUsd)), ch.map((f) => round4(f.revenueUsd)),
           ch.map((f) => Math.round(f.sessions)), ch.map((f) => Math.round(f.impressions)), ch.map((f) => Math.round(f.adRequests)), ch.map((f) => Math.round(f.responsesServed)),
-          ch.map((f) => Math.round(f.adClicks)), ch.map((f) => Math.round(f.viewable)), ch.map((f) => Math.round(f.trafficClicks)), ch.map((f) => Math.round(f.trafficImpressions)), isFinal]);
+          ch.map((f) => Math.round(f.adClicks)), ch.map((f) => Math.round(f.viewable)), ch.map((f) => Math.round(f.trafficClicks)), ch.map((f) => Math.round(f.trafficImpressions)), isFinal,
+          ch.map((f) => Math.round(f.metaLinkClicks)), ch.map((f) => Math.round(f.metaResults)), ch.map((f) => Math.round(f.metaLeads)), col('utmSource')]);
     }
     const doms = [...new Set(data.map((f) => f.domainId))];
     if (doms.length) await c.query('UPDATE domains SET last_data_at = now() WHERE id = ANY($1::bigint[])', [doms]);

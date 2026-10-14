@@ -132,11 +132,21 @@ No Ad Manager esses keys precisam estar como **dimensão personalizada** (Invent
 const qs = new URLSearchParams(location.search);
 googletag.pubads().setTargeting('utm_campaign', qs.get('utm_campaign') || '');
 googletag.pubads().setTargeting('utm_content', qs.get('utm_content') || '');
+googletag.pubads().setTargeting('utm_source', (qs.get('utm_source') || '').toLowerCase().slice(0, 40)); // push, whatsapp… viram origem na tela URLs
+googletag.pubads().setTargeting('page_path', location.pathname.slice(0, 200));                       // a slug da página (tela URLs)
 googletag.pubads().setTargeting('placement', (qs.get('placement') || '').toLowerCase().slice(0, 40));
 // guarde em sessionStorage na 1ª página para as páginas seguintes da visita também levarem os valores
 ```
 O key `placement` (nome em `GAM_KEY_PLACEMENT`) precisa estar como **dimensão personalizada** no Ad Manager. Sem ele o job `gam.placements` fica `skipped` com o aviso, e a tela mostra só o custo.
 Valores de key-value no Ad Manager têm limite de tamanho; para sites o `{placement}` é o host, que cabe.
+
+**URLs (slug) e origem da receita:** a tela URLs mostra a receita por **domínio + slug** (clicar abre a página). O caminho vem, nesta ordem:
+1. do key-value `page_path` (`GAM_KEY_PATH`) como dimensão personalizada — o caminho exato;
+2. sem ele, da dimensão nativa `URL_NAME` do Ad Manager (Inventário → URL). Parte das redes ainda recusa essa dimensão na API REST: na 1ª recusa a rede é marcada e o sync segue sem URL;
+3. sem nenhum dos dois, a receita fica em "(sem URL)" e a rede mostra o aviso de como configurar.
+A **origem** vem do `utm_source` (`GAM_KEY_SOURCE`, também como dimensão personalizada) gravado em `daily_metrics.utm_source`: valores de anúncio (google, fb, ig…) ou vazio contam como Google Ads / Meta Ads pela campanha atribuída; qualquer outro valor (push, whatsapp, email…) é **retenção** e aparece como origem própria; o resto é "Sem origem". Guarde os valores em `sessionStorage` na 1ª página para as páginas seguintes da visita.
+
+**Meta: Resultados, Leads e cliques no link:** o insights pede `actions`; `link_click` → Cliques Meta, `onsite_conversion.messaging_conversation_started_7d` → Resultados, `lead` → Leads (`daily_metrics.meta_link_clicks/meta_results/meta_leads`). CPC-L, CPR e CPL = custo Meta ÷ ação, calculados na consulta.
 
 **Sessões:** o Ad Manager e as plataformas não entregam sessões; RPS e Sessions ficam vazios até existir o tracking próprio do site gravando `daily_metrics.sessions`.
 

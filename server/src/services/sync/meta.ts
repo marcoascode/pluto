@@ -82,13 +82,28 @@ export function chunkWindow(w: { from: string; to: string }, days = config.sync.
 }
 const CHUNK_PAUSE_MS = 1_000;   // respiro entre blocos para não estourar o limite por rajada
 
-interface InsightRow { date_start: string; campaign_id: string; campaign_name: string; adset_id: string; adset_name: string; ad_id: string; ad_name: string; country?: string; spend?: string; impressions?: string; clicks?: string; inline_link_clicks?: string }
+interface InsightRow {
+  date_start: string; campaign_id: string; campaign_name: string; adset_id: string; adset_name: string; ad_id: string; ad_name: string;
+  country?: string; spend?: string; impressions?: string; clicks?: string; inline_link_clicks?: string;
+  actions?: { action_type: string; value: string }[];
+}
+/**
+ * Ações da Meta usadas nas métricas (Insights "actions"). O custo por ação (CPC-L, CPR, CPL) NÃO é lido de
+ * cost_per_action_type: é calculado na consulta como custo Meta ÷ ação, que dá o mesmo valor por linha e
+ * continua certo quando somamos dias, países e campanhas (média de custos por ação não soma).
+ */
+export const META_ACTIONS = {
+  linkClicks: 'link_click',
+  results: 'onsite_conversion.messaging_conversation_started_7d',
+  leads: 'lead',
+} as const;
+const action = (r: InsightRow, type: string) => Number(r.actions?.find((a) => a.action_type === type)?.value ?? 0) || 0;
 
 /** Insights de UM bloco. Se a Meta ainda achar pesado, primeiro quebra o bloco em dias soltos; num dia só, diminui a página. */
 async function fetchInsights(acc: Acc, token: string, range: { from: string; to: string }): Promise<InsightRow[]> {
   const url = `${base()}/act_${acc.external_id}/insights?${new URLSearchParams({
     level: 'ad', time_increment: '1', breakdowns: 'country', limit: '500', access_token: token,
-    fields: 'campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,inline_link_clicks',
+    fields: 'campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,inline_link_clicks,actions',
     time_range: JSON.stringify({ since: range.from, until: range.to }),
   })}`;
   try {
@@ -227,6 +242,7 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
           date: r.date_start, domainId, urlId: resolved && a.domainId === resolved ? await url(resolved, a.path) : null, platform: 'meta',
           campaignId: c.id, adGroupId: g, adId: a.id, country: (r.country ?? 'ZZ').toUpperCase(),
           spendUsd, ivaUsd: spendUsd * iva, trafficImpressions: Number(r.impressions ?? 0), trafficClicks: clicks,
+          metaLinkClicks: action(r, META_ACTIONS.linkClicks), metaResults: action(r, META_ACTIONS.results), metaLeads: action(r, META_ACTIONS.leads),
         }));
       }
       const scope = (await q<{ id: string }>('SELECT id::text FROM campaigns WHERE account_id = $1', [acc.id])).map((x) => x.id);

@@ -80,9 +80,9 @@ campaignsAdminRouter.patch('/campaigns/:id', async (req, res) => {
     const r = await c.query(`
       WITH moved AS (
         DELETE FROM daily_metrics WHERE campaign_id = $1 AND source = $2 AND domain_id <> $3 RETURNING *)
-      INSERT INTO daily_metrics (source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, ${METRIC_SUMS.join(', ')}, sessions, is_final, updated_at)
-      SELECT source, date, $3::bigint, NULL::bigint, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, ${sums}, SUM(sessions)::int, bool_and(is_final), now()
-        FROM moved GROUP BY source, date, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason
+      INSERT INTO daily_metrics (source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source, ${METRIC_SUMS.join(', ')}, sessions, is_final, updated_at)
+      SELECT source, date, $3::bigint, NULL::bigint, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source, ${sums}, SUM(sessions)::int, bool_and(is_final), now()
+        FROM moved GROUP BY source, date, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source
       ON CONFLICT ${GRAIN_CONFLICT} DO UPDATE SET ${[...METRIC_SUMS, 'sessions'].map((x) => `${x} = daily_metrics.${x} + EXCLUDED.${x}`).join(', ')}, updated_at = now()`,
       [camp.id, SOURCE[b.platform], target.id]);
     return r.rowCount ?? 0;

@@ -8,7 +8,7 @@ import type { DomainSummary, Preferences } from '@/types/api';
 import { DomainCard } from './DomainCard';
 
 type SortKey = NonNullable<Preferences['domainSort']>;
-const SORTS: { k: SortKey; label: string }[] = [{ k: 'revenue', label: 'Revenue' }, { k: 'roi', label: 'ROI' }, { k: 'spend', label: 'Custo' }, { k: 'profit', label: 'Profit' }];
+const SORTS: { k: SortKey; label: string }[] = [{ k: 'revenue', label: 'Receita' }, { k: 'roi', label: 'ROI %' }, { k: 'spend', label: 'Custo' }, { k: 'profit', label: 'ROI' }];
 
 /** Fila lateral de domínios, ordenada pelo critério escolhido (salvo por usuário). */
 export function DomainStrip({ domains }: { domains: DomainSummary[] }) {

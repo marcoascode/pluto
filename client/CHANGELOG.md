@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10.0
+- **Métricas (Prompt-06)**:
+  - Meta: Impressões Meta, Cliques Meta (`link_click`), CPC-L, Resultados (`onsite_conversion.messaging_conversation_started_7d`), CPR, Leads (`lead`), CPL; o sync pede `actions` no insights (`meta.ts`), em colunas novas de `daily_metrics`;
+  - Ad Manager: CPC ADX; RPS = Receita ÷ Sessões e RPM de Sessão = RPS × 1000 (o RPS antigo, ×1000, agora é o RPM de Sessão);
+  - "Selecionar métricas" separado em **Resultados / Despesas / Receitas** (`ListSubheader`), colunas sempre nessa ordem; Relatórios e URLs com cabeçalho dos 3 blocos;
+  - renomes: Revenue → Receita, Spend → Despesas, Profit → ROI, ROI → ROI %, Não atribuída → RNA, Sessions → Sessões.
+- **URLs**: a slug vem do Ad Manager (key-value `page_path`, padrão novo de `GAM_KEY_PATH`; sem ele, dimensão `URL_NAME` com recuo automático) e **abre a página** (domínio/slug) numa aba nova. Aviso na tela e na rede quando a receita está em "(sem URL)".
+- **Origem da receita (utm_source)**: cartão na tela URLs com Google Ads, Meta Ads, cada utm_source de retenção (push, whatsapp, email…) e Sem origem, com receita, % e custo/ROI; clicar filtra as URLs. `daily_metrics.utm_source` entra no grão da linha.
+- **Finance** (menu novo, Admin e sócios das Empresas):
+  - **Caixa Empresa**: caixa estimado hoje (saldo conferido + resultado − custos pagos + aportes − retiradas), mês atual parcial e **fechamento mensal** (mês anterior + atual por padrão; 3, 6, 12 meses, ano ou De/Até) com Receita × Google × Meta × IVA × Custos, resultado e margem, quebra por categoria e por Empresa;
+  - **Custos**: custos mensais (com início/fim) e avulsos por Empresa — ferramentas, domínios, hospedagem, equipe/salários, impostos, serviços, outros — em BRL/USD/EUR com dia de pagamento.
+  - `migrations/006_metricas_meta_finance.sql`, `routes/finance.ts`, `services/finance.ts`, `pages/finance/*`.
+
 ## 0.9.0
 - **Domínio técnico "Sem domínio"** (`migrations/005_dominio_tecnico_mapeamento.sql`, hostname `sem-dominio`): o custo de campanhas Meta sem domínio identificável (ex.: mensagens/chatbot) é gravado nele em vez de descartado. Spend e IVA batem com a fatura e o ROI dos sites não fica inflado. Só Admin/SuperAdmin veem (`scope.ts`); não entra em Squad, gestor, conta nem Ad Manager (rotas + triggers no banco); não se edita nem exclui.
 - **Mapeamento manual campanha → domínio**:

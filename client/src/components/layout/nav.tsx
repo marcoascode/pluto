@@ -16,6 +16,8 @@ import SellOutlinedIcon from '@mui/icons-material/SellOutlined';
 import CurrencyExchangeOutlinedIcon from '@mui/icons-material/CurrencyExchangeOutlined';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import TrackChangesRoundedIcon from '@mui/icons-material/TrackChangesRounded';
+import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
+import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined';
 
 export interface NavItem { to: string; label: string; icon: ReactElement; cap?: Capability }
 export const NAV_MAIN: { title: string | null; items: NavItem[] }[] = [
@@ -24,6 +26,11 @@ export const NAV_MAIN: { title: string | null; items: NavItem[] }[] = [
   { title: 'Campanhas', items: [{ to: '/google-ads', label: 'Google Ads', icon: <GoogleIcon />, cap: 'campaigns.google.view' }, { to: '/meta-ads', label: 'Meta Ads', icon: <FacebookRoundedIcon />, cap: 'campaigns.meta.view' }, { to: '/placements', label: 'Placements', icon: <TrackChangesRoundedIcon />, cap: 'campaigns.google.view' }] },
   { title: 'Monetização', items: [{ to: '/ad-manager', label: 'Google Ad Manager', icon: <PaidOutlinedIcon />, cap: 'gam.view' }] },
   { title: 'Atribuição', items: [{ to: '/atribuicao', label: 'Attribution Health', icon: <MonitorHeartOutlinedIcon />, cap: 'attribution.view' }, { to: '/utm-debugger', label: 'UTM Debugger', icon: <BugReportOutlinedIcon />, cap: 'utm.debug' }] },
+];
+/** Finance: Admin/SuperAdmin e sócios das Empresas. */
+export const NAV_FINANCE: NavItem[] = [
+  { to: '/finance/caixa', label: 'Caixa Empresa', icon: <AccountBalanceOutlinedIcon /> },
+  { to: '/finance/custos', label: 'Custos', icon: <ReceiptLongOutlinedIcon /> },
 ];
 /** Só Admin e SuperAdmin veem. O servidor também bloqueia /admin/* com 403. */
 export const NAV_ADMIN: { title: string; items: NavItem[] }[] = [

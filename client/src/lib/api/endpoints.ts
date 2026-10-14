@@ -60,7 +60,7 @@ export const placementsApi = {
 };
 
 export const urlsApi = {
-  list: (q: P) => api.get<T.UrlsResponse>('/urls', { ...q }),
+  list: (q: P & { origin?: string }) => api.get<T.UrlsResponse>('/urls', { ...q }),
 };
 
 export const reportsApi = {
@@ -125,4 +125,13 @@ export const adminApi = {
   saveFxDiscount: (b: { amount: number; validFrom?: string }) => api.put<T.FxDiscountResponse>('/admin/fx-discount', b),
   /** Força buscar a cotação agora na API de câmbio (o servidor também faz isso sozinho). */
   refreshFx: () => api.post<T.FxLatest>('/admin/fx/refresh'),
+};
+
+export const financeApi = {
+  overview: (q: { company?: string; from?: string; to?: string; currency: T.Currency }) => api.get<T.FinanceOverview>('/finance/overview', q),
+  costs: (q: { company?: string; month: string; currency: T.Currency }) => api.get<T.FinanceCostsResponse>('/finance/costs', q),
+  saveCost: (c: T.FinanceCostInput & { id?: string }) => (c.id ? api.put<T.FinanceCost>(`/finance/costs/${c.id}`, c) : api.post<T.FinanceCost>('/finance/costs', c)),
+  deleteCost: (id: string) => api.del<void>(`/finance/costs/${id}`),
+  addCash: (c: T.CashInput) => api.post<{ id: string }>('/finance/cash', c),
+  deleteCash: (id: string) => api.del<void>(`/finance/cash/${id}`),
 };

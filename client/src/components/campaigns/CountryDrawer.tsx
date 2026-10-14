@@ -8,7 +8,7 @@ import { CountryCode, Money, Profit, RoiChip } from '@/components/ui/Values';
 import { money, pct0, shortDate } from '@/lib/format';
 import type { CampaignRow, CountryRow } from '@/types/api';
 
-type K = 'name' | 'spend' | 'revenue' | 'profit' | 'roi' | 'rps';
+type K = 'name' | 'spend' | 'revenue' | 'profit' | 'roi' | 'sessionRpm';
 
 /** 🌐 Países da campanha: quem dá lucro, quem dá prejuízo, quanto gastou e quanto voltou. */
 export function CountryDrawer({ c, onClose }: { c: CampaignRow; onClose: () => void }) {
@@ -39,7 +39,7 @@ export function CountryDrawer({ c, onClose }: { c: CampaignRow; onClose: () => v
         {data && tot && (
           <>
             <Grid container spacing={1.25}>
-              {([['Spend', <Money key="s" v={tot.spend} />], ['Revenue', <Money key="r" v={tot.revenue} />], ['Profit', <Profit key="p" v={tot.profit} />], ['ROI', <RoiChip key="o" v={tot.roi} />]] as const).map(([l, v]) => (
+              {([['Despesas', <Money key="s" v={tot.spend} />], ['Receita', <Money key="r" v={tot.revenue} />], ['ROI', <Profit key="p" v={tot.profit} />], ['ROI %', <RoiChip key="o" v={tot.roi} />]] as const).map(([l, v]) => (
                 <Grid key={l} size={{ xs: 6, md: 3 }}><Card sx={{ p: 1.5, bgcolor: p.panel2, background: p.panel2 }}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600, fontSize: 16 }}>{v}</Typography></Card></Grid>
               ))}
             </Grid>
@@ -53,28 +53,28 @@ export function CountryDrawer({ c, onClose }: { c: CampaignRow; onClose: () => v
               <Card>{rows.map((x) => (
                 <Box key={x.country} sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', boxShadow: x.metrics.profit < 0 ? `inset 3px 0 0 ${p.neg}` : 'none' }}>
                   <Stack direction="row" sx={{ justifyContent: 'space-between' }} ><Box><CountryCode c={x.country} />{x.name}<Typography variant="caption" component="div">{share(x)} do spend</Typography></Box><RoiChip v={x.metrics.roi} /></Stack>
-                  <Grid container spacing={1} sx={{ mt: 1 }}>{([['Spend', <Money key="s" v={x.metrics.spend} />], ['Revenue', <Money key="r" v={x.metrics.revenue} />], ['Profit', <Profit key="p" v={x.metrics.profit} />], ['RPS', <Money key="q" v={x.metrics.rps} />]] as const).map(([l, v]) => <Grid key={l} size={6}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600 }}>{v}</Typography></Grid>)}</Grid>
+                  <Grid container spacing={1} sx={{ mt: 1 }}>{([['Despesas', <Money key="s" v={x.metrics.spend} />], ['Receita', <Money key="r" v={x.metrics.revenue} />], ['ROI', <Profit key="p" v={x.metrics.profit} />], ['RPM Sessão', <Money key="q" v={x.metrics.sessionRpm} />]] as const).map(([l, v]) => <Grid key={l} size={6}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600 }}>{v}</Typography></Grid>)}</Grid>
                 </Box>
               ))}</Card>
             ) : (
               <TableContainer component={Card}>
                 <Table size="small">
-                  <TableHead><TableRow>{head('name', 'País', false)}{head('spend', 'Spend')}{head('revenue', 'Revenue')}{head('profit', 'Profit')}{head('rps', 'RPS')}{head('roi', 'ROI')}</TableRow></TableHead>
+                  <TableHead><TableRow>{head('name', 'País', false)}{head('spend', 'Despesas')}{head('revenue', 'Receita')}{head('profit', 'ROI')}{head('sessionRpm', 'RPM Sessão')}{head('roi', 'ROI %')}</TableRow></TableHead>
                   <TableBody>
                     {rows.map((x) => (
                       <TableRow key={x.country}>
                         <TableCell sx={{ boxShadow: `inset 3px 0 0 ${x.metrics.profit < 0 ? p.neg : p.pos}` }}><CountryCode c={x.country} />{x.name}<Typography variant="caption" component="div">{share(x)} do spend</Typography></TableCell>
                         <TableCell align="right"><Money v={x.metrics.spend} /></TableCell><TableCell align="right"><Money v={x.metrics.revenue} /></TableCell>
                         <TableCell align="right"><Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }} ><Profit v={x.metrics.profit} /><LinearProgress variant="determinate" value={(Math.abs(x.metrics.profit) / mxP) * 100} color={x.metrics.profit < 0 ? 'error' : 'success'} sx={{ width: 40, bgcolor: 'transparent' }} /></Stack></TableCell>
-                        <TableCell align="right"><Money v={x.metrics.rps} /></TableCell><TableCell align="right"><RoiChip v={x.metrics.roi} /></TableCell>
+                        <TableCell align="right"><Money v={x.metrics.sessionRpm} /></TableCell><TableCell align="right"><RoiChip v={x.metrics.roi} /></TableCell>
                       </TableRow>
                     ))}
-                    <TableRow sx={{ '& td': { bgcolor: p.panel2, fontWeight: 600 } }}><TableCell>Total · {rows.length} países</TableCell><TableCell align="right"><Money v={tot.spend} /></TableCell><TableCell align="right"><Money v={tot.revenue} /></TableCell><TableCell align="right"><Profit v={tot.profit} /></TableCell><TableCell align="right"><Money v={tot.rps} /></TableCell><TableCell align="right"><RoiChip v={tot.roi} /></TableCell></TableRow>
+                    <TableRow sx={{ '& td': { bgcolor: p.panel2, fontWeight: 600 } }}><TableCell>Total · {rows.length} países</TableCell><TableCell align="right"><Money v={tot.spend} /></TableCell><TableCell align="right"><Money v={tot.revenue} /></TableCell><TableCell align="right"><Profit v={tot.profit} /></TableCell><TableCell align="right"><Money v={tot.sessionRpm} /></TableCell><TableCell align="right"><RoiChip v={tot.roi} /></TableCell></TableRow>
                   </TableBody>
                 </Table>
               </TableContainer>
             )}
-            <Typography variant="caption">Spend por país vem da {c.platform === 'google' ? 'Google Ads API (visão geográfica)' : 'Meta Marketing API (breakdown por país)'}. Revenue vem do Google Ad Manager cruzado pelo Campaign ID da sessão e pelo país. Receita sem Campaign ID não entra aqui.</Typography>
+            <Typography variant="caption">Despesas por país vêm da {c.platform === 'google' ? 'Google Ads API (visão geográfica)' : 'Meta Marketing API (breakdown por país)'}. Revenue vem do Google Ad Manager cruzado pelo Campaign ID da sessão e pelo país. Receita sem Campaign ID não entra aqui.</Typography>
           </>
         )}
       </Stack>

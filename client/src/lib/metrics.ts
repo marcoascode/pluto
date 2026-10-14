@@ -31,92 +31,109 @@ export function marginClass(v: number | null | undefined): MarginClass {
 
 /** Métricas que aparecem no seletor "Selecionar métricas". */
 export type MetricKey =
-  // Obrigatórias do Relatório (Não controladas pelo Seletor)
-  | 'revenue' | 'spend' | 'iva' | 'roiMonetary' | 'metaSpend' | 'googleSpend'
-  // Ativáveis - Bloco 1: Resultado
-  | 'roi' | 'margin' | 'unattributedRevenue' | 'attributionRate'
-  // Ativáveis - Bloco 2: Despesas (Ads)
-  | 'googleShare' | 'metaShare' | 'metaImpressions' | 'metaClicks' | 'metaCpc'
-  // Ativáveis - Bloco 3: Receita (AD Manager)
-  | 'impressions' | 'adClicks' | 'adCpc' | 'ctr' | 'ecpm' 
-  | 'sessions' | 'rps' | 'responsesServed' | 'viewability' | 'dropOffRate' | 'fillRate'
-  // Outras / Padrão legado de outras telas do sistema
-  | 'trafficImpressions' | 'trafficClicks' | 'trafficCtr' | 'cpc' | 'adRequests'
-  // ROIs diários
-  | 'r0' | 'r1' | 'r2' | 'r3';
-
-type Kind = 'money' | 'profit' | 'chip' | 'pct' | 'pct0' | 'pct2' | 'int' | 'drop';
-
-export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind }> = {
-  // === BLOCO 1: Resultado ===
-  revenue: { label: 'Receita', kind: 'money' },
-  spend: { label: 'Despesas (Ads)', kind: 'money' },
-  iva: { label: 'IVA', kind: 'money' },
-  roiMonetary: { label: 'ROI', kind: 'money' }, 
-  roi: { label: 'ROI %', kind: 'pct' }, 
-  margin: { label: 'Margem', kind: 'pct' },
-  unattributedRevenue: { label: 'Rec.Não atribuída', kind: 'money' },
-  attributionRate: { label: 'Tx. de Atribuição', kind: 'pct' },
-
-  // === BLOCO 2: Despesas (Ads) ===
-  metaSpend: { label: 'Meta', kind: 'money' },
-  googleSpend: { label: 'Google', kind: 'money' },
-  googleShare: { label: 'Google %', kind: 'pct0' },
-  metaShare: { label: 'Meta %', kind: 'pct0' },
-  metaImpressions: { label: 'Imp. Meta', kind: 'int' },
-  metaClicks: { label: 'Cliques Meta', kind: 'int' },
-  metaCpc: { label: 'CPC Meta', kind: 'money' },
-
-  // === BLOCO 3: Receita (AD Manager) ===
-  impressions: { label: 'Imp. ADX', kind: 'int' },
-  adClicks: { label: 'Cliques ADX', kind: 'int' },
-  adCpc: { label: 'CPC ADX', kind: 'money' },
-  ctr: { label: 'CTR', kind: 'pct2' },
-  ecpm: { label: 'eCPM', kind: 'money' },
-  sessions: { label: 'Sessões', kind: 'int' },
-  rps: { label: 'RPS', kind: 'money' },
-  responsesServed: { label: 'Respostas servidas', kind: 'int' },
-  viewability: { label: 'Viewability', kind: 'pct' },
-  dropOffRate: { label: 'Drop-off', kind: 'drop' },
-  fillRate: { label: 'Fill Rate', kind: 'pct' },
-
-  // === Legadas ===
-  trafficImpressions: { label: 'Impressões', kind: 'int' },
-  trafficClicks: { label: 'Cliques', kind: 'int' },
-  trafficCtr: { label: 'CTR', kind: 'pct2' },
-  cpc: { label: 'CPC', kind: 'money' },
+  | 'spend' | 'revenue' | 'profit' | 'roi' | 'margin' | 'rps' | 'sessionRpm' | 'ecpm' | 'trafficImpressions' | 'trafficClicks' | 'trafficCtr' | 'cpc'
+  | 'sessions' | 'impressions' | 'adRequests' | 'fillRate' | 'ctr' | 'adClicks' | 'cpcAdx' | 'viewability' | 'attributionRate'
+  | 'r0' | 'r1' | 'r2' | 'r3'
+  | 'iva' | 'googleSpend' | 'metaSpend' | 'googleShare' | 'metaShare' | 'unattributedRevenue' | 'responsesServed' | 'dropOffRate'
+  | 'metaImpressions' | 'metaLinkClicks' | 'cpcLink' | 'metaResults' | 'cpr' | 'metaLeads' | 'cpl';
+type Kind = 'money' | 'money3' | 'profit' | 'chip' | 'pct' | 'pct0' | 'pct2' | 'int' | 'drop';
+/** label = cabeçalho da coluna · hint = explicação curta no seletor. */
+export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind; hint?: string }> = {
+  // Resultados
+  revenue: { label: 'Receita', kind: 'money', hint: 'Ad Manager, já sem o revShare do domínio' },
+  spend: { label: 'Despesas', kind: 'money', hint: 'Google Ads + Meta Ads + IVA' },
+  iva: { label: 'IVA', kind: 'money', hint: '13,83% sobre o custo da Meta' },
+  profit: { label: 'ROI', kind: 'profit', hint: 'Receita − (Google Ads + Meta Ads + IVA)' },
+  roi: { label: 'ROI %', kind: 'chip', hint: '(Receita − Despesas) ÷ Despesas' },
+  margin: { label: 'Margem', kind: 'pct', hint: 'ROI ÷ Receita' },
+  unattributedRevenue: { label: 'RNA', kind: 'money', hint: 'Receita não atribuída a campanha' },
+  attributionRate: { label: 'Atribuição', kind: 'pct', hint: 'Receita atribuída ÷ Receita' },
+  // Despesas
+  googleSpend: { label: 'Custo Google', kind: 'money' }, metaSpend: { label: 'Custo Meta', kind: 'money', hint: 'sem IVA' },
+  googleShare: { label: 'Google %', kind: 'pct0' }, metaShare: { label: 'Meta %', kind: 'pct0' },
+  metaImpressions: { label: 'Impressões Meta', kind: 'int' },
+  metaLinkClicks: { label: 'Cliques Meta', kind: 'int', hint: 'Cliques no link (link_click)' },
+  cpcLink: { label: 'CPC-L', kind: 'money', hint: 'Custo Meta ÷ cliques no link' },
+  metaResults: { label: 'Resultados', kind: 'int', hint: 'Conversas por mensagem iniciadas (7 dias)' },
+  cpr: { label: 'CPR', kind: 'money', hint: 'Custo Meta ÷ conversas iniciadas' },
+  metaLeads: { label: 'Leads', kind: 'int' }, cpl: { label: 'CPL', kind: 'money', hint: 'Custo Meta ÷ leads' },
+  trafficImpressions: { label: 'Impressões', kind: 'int', hint: 'Impressões das campanhas (Google/Meta)' },
+  trafficClicks: { label: 'Cliques', kind: 'int', hint: 'Cliques das campanhas (Google/Meta)' },
+  trafficCtr: { label: 'CTR campanha', kind: 'pct2' }, cpc: { label: 'CPC', kind: 'money', hint: 'Despesas ÷ cliques' },
+  // Receitas
+  impressions: { label: 'Imp. ADX', kind: 'int', hint: 'Impressões de anúncio no Ad Manager' },
+  adClicks: { label: 'Cliques ADX', kind: 'int' }, cpcAdx: { label: 'CPC ADX', kind: 'money', hint: 'Receita ÷ cliques ADX' },
+  ctr: { label: 'CTR', kind: 'pct2', hint: 'Cliques ADX ÷ Imp. ADX' }, ecpm: { label: 'eCPM', kind: 'money' },
+  responsesServed: { label: 'Respostas servidas', kind: 'int' }, viewability: { label: 'Viewability', kind: 'pct' },
+  dropOffRate: { label: 'Drop-off', kind: 'drop' }, fillRate: { label: 'Fill Rate', kind: 'pct' },
+  sessions: { label: 'Sessões', kind: 'int' }, rps: { label: 'RPS', kind: 'money3', hint: 'Receita ÷ Sessões' },
+  sessionRpm: { label: 'RPM de Sessão', kind: 'money', hint: 'Receita ÷ Sessões × 1000' },
   adRequests: { label: 'Ad Requests', kind: 'int' },
+  // ROI por dia (sempre na ponta direita)
   r0: { label: 'ROI Hoje', kind: 'chip' }, r1: { label: 'ROI D-1', kind: 'chip' }, r2: { label: 'ROI D-2', kind: 'chip' }, r3: { label: 'ROI D-3', kind: 'chip' },
 };
 
+/**
+ * Blocos de colunas (Prompt-06): Resultados → Despesas → Receitas, cada um na ordem exata abaixo.
+ * Uma métrica que aparece em dois blocos (Receita, IVA) é UMA coluna só, no primeiro bloco em que aparece;
+ * no seletor ela aparece nos dois grupos com o mesmo liga/desliga.
+ * As métricas de tráfego das campanhas e Ad Requests entram no fim do bloco a que pertencem.
+ */
+export type BlockKey = 'results' | 'costs' | 'revenue' | 'roiDays';
+export const BLOCKS: { key: BlockKey; label: string; keys: MetricKey[] }[] = [
+  { key: 'results', label: 'Resultados', keys: ['revenue', 'spend', 'iva', 'profit', 'roi', 'margin', 'unattributedRevenue', 'attributionRate'] },
+  { key: 'costs', label: 'Despesas', keys: ['googleSpend', 'metaSpend', 'iva', 'googleShare', 'metaShare', 'metaImpressions', 'metaLinkClicks', 'cpcLink', 'metaResults', 'cpr', 'metaLeads', 'cpl', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc'] },
+  { key: 'revenue', label: 'Receitas', keys: ['revenue', 'impressions', 'adClicks', 'cpcAdx', 'ctr', 'ecpm', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate', 'sessions', 'rps', 'sessionRpm', 'adRequests'] },
+  { key: 'roiDays', label: 'ROI por dia', keys: ['r0', 'r1', 'r2', 'r3'] },
+];
+/** Ordem global de exibição (primeira ocorrência de cada métrica nos blocos). */
+const ORDER: MetricKey[] = [...new Set(BLOCKS.flatMap((b) => b.keys))];
+/** Bloco "dono" da coluna (primeiro em que a métrica aparece). */
+export const BLOCK_OF = Object.fromEntries(ORDER.map((k) => [k, BLOCKS.find((b) => b.keys.includes(k))!.key])) as Record<MetricKey, BlockKey>;
+export const byBlockOrder = (keys: MetricKey[]) => ORDER.filter((k) => keys.includes(k));
+
+/** ROI % e ROI Hoje / D-1 / D-2 / D-3 ficam sempre por último nas telas de campanha. Qualquer outra métrica
+ *  (inclusive as adicionadas em "Selecionar métricas") entra à esquerda do ROI, nunca à direita dele. */
 export const ROI_TAIL: MetricKey[] = ['roi', 'r0', 'r1', 'r2', 'r3'];
 export function roiLast(keys: MetricKey[]): MetricKey[] {
   return [...keys.filter((k) => !ROI_TAIL.includes(k)), ...ROI_TAIL.filter((k) => keys.includes(k))];
 }
 
-const PICKERS_RAW: Record<string, { all: MetricKey[]; def: MetricKey[] }> = {
-  home: { all: ['rps', 'ecpm', 'dropOffRate', 'impressions', 'adRequests', 'responsesServed', 'fillRate', 'ctr', 'adClicks', 'viewability', 'sessions'], def: ['rps', 'ecpm', 'dropOffRate', 'impressions', 'ctr'] },
+/**
+ * Conjuntos por tela: todas as opções + o padrão. mixed = relatório misto (receita, despesa e resultado juntos):
+ * colunas em 3 blocos com cabeçalho (Relatórios, URLs). Nas outras telas a ordem é a dos blocos e o ROI % / ROI do dia
+ * vão para a ponta direita.
+ */
+const R: MetricKey[] = ['revenue', 'spend', 'iva', 'profit', 'roi', 'margin'];
+const META_RES: MetricKey[] = ['metaImpressions', 'metaLinkClicks', 'cpcLink', 'metaResults', 'cpr', 'metaLeads', 'cpl'];
+const PICKERS_RAW: Record<string, { all: MetricKey[]; def: MetricKey[]; mixed?: boolean }> = {
+  home: { all: ['rps', 'sessionRpm', 'ecpm', 'dropOffRate', 'impressions', 'adRequests', 'responsesServed', 'fillRate', 'ctr', 'adClicks', 'cpcAdx', 'viewability', 'sessions'], def: ['sessionRpm', 'ecpm', 'dropOffRate', 'impressions', 'ctr'] },
   reports: {
-    all: ['roi', 'margin', 'unattributedRevenue', 'attributionRate', 'googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc', 'impressions', 'adClicks', 'adCpc', 'ctr', 'ecpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate'],
-    def: ['roi', 'margin', 'googleShare', 'metaShare', 'ecpm', 'sessions', 'rps', 'dropOffRate'],
+    mixed: true,
+    all: byBlockOrder([...BLOCKS[0].keys, ...BLOCKS[1].keys, ...BLOCKS[2].keys]),
+    def: ['revenue', 'spend', 'iva', 'profit', 'roi', 'margin', 'googleSpend', 'metaSpend', 'googleShare', 'metaShare', 'sessions', 'sessionRpm', 'dropOffRate'],
   },
-  google: { all: ['spend', 'revenue', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'roi', 'rps', 'r1', 'r2', 'r3'] },
-  meta: { all: ['spend', 'metaSpend', 'iva', 'revenue', 'roi', 'margin', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'rps', 'ecpm', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'trafficImpressions', 'trafficClicks', 'cpc', 'trafficCtr'] },
-  domain: { all: ['spend', 'revenue', 'roi', 'margin', 'rps', 'ecpm', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'sessions', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'roi', 'rps', 'ecpm'] },
-  urls: { all: ['revenue', 'spend', 'roi', 'impressions', 'adClicks', 'ctr', 'ecpm', 'margin', 'adRequests', 'responsesServed', 'dropOffRate', 'sessions', 'rps', 'viewability', 'fillRate', 'attributionRate'], def: ['revenue', 'spend', 'roi', 'ecpm', 'dropOffRate'] },
-  gam: { all: ['revenue', 'impressions', 'adClicks', 'ctr', 'ecpm', 'adRequests', 'responsesServed', 'dropOffRate', 'sessions', 'rps', 'attributionRate', 'fillRate', 'viewability'], def: ['revenue', 'impressions', 'adClicks', 'ecpm', 'dropOffRate', 'rps', 'fillRate', 'viewability'] },
-  placements: { all: ['spend', 'revenue', 'sessions', 'rps', 'margin', 'trafficClicks', 'cpc', 'trafficImpressions', 'trafficCtr', 'ecpm', 'impressions', 'dropOffRate', 'roi', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'sessions', 'rps', 'margin', 'roi', 'r1', 'r2', 'r3'] },
+  google: { all: [...R, 'googleSpend', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'ecpm', 'sessions', 'rps', 'sessionRpm', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'sessionRpm', 'r1', 'r2', 'r3'] },
+  meta: { all: [...R, 'metaSpend', ...META_RES, 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'ecpm', 'sessions', 'rps', 'sessionRpm', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'metaLinkClicks', 'cpcLink', 'sessionRpm'] },
+  domain: { all: [...R, 'googleSpend', 'metaSpend', ...META_RES, 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc', 'ecpm', 'sessions', 'rps', 'sessionRpm', 'r0', 'r1', 'r2', 'r3'], def: ['spend', 'revenue', 'profit', 'roi', 'sessionRpm', 'ecpm'] },
+  urls: {
+    mixed: true,
+    all: ['revenue', 'spend', 'profit', 'roi', 'margin', 'attributionRate', 'impressions', 'adClicks', 'cpcAdx', 'ctr', 'ecpm', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate', 'sessions', 'rps', 'sessionRpm', 'adRequests'],
+    def: ['revenue', 'spend', 'profit', 'roi', 'ecpm', 'dropOffRate', 'sessions', 'sessionRpm'],
+  },
+  gam: { all: ['revenue', 'unattributedRevenue', 'attributionRate', 'impressions', 'adClicks', 'cpcAdx', 'ctr', 'ecpm', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate', 'sessions', 'rps', 'sessionRpm', 'adRequests'], def: ['revenue', 'ecpm', 'sessionRpm', 'dropOffRate', 'impressions', 'fillRate', 'viewability'] },
+  placements: {
+    all: ['spend', 'revenue', 'profit', 'margin', 'trafficClicks', 'cpc', 'trafficImpressions', 'trafficCtr', 'ecpm', 'impressions', 'dropOffRate', 'sessions', 'rps', 'sessionRpm', 'roi', 'r0', 'r1', 'r2', 'r3'],
+    def: ['spend', 'revenue', 'sessions', 'sessionRpm', 'profit', 'margin', 'roi', 'r1', 'r2', 'r3'],
+  },
 };
-export const PICKERS: Record<string, { all: MetricKey[]; def: MetricKey[] }> = Object.fromEntries(
-  Object.entries(PICKERS_RAW).map(([k, v]) => [k, { all: roiLast(v.all), def: roiLast(v.def) }])
-);
+const ordered = (keys: MetricKey[], mixed?: boolean) => (mixed ? byBlockOrder(keys) : roiLast(byBlockOrder(keys)));
+export const PICKERS: Record<string, { all: MetricKey[]; def: MetricKey[]; mixed: boolean }> = Object.fromEntries(
+  Object.entries(PICKERS_RAW).map(([k, v]) => [k, { all: ordered(v.all, v.mixed), def: ordered(v.def, v.mixed), mixed: !!v.mixed }]));
+/** Ordena a escolha do usuário para a tela (blocos; ROI na ponta nas telas não mistas). */
+export const orderFor = (screen: string, keys: MetricKey[]) => ordered(keys, PICKERS[screen]?.mixed);
 
 export function metricValue(m: Metrics, roiDays: RoiDays | undefined, k: MetricKey): number | null {
-  if (k === 'roiMonetary') {
-    const rev = (m as unknown as Record<string, number | null>)['revenue'] ?? 0;
-    const sp = (m as unknown as Record<string, number | null>)['spend'] ?? 0;
-    return rev - sp;
-  }
   if (k === 'r0') return roiDays?.today ?? null;
   if (k === 'r1') return roiDays?.d1 ?? null;
   if (k === 'r2') return roiDays?.d2 ?? null;
@@ -124,15 +141,18 @@ export function metricValue(m: Metrics, roiDays: RoiDays | undefined, k: MetricK
   return (m as unknown as Record<string, number | null>)[k] ?? null;
 }
 
+/** Formata como texto simples (para células sem cor). Chips e profit colorido ficam nos componentes. */
 export function formatMetric(k: MetricKey, v: number | null, cur: Currency): string {
   const kind = METRIC_DEFS[k].kind;
   if (kind === 'money' || kind === 'profit') return money(v, cur);
+  if (kind === 'money3') return money(v, cur, 3);
   if (kind === 'pct0') return pct0(v);
   if (kind === 'pct' || kind === 'chip' || kind === 'drop') return pct(v);
   if (kind === 'pct2') return pct(v, 2);
   return int(v);
 }
 
+/** Variação vs período anterior. pp = diferença em pontos percentuais (ROI, Margem). */
 export function delta(cur: number | null, prev: number | null, pp: boolean): number | null {
   if (cur == null || prev == null) return null;
   if (pp) return cur - prev;

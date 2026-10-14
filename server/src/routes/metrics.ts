@@ -172,12 +172,37 @@ metricsRouter.get('/campaigns/:platform/:id/countries', async (req, res) => {
 });
 
 /* ---------- URLs ---------- */
+/**
+ * Origem da linha (tela URLs): utm_source de retenção colocado à mão na URL (push, whatsapp, email…) vira origem
+ * própria; utm_source de anúncio (google, fb, ig…) ou vazio cai na plataforma da campanha atribuída
+ * (Google Ads / Meta Ads); o resto é "Sem origem" (direto, orgânico ou sem utm). O custo das campanhas fica em Google/Meta.
+ */
+const AD_SOURCES = 'google|gads|adwords|cpc|ppc|fb|facebook|ig|instagram|an|msg|messenger|meta|th|threads';
+export const ORIGIN_SQL = `CASE WHEN m.utm_source IS NOT NULL AND m.utm_source !~ '^(${AD_SOURCES})$' THEN 'utm:' || m.utm_source
+  WHEN m.platform IN ('google', 'meta') THEN m.platform ELSE 'none' END`;
+const ORIGIN = z.string().regex(/^(google|meta|none|utm:[a-z0-9_.-]{1,40})$/);
+const RANK = { google: 0, meta: 1, retention: 2, none: 3 } as const;
+const originLabel = (k: string) => (k === 'google' ? 'Google Ads' : k === 'meta' ? 'Meta Ads' : k === 'none' ? 'Sem origem' : k.slice(4));
+
 metricsRouter.get('/urls', requireCap('urls.view'), async (req, res) => {
   const p = period(req);
   const sc = await scope(req, req.query.domain);
-  const by = await aggregate({ domainIds: sc.ids, filter: sc.filter, currency: p.currency, from: p.from, to: p.to, groupBy: `d.hostname || '|' || COALESCE(u.path, '(sem URL)')`,
-    joins: 'JOIN domains d ON d.id = m.domain_id LEFT JOIN urls u ON u.id = m.url_id' });
-  res.json({ urls: [...by].map(([k, m]) => { const i = k.indexOf('|'); return { domain: k.slice(0, i), path: k.slice(i + 1), metrics: m }; }) });
+  const origin = req.query.origin ? parse(ORIGIN, req.query.origin) : null;
+  const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency, from: p.from, to: p.to };
+  const [by, orig] = await Promise.all([
+    aggregate({ ...base, groupBy: `d.hostname || '|' || COALESCE(u.path, '(sem URL)')`,
+      joins: 'JOIN domains d ON d.id = m.domain_id LEFT JOIN urls u ON u.id = m.url_id',
+      ...(origin ? { where: `(${ORIGIN_SQL}) = $5`, params: [origin] } : {}) }),
+    aggregate({ ...base, groupBy: ORIGIN_SQL }),
+  ]);
+  const kind = (k: string) => (k.startsWith('utm:') ? 'retention' : k) as 'google' | 'meta' | 'none' | 'retention';
+  res.json({
+    urls: [...by].map(([k, m]) => { const i = k.indexOf('|'); return { domain: k.slice(0, i), path: k.slice(i + 1), metrics: m }; }),
+    // receita por origem no mesmo período/domínio (para o cartão "Origem da receita" e o filtro)
+    origins: [...orig].map(([k, m]) => ({ key: k, label: originLabel(k), kind: kind(k), metrics: m }))
+      .sort((a, b) => RANK[a.kind] - RANK[b.kind] || b.metrics.revenue - a.metrics.revenue),
+    origin,
+  });
 });
 
 /* ---------- Ad Manager ---------- */

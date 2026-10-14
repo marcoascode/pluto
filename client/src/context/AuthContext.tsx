@@ -10,6 +10,7 @@ interface AuthCtx {
   loading: boolean;
   /** Admin ou SuperAdmin (área de administração). */
   isAdmin: boolean;
+  canFinance: boolean;
   /** Único que conecta integrações e muda a frequência do sync. */
   isSuperAdmin: boolean;
   /** Pode usar o módulo? Vem de user.permissions (o servidor também confere e responde 403). */
@@ -41,7 +42,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const can = (cap: Capability) => !!user && (user.role === 'superadmin' || !!user.permissions?.includes(cap));
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
-  return <Ctx.Provider value={{ user, loading, isAdmin, isSuperAdmin: user?.role === 'superadmin', can, login, logout, refresh }}>{children}</Ctx.Provider>;
+  // Finance: Admin/SuperAdmin e sócios de alguma Empresa (o servidor confere de novo)
+  const canFinance = isAdmin || !!user?.companyIds?.length;
+  return <Ctx.Provider value={{ user, loading, isAdmin, isSuperAdmin: user?.role === 'superadmin', canFinance, can, login, logout, refresh }}>{children}</Ctx.Provider>;
 }
 export function useAuth() {
   const c = useContext(Ctx);

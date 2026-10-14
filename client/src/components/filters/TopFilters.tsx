@@ -14,10 +14,11 @@ export function TopFilters() {
   const { data: doms } = useMyDomains();
   const { data: fx } = useFx();
   const { pathname } = useLocation();
+  const finance = pathname.startsWith('/finance');   // Finance tem o próprio período (meses) e é por Empresa
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', overflowX: 'auto', minWidth: 0, py: 0.25, '&::-webkit-scrollbar': { display: 'none' } }}>
-      {pathname !== '/relatorios' && <DateFilter />}
-      {pathname !== '/placements' && <Select size="small" value={f.domain} displayEmpty onChange={(e) => f.setDomain(e.target.value)} inputProps={{ 'aria-label': 'Domínio' }} sx={{ minWidth: 170, flexShrink: 0 }}>
+      {pathname !== '/relatorios' && !finance && <DateFilter />}
+      {pathname !== '/placements' && !finance && <Select size="small" value={f.domain} displayEmpty onChange={(e) => f.setDomain(e.target.value)} inputProps={{ 'aria-label': 'Domínio' }} sx={{ minWidth: 170, flexShrink: 0 }}>
         <MenuItem value="">Todos os domínios</MenuItem>
         {doms?.domains.map((d) => <MenuItem key={d} value={d}>{domainLabel(d)}</MenuItem>)}
       </Select>}

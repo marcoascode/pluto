@@ -71,8 +71,8 @@ export function SpendRevenueChart({ labels, revenue, spend, yfmt, tip, height = 
         xAxis={[{ scaleType: 'point', data: labels, tickLabelMinGap: 18 }]}
         yAxis={[{ valueFormatter: (v: number) => yfmt(v), width: 52, min: 0 }]}
         series={[
-          { data: revenue, label: 'Revenue', color: p.rev, showMark: false, curve: 'linear' },
-          { data: spend, label: 'Spend', color: p.spend, showMark: false, curve: 'linear' },
+          { data: revenue, label: 'Receita', color: p.rev, showMark: false, curve: 'linear' },
+          { data: spend, label: 'Despesas', color: p.spend, showMark: false, curve: 'linear' },
         ]}
         slots={{ tooltip: RichTooltip }}>
         <ProfitBand a={revenue} b={spend} />

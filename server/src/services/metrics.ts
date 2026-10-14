@@ -22,28 +22,33 @@ export interface Metrics {
   ctr: number | null; adClicks: number; viewability: number | null; sessions: number;
   trafficClicks: number; trafficImpressions: number; trafficCtr: number | null; cpc: number | null;
   attributedRevenue: number; unattributedRevenue: number; attributionRate: number | null;
-  metaImpressions: number; metaClicks: number; metaCpc: number | null; adCpc: number | null;
+  /** Meta: impressões, cliques no link, conversas iniciadas (Resultados), leads e custos por ação (custo Meta sem IVA ÷ ação). */
+  metaImpressions: number; metaLinkClicks: number; cpcLink: number | null; metaResults: number; cpr: number | null; metaLeads: number; cpl: number | null;
+  /** Ad Manager: receita ÷ cliques no anúncio. */
+  cpcAdx: number | null;
+  /** RPS = receita ÷ sessões · RPM de Sessão = receita ÷ sessões × 1000. */
+  sessionRpm: number | null;
 }
-interface Sums { spend: number; gs: number; ms: number; iva: number; rev: number; gross: number; un: number; sess: number; ai: number; ar: number; rsv: number; ac: number; vw: number; clk: number; ti: number; n: number; meta_ti: number; meta_clk: number }
+interface Sums { spend: number; gs: number; ms: number; iva: number; rev: number; gross: number; un: number; sess: number; ai: number; ar: number; rsv: number; ac: number; vw: number; clk: number; ti: number; mi: number; mlc: number; mres: number; mlead: number; n: number }
 
 const n = (v: unknown) => (v == null ? 0 : Number(v));
 const div = (a: number, b: number, k = 1) => (b ? (a / b) * k : null);
 
 /** Mesmas fórmulas do front (docs/API.md). */
 export function toMetrics(r?: Partial<Sums> | null): Metrics {
-  const s: Sums = { spend: n(r?.spend), gs: n(r?.gs), ms: n(r?.ms), iva: n(r?.iva), rev: n(r?.rev), gross: n(r?.gross), un: n(r?.un), sess: n(r?.sess), ai: n(r?.ai), ar: n(r?.ar), rsv: n(r?.rsv), ac: n(r?.ac), vw: n(r?.vw), clk: n(r?.clk), ti: n(r?.ti), n: n(r?.n), meta_ti: n(r?.meta_ti), meta_clk: n(r?.meta_clk) };
+  const s: Sums = { spend: n(r?.spend), gs: n(r?.gs), ms: n(r?.ms), iva: n(r?.iva), rev: n(r?.rev), gross: n(r?.gross), un: n(r?.un), sess: n(r?.sess), ai: n(r?.ai), ar: n(r?.ar), rsv: n(r?.rsv), ac: n(r?.ac), vw: n(r?.vw), clk: n(r?.clk), ti: n(r?.ti), mi: n(r?.mi), mlc: n(r?.mlc), mres: n(r?.mres), mlead: n(r?.mlead), n: n(r?.n) };
   const profit = s.rev - s.spend;
   const att = s.rev - s.un;
   return {
     revenue: s.rev, grossRevenue: s.gross,
     spend: s.spend, googleSpend: s.gs, metaSpend: s.ms, iva: s.iva, googleShare: s.spend > 0 ? div(s.gs, s.spend, 100) : null, metaShare: s.spend > 0 ? div(s.ms, s.spend, 100) : null,
     profit, roi: s.spend > 0 ? (profit / s.spend) * 100 : null, margin: s.rev > 0 ? (profit / s.rev) * 100 : null,
-    rps: div(s.rev, s.sess, 1000), ecpm: div(s.rev, s.ai, 1000),
+    rps: div(s.rev, s.sess), sessionRpm: div(s.rev, s.sess, 1000), ecpm: div(s.rev, s.ai, 1000), cpcAdx: div(s.rev, s.ac),
     impressions: s.ai, adRequests: s.ar, responsesServed: s.rsv, dropOffRate: s.rsv ? ((s.rsv - s.ai) / s.rsv) * 100 : null, fillRate: div(s.ai, s.ar, 100),
     ctr: div(s.ac, s.ai, 100), adClicks: s.ac, viewability: div(s.vw, s.ai, 100), sessions: s.sess,
     trafficClicks: s.clk, trafficImpressions: s.ti, trafficCtr: div(s.clk, s.ti, 100), cpc: div(s.spend, s.clk),
     attributedRevenue: att, unattributedRevenue: s.un, attributionRate: div(att, s.rev, 100),
-    metaImpressions: s.meta_ti, metaClicks: s.meta_clk, metaCpc: div(s.ms, s.meta_clk), adCpc: div(s.rev, s.ac),
+    metaImpressions: s.mi, metaLinkClicks: s.mlc, cpcLink: div(s.ms, s.mlc), metaResults: s.mres, cpr: div(s.ms, s.mres), metaLeads: s.mlead, cpl: div(s.ms, s.mlead),
   };
 }
 
@@ -82,8 +87,8 @@ export async function aggregate(o: AggOpts): Promise<Map<string, Metrics>> {
       SUM(CASE WHEN m.platform = 'none' THEN m.revenue_usd * (1 - rs.share) * r.fr ELSE 0 END) AS un,
       SUM(m.sessions) AS sess, SUM(m.impressions) AS ai, SUM(m.ad_requests) AS ar, SUM(m.responses_served) AS rsv,
       SUM(m.ad_clicks) AS ac, SUM(m.viewable) AS vw, SUM(m.traffic_clicks) AS clk, SUM(m.traffic_impressions) AS ti,
-      SUM(CASE WHEN m.platform = 'meta' THEN m.traffic_impressions ELSE 0 END) AS meta_ti,
-      SUM(CASE WHEN m.platform = 'meta' THEN m.traffic_clicks ELSE 0 END) AS meta_clk,
+      SUM(CASE WHEN m.platform = 'meta' THEN m.traffic_impressions ELSE 0 END) AS mi,
+      SUM(m.meta_link_clicks) AS mlc, SUM(m.meta_results) AS mres, SUM(m.meta_leads) AS mlead,
       COUNT(*) AS n
     FROM daily_metrics m
     LEFT JOIN currency_rates fx ON fx.currency = $1 AND fx.date = m.date

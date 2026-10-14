@@ -9,7 +9,7 @@ const GROUPS: [string, [string, 'GAM' | 'Pluto' | 'GAM + atribuição' | 'a defi
   ['Delivery', [['Ad Requests', 'GAM'], ['Matched Requests', 'GAM'], ['Responses served (Total code served)', 'GAM'], ['Impressions', 'GAM'], ['Unfilled Impressions', 'GAM'], ['Fill Rate', 'Pluto'], ['Drop-off = (Responses served − Impressions) / Responses served', 'Pluto']]],
   ['Performance', [['Clicks', 'GAM'], ['CTR', 'GAM'], ['eCPM / CPM', 'GAM'], ['Active View measurable / viewable', 'GAM'], ['Active View viewable %', 'GAM']]],
   ['Dimensões', [['Date · Domain · Country · Device', 'GAM'], ['Ad Unit · Placement', 'GAM'], ['Custom targeting (key-values)', 'GAM'], ['URL / landing page', 'GAM + atribuição']]],
-  ['Derivadas', [['Sessions', 'Pluto'], ['RPS = Revenue / Sessions × 1000', 'Pluto'], ['Profit, ROI, Margem', 'Pluto'], ['PMR', 'a definir']]],
+  ['Derivadas', [['Sessões', 'Pluto'], ['RPS = Receita ÷ Sessões · RPM de Sessão = RPS × 1000', 'Pluto'], ['ROI, ROI %, Margem', 'Pluto'], ['PMR', 'a definir']]],
 ];
 const STEPS = ['Conectar', 'Login Google', 'OAuth', 'Autorizar a conta com acesso ao GAM', 'Rede identificada', 'Sincroniza dados'];
 

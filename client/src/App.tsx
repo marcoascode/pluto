@@ -26,6 +26,8 @@ const UsersSquads = lazy(() => import('@/pages/admin/UsersSquads'));
 const IntegrationGoogle = lazy(() => import('@/pages/admin/IntegrationGoogle'));
 const IntegrationMeta = lazy(() => import('@/pages/admin/IntegrationMeta'));
 const IntegrationGam = lazy(() => import('@/pages/admin/IntegrationGam'));
+const FinanceCash = lazy(() => import('@/pages/finance/Cash'));
+const FinanceCosts = lazy(() => import('@/pages/finance/Costs'));
 
 /** Esconde as telas de admin do Gestor. O servidor também responde 403 em /admin/*. */
 function RequireAdmin({ children }: { children: ReactNode }) {
@@ -37,7 +39,13 @@ function RequireCap({ cap, children }: { cap: Capability; children: ReactNode })
   const { can } = useAuth();
   return can(cap) ? <>{children}</> : <NoAccess msg="Este módulo não está liberado para o seu usuário." />;
 }
+/** Finance: Admin/SuperAdmin e sócios das Empresas. O servidor também responde 403. */
+function RequireFinance({ children }: { children: ReactNode }) {
+  const { canFinance } = useAuth();
+  return canFinance ? <>{children}</> : <NoAccess msg="O Finance é só para Admin e sócios das Empresas." />;
+}
 const S = (el: ReactNode) => <Suspense fallback={<PageSkeleton />}>{el}</Suspense>;
+const F = (el: ReactNode) => S(<RequireFinance>{el}</RequireFinance>);
 const C = (cap: Capability, el: ReactNode) => S(<RequireCap cap={cap}>{el}</RequireCap>);
 const A = (el: ReactNode) => S(<RequireAdmin>{el}</RequireAdmin>);
 
@@ -58,6 +66,11 @@ export default function App() {
         <Route path="ad-manager" element={C('gam.view', <AdManager />)} />
         <Route path="atribuicao" element={C('attribution.view', <AttributionHealth />)} />
         <Route path="utm-debugger" element={C('utm.debug', <UtmDebugger />)} />
+        <Route path="finance">
+          <Route index element={<Navigate to="caixa" replace />} />
+          <Route path="caixa" element={F(<FinanceCash />)} />
+          <Route path="custos" element={F(<FinanceCosts />)} />
+        </Route>
         <Route path="admin">
           <Route path="contas" element={A(<Accounts />)} />
           <Route path="dominios" element={A(<AdminDomains />)} />

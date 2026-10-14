@@ -27,16 +27,16 @@ export function KpiRow({ m, cmp, split = true }: { m: Metrics; cmp: Comparison |
   );
   return (
     <Grid container spacing={{ xs: 1.25, md: 1.75 }}>
-      {card('Revenue', money(m.revenue, currency), <Delta cur={m.revenue} prev={prev?.revenue} title={title} />, { bg: glow('rgba(61,143,236,.22)'), first: true })}
-      {card('Spend', money(m.spend, currency), <Delta cur={m.spend} prev={prev?.spend} neutral title={title} />, {
+      {card('Receita', money(m.revenue, currency), <Delta cur={m.revenue} prev={prev?.revenue} title={title} />, { bg: glow('rgba(61,143,236,.22)'), first: true })}
+      {card('Despesas', money(m.spend, currency), <Delta cur={m.spend} prev={prev?.spend} neutral title={title} />, {
         extra: split && m.spend > 0 && (
           <Box sx={{ mt: 0.5 }}>
             <Typography variant="caption">Google <b style={{ color: p.fg2 }}>{money(m.googleSpend, currency, 0)}</b> · Meta <b style={{ color: p.fg2 }}>{money(m.metaSpend, currency, 0)}</b> · IVA <b style={{ color: p.fg2 }}>{money(m.iva, currency, 0)}</b></Typography>
             <Tooltip title={`Google ${pct0(gp)} · Meta ${pct0(mp)} · IVA ${pct0(ip)} (13,83% sobre a Meta)`}><Stack direction="row" spacing={0.25} sx={{ height: 5, mt: 0.75, borderRadius: 1, overflow: 'hidden' }}><Box sx={{ width: `${gp}%`, bgcolor: p.rev }} /><Box sx={{ width: `${mp}%`, bgcolor: p.spend }} /><Box sx={{ flex: 1, bgcolor: p.warn }} /></Stack></Tooltip>
           </Box>),
       })}
-      {card('Profit', money(m.profit, currency), <Delta cur={m.profit} prev={prev?.profit} title={title} />, { bg: glow(m.profit < 0 ? 'rgba(255,107,122,.16)' : 'rgba(52,211,153,.16)'), color: m.profit > 0 ? p.pos : m.profit < 0 ? p.neg : undefined })}
-      {card('ROI', pct(m.roi), <Delta cur={m.roi} prev={prev?.roi} pp title={title} />, { color: roiCol.text })}
+      {card('ROI', money(m.profit, currency), <Delta cur={m.profit} prev={prev?.profit} title={title} />, { bg: glow(m.profit < 0 ? 'rgba(255,107,122,.16)' : 'rgba(52,211,153,.16)'), color: m.profit > 0 ? p.pos : m.profit < 0 ? p.neg : undefined })}
+      {card('ROI %', pct(m.roi), <Delta cur={m.roi} prev={prev?.roi} pp title={title} />, { color: roiCol.text })}
       {card('Margem', pct(m.margin), <Delta cur={m.margin} prev={prev?.margin} pp title={title} />)}
     </Grid>
   );

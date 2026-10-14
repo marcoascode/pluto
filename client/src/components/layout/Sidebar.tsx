@@ -9,16 +9,19 @@ import { usePrefs } from '@/context/PrefsContext';
 import { initials } from '@/lib/format';
 import { ROLE_LABEL } from '@/lib/roles';
 import { Logo } from '@/components/ui/Logo';
-import { NAV_ADMIN, NAV_MAIN, isActive, type NavItem } from './nav';
+import { NAV_ADMIN, NAV_FINANCE, NAV_MAIN, isActive, type NavItem } from './nav';
+import SavingsOutlinedIcon from '@mui/icons-material/SavingsOutlined';
 
 const Head = ({ children, mini }: { children: string; mini: boolean }) => (mini ? null : <ListSubheader disableSticky sx={{ bgcolor: 'transparent', lineHeight: '28px', mt: 1.5, fontSize: 10.5, letterSpacing: '.09em', textTransform: 'uppercase', fontWeight: 600, color: 'text.disabled', px: 1.25 }}>{children}</ListSubheader>);
 
 export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () => void }) {
   const { pathname } = useLocation();
-  const { user, isAdmin, can } = useAuth();
+  const { user, isAdmin, canFinance, can } = useAuth();
   const { prefs, update } = usePrefs();
   const [adminOpen, setAdminOpen] = useState(true);
   const open = adminOpen || pathname.startsWith('/admin');
+  const [finOpen, setFinOpen] = useState(() => pathname.startsWith('/finance'));
+  const fin = finOpen || pathname.startsWith('/finance');
   const item = (it: NavItem) => (
     <Tooltip key={it.to} title={mini ? it.label : ''} placement="right">
       <ListItemButton component={NavLink} to={it.to} selected={isActive(pathname, it.to)} onClick={onNavigate} sx={{ mb: 0.25, justifyContent: mini ? 'center' : 'flex-start' }}>
@@ -34,6 +37,20 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
       </Stack>
       <List sx={{ flex: 1, overflowY: 'auto', px: 1.25, pt: 0 }}>
         {NAV_MAIN.map((g) => ({ ...g, items: g.items.filter((it) => !it.cap || can(it.cap)) })).filter((g) => g.items.length).map((g, i) => <Box key={i}>{g.title && <Head mini={mini}>{g.title}</Head>}{g.items.map(item)}</Box>)}
+        {/* Finance: clica e abre Caixa Empresa e Custos */}
+        {canFinance && (
+          <>
+            <Head mini={mini}>Finance</Head>
+            <Tooltip title={mini ? 'Finance' : ''} placement="right">
+              <ListItemButton onClick={() => setFinOpen(!fin)} aria-expanded={fin} selected={!fin && pathname.startsWith('/finance')} sx={{ mb: 0.25, justifyContent: mini ? 'center' : 'flex-start' }}>
+                <ListItemIcon><SavingsOutlinedIcon /></ListItemIcon>
+                {!mini && <ListItemText primary="Finance" slotProps={{ primary: { sx: { fontSize: 13.5 } } }} />}
+                {!mini && <ExpandMoreRoundedIcon fontSize="small" sx={{ transform: fin ? 'none' : 'rotate(-90deg)', transition: '.15s', color: 'text.disabled' }} />}
+              </ListItemButton>
+            </Tooltip>
+            <Collapse in={fin}><Box sx={{ pl: mini ? 0 : 1.5 }}>{NAV_FINANCE.map(item)}</Box></Collapse>
+          </>
+        )}
         {isAdmin && (
           <>
             <ListItemButton onClick={() => setAdminOpen(!open)} sx={{ mt: 1.5, justifyContent: mini ? 'center' : 'space-between' }} aria-expanded={open}>

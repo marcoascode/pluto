@@ -15,10 +15,10 @@ import type { JobResult } from './index.js';
 function rollupSql(level: 'ad' | 'group', tmp: string) {
   const col = level === 'ad' ? 'ad_id' : 'ad_group_id';
   const keep = level === 'ad' ? 'ad_group_id, NULL::bigint' : 'NULL::bigint, NULL::bigint';
-  const groupCols = `source, date, domain_id, url_id, platform, campaign_id, ${level === 'ad' ? 'ad_group_id, ' : ''}country, unattributed_reason`;
+  const groupCols = `source, date, domain_id, url_id, platform, campaign_id, ${level === 'ad' ? 'ad_group_id, ' : ''}country, unattributed_reason, utm_source`;
   return [
-    `INSERT INTO daily_metrics (source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, ${SUMS.join(', ')}, sessions, is_final, updated_at)
-     SELECT source, date, domain_id, url_id, platform, campaign_id, ${keep}, country, unattributed_reason, ${SUMS.map((c) => `SUM(${c})`).join(', ')}, SUM(sessions)::int, bool_and(is_final), now()
+    `INSERT INTO daily_metrics (source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source, ${SUMS.join(', ')}, sessions, is_final, updated_at)
+     SELECT source, date, domain_id, url_id, platform, campaign_id, ${keep}, country, unattributed_reason, utm_source, ${SUMS.map((c) => `SUM(${c})`).join(', ')}, SUM(sessions)::int, bool_and(is_final), now()
        FROM daily_metrics WHERE ${col} IN (SELECT id FROM ${tmp})
       GROUP BY ${groupCols}
      ON CONFLICT ${GRAIN_CONFLICT} DO UPDATE SET ${[...SUMS, 'sessions'].map((c) => `${c} = daily_metrics.${c} + EXCLUDED.${c}`).join(', ')}, updated_at = now()`,

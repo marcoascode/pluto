@@ -34,7 +34,8 @@ export interface Metrics {
   profit: number;
   roi: number | null; // Profit / Spend × 100
   margin: number | null; // Profit / Revenue × 100
-  rps: number | null; // Revenue / Sessions × 1000
+  rps: number | null; // Receita / Sessões
+  sessionRpm: number | null; // RPM de Sessão = Receita / Sessões × 1000
   ecpm: number | null;
   impressions: number; // impressões de anúncio (GAM)
   adRequests: number;
@@ -52,6 +53,15 @@ export interface Metrics {
   attributedRevenue: number;
   unattributedRevenue: number;
   attributionRate: number | null;
+  cpcAdx: number | null; // Receita / cliques ADX
+  // Meta Ads (actions): impressões, cliques no link, conversas iniciadas, leads e custo por ação (custo Meta sem IVA ÷ ação)
+  metaImpressions: number;
+  metaLinkClicks: number;
+  cpcLink: number | null;
+  metaResults: number;
+  cpr: number | null;
+  metaLeads: number;
+  cpl: number | null;
 }
 
 export interface DailyPoint {
@@ -270,8 +280,12 @@ export interface UrlRow {
   path: string;
   metrics: Metrics;
 }
+/** Origem da receita (utm_source): Google Ads / Meta Ads (campanha atribuída), retenção manual (push, whatsapp…) ou Sem origem. */
+export interface UrlOrigin { key: string; label: string; kind: 'google' | 'meta' | 'retention' | 'none'; metrics: Metrics }
 export interface UrlsResponse {
   urls: UrlRow[];
+  origins: UrlOrigin[];
+  origin: string | null; // filtro aplicado (?origin=)
 }
 export interface GamSummaryResponse {
   network: { name: string; code: string; currency: Currency };
@@ -481,3 +495,44 @@ export interface SearchResult {
 export interface ApiErrorBody {
   error: { code: string; message: string };
 }
+
+/* ---------- Finance (Caixa Empresa e Custos) ---------- */
+export type CostCategory = 'tools' | 'domains' | 'hosting' | 'team' | 'taxes' | 'services' | 'other';
+export interface FinanceCompany { id: string; name: string }
+export interface MonthClose {
+  month: string; // YYYY-MM
+  partial: boolean; // mês atual
+  revenue: number; googleSpend: number; metaSpend: number; iva: number;
+  adSpend: number; // Google + Meta + IVA
+  costs: number; // custos lançados que valem no mês
+  costsByCategory: Partial<Record<CostCategory, number>>;
+  result: number; // receita − anúncios − custos
+  margin: number | null;
+  companies: { companyId: string; revenue: number; adSpend: number; costs: number; result: number }[];
+}
+export interface CashEntry { id: string; date: string; kind: 'balance' | 'deposit' | 'withdrawal'; amount: number; currency: Currency; converted: number; note: string | null; createdBy: string | null }
+export interface CashCompany {
+  companyId: string; companyName: string;
+  anchor: { date: string; amount: number } | null;
+  resultSince: number; costsSince: number; deposits: number; withdrawals: number;
+  balance: number | null;
+  entries: CashEntry[];
+}
+export interface FinanceOverview {
+  currency: Currency; from: string; to: string; companies: FinanceCompany[]; selected: string | null;
+  cash: { total: number | null; companies: CashCompany[] };
+  months: MonthClose[];
+  totals: { revenue: number; googleSpend: number; metaSpend: number; iva: number; adSpend: number; costs: number; result: number; margin: number | null };
+  outside: { revenue: number; adSpend: number } | null; // Admin: domínios fora das Empresas
+}
+export interface FinanceCost {
+  id: string; companyId: string; companyName: string; name: string; category: CostCategory; amount: number; currency: Currency;
+  recurrence: 'monthly' | 'once'; startMonth: string; endMonth: string | null; payDay: number; notes: string | null;
+  appliesInMonth?: boolean; monthAmount?: number;
+}
+export type FinanceCostInput = Omit<FinanceCost, 'id' | 'companyName' | 'appliesInMonth' | 'monthAmount'>;
+export interface FinanceCostsResponse {
+  currency: Currency; month: string; companies: FinanceCompany[]; costs: FinanceCost[];
+  totals: { month: number; recurring: number; once: number; byCategory: Partial<Record<CostCategory, number>> };
+}
+export interface CashInput { companyId: string; date: string; kind: CashEntry['kind']; amount: number; currency: Currency; note?: string | null }

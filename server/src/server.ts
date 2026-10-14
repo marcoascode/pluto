@@ -14,6 +14,7 @@ import { requireAuth } from './auth/session.js';
 import { authRouter } from './routes/auth.js';
 import { meRouter } from './routes/me.js';
 import { metricsRouter } from './routes/metrics.js';
+import { financeRouter } from './routes/finance.js';
 import { placementsRouter } from './routes/placements.js';
 import { companiesReadRouter } from './routes/companies.js';
 import { adminRouter } from './routes/admin/index.js';
@@ -49,6 +50,7 @@ export function createApp() {
   app.use('/admin', adminRouter);
   app.use(companiesReadRouter);
   app.use('/placements', placementsRouter);
+  app.use('/finance', financeRouter);
   app.use(metricsRouter);
 
   app.use(notFoundHandler);

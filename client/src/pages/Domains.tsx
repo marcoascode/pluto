@@ -19,12 +19,12 @@ export default function DomainsPage() {
       <Grid container spacing={1.75}>{list.map((d, i) => <Grid key={d.domain} size={{ xs: 12, sm: 6, lg: 4 }}><DomainCard d={d} rank={i + 1} rankLabel="lucro" /></Grid>)}</Grid>
       <TableContainer component={Card} sx={{ mt: 1.75 }}>
         <Table>
-          <TableHead><TableRow><TableCell>Domínio</TableCell>{['Revenue', 'Spend', 'Profit', 'ROI', 'Margem', 'RPS', 'eCPM', 'Sessões', 'Atribuição'].map((h) => <TableCell key={h} align="right">{h}</TableCell>)}</TableRow></TableHead>
+          <TableHead><TableRow><TableCell>Domínio</TableCell>{['Receita', 'Despesas', 'ROI', 'ROI %', 'Margem', 'RPM Sessão', 'eCPM', 'Sessões', 'Atribuição'].map((h) => <TableCell key={h} align="right">{h}</TableCell>)}</TableRow></TableHead>
           <TableBody>{list.map(({ domain, metrics: m }) => (
             <TableRow key={domain}>
               <TableCell><Link component={RouterLink} to={`/dominios/${encodeURIComponent(domain)}`} color="inherit" underline="hover" sx={{ fontWeight: 600 }}>{domainLabel(domain)}</Link></TableCell>
               <TableCell align="right"><Money v={m.revenue} /></TableCell><TableCell align="right"><Money v={m.spend} /></TableCell><TableCell align="right"><Profit v={m.profit} /></TableCell>
-              <TableCell align="right"><RoiChip v={m.roi} /></TableCell><TableCell align="right">{pct(m.margin)}</TableCell><TableCell align="right"><Money v={m.rps} /></TableCell>
+              <TableCell align="right"><RoiChip v={m.roi} /></TableCell><TableCell align="right">{pct(m.margin)}</TableCell><TableCell align="right"><Money v={m.sessionRpm} /></TableCell>
               <TableCell align="right"><Money v={m.ecpm} /></TableCell><TableCell align="right">{int(m.sessions)}</TableCell><TableCell align="right">{pct(m.attributionRate)}</TableCell>
             </TableRow>
           ))}</TableBody>

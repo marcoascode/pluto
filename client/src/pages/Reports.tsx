@@ -5,28 +5,16 @@ import { useFilters } from '@/context/FiltersContext';
 import { useDailyReport, useMonthlyReport } from '@/hooks/queries';
 import { MetricPicker, usePicked } from '@/components/ui/MetricPicker';
 import { ErrorBox, PageHead } from '@/components/ui/States';
-import { MetricValue, Money } from '@/components/ui/Values';
+import { BlockHeaderRow, blockStarts } from '@/components/ui/MetricBlocks';
+import { MetricValue, Money, Profit, RoiText0 } from '@/components/ui/Values';
 import { pct0 } from '@/lib/format';
 import { marginClass, METRIC_DEFS, metricValue, type MetricKey } from '@/lib/metrics';
 import { lastMonths, monthLabel } from '@/lib/period';
 import type { Metrics, ReportRow } from '@/types/api';
 
 const REPORT_MONTHS = 14;
-
-// Atualizado: Profit removido. roiMonetary e revenue formam a barra.
-const BAR = new Set<string>(['spend', 'revenue', 'googleSpend', 'metaSpend', 'iva', 'roiMonetary']);
-
-const BLOCKS_MANDATORY = {
-  resultado: ['revenue', 'spend', 'iva', 'roiMonetary'],
-  despesas: ['metaSpend', 'googleSpend'],
-  receita: [],
-};
-
-const BLOCKS_OPTIONAL = {
-  resultado: ['roi', 'margin', 'unattributedRevenue', 'attributionRate'],
-  despesas: ['googleShare', 'metaShare', 'metaImpressions', 'metaClicks', 'metaCpc'],
-  receita: ['impressions', 'adClicks', 'adCpc', 'ctr', 'ecpm', 'sessions', 'rps', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate'],
-};
+/** Colunas de dinheiro que ganham a barrinha proporcional ao maior valor da tabela. */
+const BAR = new Set<MetricKey>(['spend', 'revenue', 'profit', 'googleSpend', 'metaSpend', 'iva', 'unattributedRevenue']);
 
 const dayLabel = (iso: string) => iso.split('-').reverse().join('/');
 const monthTitle = (ym: string) => monthLabel(ym).replace(/^./, (c) => c.toUpperCase());
@@ -41,68 +29,30 @@ function Bar({ v, max, neg }: { v: number | null; max: number; neg?: boolean }) 
   );
 }
 
-function ReportCell({ k, m, max, bold }: { k: MetricKey; m: Metrics; max?: number; bold?: boolean }) {
+/** Uma célula do relatório: Margem com fundo colorido, ROI colorido, % de custo apagado, dinheiro com barra. */
+function ReportCell({ k, m, max, bold, edge }: { k: MetricKey; m: Metrics; max?: number; bold?: boolean; edge?: boolean }) {
   const { pluto: p } = useTheme();
-  
-  let v = metricValue(m, undefined, k as MetricKey);
-  const keyStr = k as string; 
-
-  // Cálculos dinâmicos
-  if (keyStr === 'ecpm') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const imp = metricValue(m, undefined, 'impressions' as MetricKey) ?? 0;
-    v = imp > 0 ? (rev / imp) * 1000 : 0;
-  }
-  
-  if (keyStr === 'metaCpc') {
-    const metaSpend = metricValue(m, undefined, 'metaSpend' as MetricKey) ?? 0;
-    const metaClicks = metricValue(m, undefined, 'metaClicks' as MetricKey) ?? 0;
-    v = metaClicks > 0 ? metaSpend / metaClicks : 0;
-  }
-
-  if (keyStr === 'adCpc' || keyStr === 'cpc') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const clicks = metricValue(m, undefined, 'adClicks' as MetricKey) ?? 0;
-    v = clicks > 0 ? rev / clicks : 0;
-  }
-
-  if (keyStr === 'rps') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const sessions = metricValue(m, undefined, 'sessions' as MetricKey) ?? 0;
-    v = sessions > 0 ? (rev / sessions) * 1000 : 0;
-  }
-
-  if (keyStr === 'roi') {
-    const rev = metricValue(m, undefined, 'revenue' as MetricKey) ?? 0;
-    const sp = metricValue(m, undefined, 'spend' as MetricKey) ?? 0;
-    v = sp > 0 ? ((rev - sp) / sp) * 100 : 0; 
-  }
-
-  if (keyStr === 'margin' || keyStr === 'roi') {
+  const v = metricValue(m, undefined, k);
+  const e = edge ? { borderLeft: `1px solid ${p.line2}` } : {};
+  if (k === 'margin') {
     const c = marginClass(v);
     const tone = { neg: [p.neg, 0.28, '#ffc2c9'], lo: [p.neg, 0.13, '#ff9aa5'], mid: [p.warn, 0.15, p.warn], hi: [p.pos, 0.15, p.pos], na: [p.na, 0, p.fg] }[c] as [string, number, string];
-    return <TableCell align="right" sx={{ boxShadow: keyStr === 'margin' ? `inset 0 0 0 999px ${alpha(tone[0], tone[1])}` : 'none', color: tone[2], fontWeight: 600 }}>{pct0(v)}</TableCell>;
+    return <TableCell align="right" sx={{ boxShadow: `inset 0 0 0 999px ${alpha(tone[0], tone[1])}`, color: tone[2], fontWeight: 600, ...e }}>{pct0(v)}</TableCell>;
   }
-
-  if (keyStr === 'roiMonetary') {
-      const roiVal = v != null ? <Money v={v} /> : '—';
-      return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined, color: (v ?? 0) < 0 ? p.neg : p.pos }}>{roiVal}</TableCell>;
-  }
-
-  if (keyStr === 'metaShare' || keyStr === 'googleShare') return <TableCell align="right" sx={{ color: bold ? 'text.primary' : p.muted, fontWeight: bold ? 600 : undefined }}>{pct0(v)}</TableCell>;
-  
-  if (BAR.has(keyStr)) {
-    const val = <Money v={v} />;
+  if (k === 'roi') return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined, ...e }}><RoiText0 v={v} /></TableCell>;
+  if (k === 'metaShare' || k === 'googleShare') return <TableCell align="right" sx={{ color: bold ? 'text.primary' : p.muted, fontWeight: bold ? 600 : undefined, ...e }}>{pct0(v)}</TableCell>;
+  if (BAR.has(k)) {
+    const val = k === 'profit' ? <Profit v={v} /> : <Money v={v} />;
     return (
-      <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}>
-        {max == null ? val : <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }}><span>{val}</span><Bar v={v} max={max} neg={(keyStr === 'roiMonetary') && (v ?? 0) < 0} /></Stack>}
+      <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined, ...e }}>
+        {max == null ? val : <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }}><span>{val}</span><Bar v={v} max={max} neg={k === 'profit' && (v ?? 0) < 0} /></Stack>}
       </TableCell>
     );
   }
-  return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined }}><MetricValue k={k as MetricKey} v={v} /></TableCell>;
+  return <TableCell align="right" sx={{ fontWeight: bold ? 600 : undefined, ...e }}><MetricValue k={k} v={v} /></TableCell>;
 }
 
-type SortKey = 'key' | string;
+type SortKey = 'key' | MetricKey;
 interface TableProps {
   first: string;
   rows: ReportRow[];
@@ -112,70 +62,32 @@ interface TableProps {
   ms: MetricKey[];
   onRowClick?: (key: string) => void;
 }
-
 function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: TableProps) {
   const { pluto: p } = useTheme();
   const [sort, setSort] = useState<{ k: SortKey; d: 'asc' | 'desc' }>({ k: 'key', d: 'desc' });
-
-  const activeResultado = useMemo(() => [
-    ...BLOCKS_MANDATORY.resultado,
-    ...BLOCKS_OPTIONAL.resultado.filter(k => ms.includes(k as MetricKey))
-  ] as string[], [ms]);
-
-  const activeDespesas = useMemo(() => [
-    ...BLOCKS_MANDATORY.despesas,
-    ...BLOCKS_OPTIONAL.despesas.filter(k => ms.includes(k as MetricKey))
-  ] as string[], [ms]);
-
-  const activeReceita = useMemo(() => [
-    ...BLOCKS_MANDATORY.receita,
-    ...BLOCKS_OPTIONAL.receita.filter(k => ms.includes(k as MetricKey))
-  ] as string[], [ms]);
-
-  const allMs = useMemo(() => [
-    ...activeResultado, 
-    ...activeDespesas, 
-    ...activeReceita
-  ], [activeResultado, activeDespesas, activeReceita]);
-
   const list = useMemo(() => rows.slice().sort((a, b) => {
     const dir = sort.d === 'asc' ? 1 : -1;
     if (sort.k === 'key') return a.key.localeCompare(b.key) * dir;
-    return ((metricValue(a.metrics, undefined, sort.k as MetricKey) ?? -Infinity) - (metricValue(b.metrics, undefined, sort.k as MetricKey) ?? -Infinity)) * dir;
+    return ((metricValue(a.metrics, undefined, sort.k) ?? -Infinity) - (metricValue(b.metrics, undefined, sort.k) ?? -Infinity)) * dir;
   }), [rows, sort]);
-
-  const max = useMemo(() => Object.fromEntries(
-      allMs.filter((k) => BAR.has(k)).map((k) => [k, Math.max(0, ...rows.map((r) => Math.abs(metricValue(r.metrics, undefined, k as MetricKey) ?? 0)))]))
-  , [rows, allMs]);
-
+  const max = useMemo(() => Object.fromEntries(ms.filter((k) => BAR.has(k)).map((k) => [k, Math.max(0, ...rows.map((r) => Math.abs(metricValue(r.metrics, undefined, k) ?? 0)))])), [rows, ms]);
+  const starts = useMemo(() => blockStarts(ms), [ms]);
   const head = (k: SortKey, l: string) => (
-    <TableCell key={k} align={k === 'key' ? 'left' : 'right'} sx={k === 'key' ? { position: 'sticky', left: 0, zIndex: 3 } : undefined}>
+    <TableCell key={k} align={k === 'key' ? 'left' : 'right'} rowSpan={k === 'key' ? 2 : undefined}
+      sx={k === 'key' ? { position: 'sticky', left: 0, zIndex: 3, verticalAlign: 'bottom' } : starts.has(k) ? { borderLeft: `1px solid ${p.line2}` } : undefined}>
       <TableSortLabel active={sort.k === k} direction={sort.k === k ? sort.d : 'desc'} onClick={() => setSort({ k, d: sort.k === k && sort.d === 'desc' ? 'asc' : 'desc' })}>{l}</TableSortLabel>
     </TableCell>
   );
-
   const firstCell = { position: 'sticky', left: 0, zIndex: 1, bgcolor: p.panel, boxShadow: `inset -1px 0 0 ${p.line}` } as const;
-  const blockHeadStyle = { bgcolor: p.panel2, borderBottom: `1px solid ${p.line2}`, borderRight: `1px solid ${p.line}`, fontWeight: 600, px: 1, py: 0.5 };
-
   return (
     <TableContainer>
       <Table size="small" sx={{ '& td, & th': { px: 1.1, py: 1.1 } }}>
-        <TableHead>
-          <TableRow>
-            <TableCell sx={{ position: 'sticky', left: 0, zIndex: 4, bgcolor: p.panel, borderBottom: 'none' }}></TableCell>
-            {activeResultado.length > 0 && <TableCell colSpan={activeResultado.length} align="center" sx={blockHeadStyle}>Bloco 1: Resultado</TableCell>}
-            {activeDespesas.length > 0 && <TableCell colSpan={activeDespesas.length} align="center" sx={blockHeadStyle}>Bloco 2: Despesas (Ads)</TableCell>}
-            {activeReceita.length > 0 && <TableCell colSpan={activeReceita.length} align="center" sx={{ ...blockHeadStyle, borderRight: 'none' }}>Bloco 3: Receita (AD Manager)</TableCell>}
-          </TableRow>
-          <TableRow>
-            {head('key', first)}
-            {allMs.map((k) => head(k, METRIC_DEFS[k as MetricKey]?.label || k))}
-          </TableRow>
-        </TableHead>
+        {/* relatório misto: colunas em 3 blocos (Resultados · Despesas · Receitas) */}
+        <TableHead><BlockHeaderRow ms={ms} lead={head('key', first)} /><TableRow>{ms.map((k) => head(k, METRIC_DEFS[k].label))}</TableRow></TableHead>
         <TableBody>
           <TableRow sx={{ '& > td': { bgcolor: `${p.panel2} !important`, borderBottomColor: p.line2 } }}>
             <TableCell sx={{ ...firstCell, bgcolor: p.panel2, fontWeight: 600 }}>{totalLabel}</TableCell>
-            {allMs.map((k) => <ReportCell key={k} k={k as MetricKey} m={total} bold />)}
+            {ms.map((k) => <ReportCell key={k} k={k} m={total} bold edge={starts.has(k)} />)}
           </TableRow>
           {list.map((r) => (
             <TableRow key={r.key} hover={!!onRowClick} onClick={onRowClick ? () => onRowClick(r.key) : undefined} sx={{ cursor: onRowClick ? 'pointer' : undefined }}>
@@ -185,16 +97,17 @@ function ReportTable({ first, rows, total, totalLabel, label, ms, onRowClick }: 
                   {r.partial && <Chip size="small" label="parcial" title="Hoje e D-1 a D-3 podem sofrer ajustes" sx={{ height: 18, fontSize: 11, color: p.warn, bgcolor: alpha(p.warn, 0.15) }} />}
                 </Stack>
               </TableCell>
-              {allMs.map((k) => <ReportCell key={k} k={k as MetricKey} m={r.metrics} max={max[k]} />)}
+              {ms.map((k) => <ReportCell key={k} k={k} m={r.metrics} max={max[k]} edge={starts.has(k)} />)}
             </TableRow>
           ))}
-          {!list.length && <TableRow><TableCell colSpan={allMs.length + 1} align="center" sx={{ py: 4, color: 'text.disabled' }}>Sem dados.</TableCell></TableRow>}
+          {!list.length && <TableRow><TableCell colSpan={ms.length + 1} align="center" sx={{ py: 4, color: 'text.disabled' }}>Sem dados.</TableCell></TableRow>}
         </TableBody>
       </Table>
     </TableContainer>
   );
 }
 
+/** Relatórios: resultados por dia (mês escolhido) e por mês (últimos 14). Usa só Domínio e Moeda do topo. */
 export default function ReportsPage() {
   const f = useFilters();
   const months = useMemo(() => lastMonths(REPORT_MONTHS), []);
@@ -229,8 +142,9 @@ export default function ReportsPage() {
           : <ReportTable first="Mês" rows={monthly.data.months} total={monthly.data.total} totalLabel={`Total ${REPORT_MONTHS} meses`} label={monthTitle} ms={ms} onRowClick={goMonth} />}
       </Card>
       <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
-        Receita = receita bruta do Ad Manager · Despesas (Ads) = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o gasto da Meta ·
-        Meta % e Google % = participação na despesa · ROI monetário = Receita - Despesas · ROI % = ROI / Despesas · Drop-off = respostas servidas que não viraram impressão.
+        Receita = Ad Manager já sem a parte da Network (revShare do domínio) · Despesas = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o custo da Meta ·
+        ROI = Receita − Despesas · ROI % = ROI ÷ Despesas · Margem = ROI ÷ Receita · RNA = receita não atribuída · CPC-L, CPR e CPL = custo Meta (sem IVA) ÷ cliques no link, conversas iniciadas e leads ·
+        RPS = Receita ÷ Sessões · RPM de Sessão = RPS × 1000 · Drop-off = respostas servidas que não viraram impressão.
       </Typography>
     </>
   );

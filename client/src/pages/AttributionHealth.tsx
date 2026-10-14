@@ -51,7 +51,7 @@ export default function AttributionHealthPage() {
             sx={{ '& .MuiChartsAxis-tickLabel': { fill: p.muted }, '& .MuiChartsGrid-line': { stroke: p.line } }} />
         </CardContent></Card></Grid>
         <Grid size={{ xs: 12, md: 6 }}><TableContainer component={Card}><Table>
-          <TableHead><TableRow><TableCell>Domínio</TableCell><TableCell align="right">Revenue</TableCell><TableCell align="right">Não atribuída</TableCell><TableCell align="right">Rate</TableCell><TableCell>Status</TableCell></TableRow></TableHead>
+          <TableHead><TableRow><TableCell>Domínio</TableCell><TableCell align="right">Receita</TableCell><TableCell align="right">Não atribuída</TableCell><TableCell align="right">Rate</TableCell><TableCell>Status</TableCell></TableRow></TableHead>
           <TableBody>{data.domains.slice().sort((a, b) => (a.attributionRate ?? 0) - (b.attributionRate ?? 0)).map((d) => (
             <TableRow key={d.domain}><TableCell>{d.domain} {!d.registered && <Tag tone="warn">não cadastrado</Tag>}</TableCell><TableCell align="right"><Money v={d.revenue} /></TableCell><TableCell align="right" sx={{ color: 'warning.main' }}><Money v={d.unattributed} /></TableCell><TableCell align="right">{pct(d.attributionRate)}</TableCell><TableCell><Tag tone={tone(d.attributionRate ?? 0)}>{(d.attributionRate ?? 0) >= 95 ? 'OK' : (d.attributionRate ?? 0) >= 90 ? 'Atenção' : 'Verificar'}</Tag></TableCell></TableRow>
           ))}</TableBody>

@@ -5,8 +5,9 @@
 import { ApiError } from '@/lib/api/client';
 import type * as T from '@/types/api';
 import { addDays, lastMonths } from '@/lib/period';
-import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, TECH, type Row } from './db';
+import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, originOf, TECH, type Row } from './db';
 import { PL_LABEL, placementRows, typeOf, type PRow } from './placements';
+import { financeCosts, financeMutate, financeOverview } from './finance';
 
 /** Guarda sessão/preferências do mock. Se o navegador bloquear o storage (prévia com sandbox, aba anônima), fica em memória. */
 const MEM = new Map<string, string>();
@@ -157,6 +158,10 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path === '/auth/change-password') { u.password = b.newPassword; u.mustChangePassword = false; u.status = 'active'; return out(undefined); }
   if (path === '/me/preferences') { const k = 'pluto_mock_prefs_' + u.id; if (method === 'PUT') LS.set(k, b); return out(LS.get(k) ?? {}); }
 
+  /* ---- Finance ---- */
+  if (path === '/finance/overview') return out<T.FinanceOverview>(financeOverview(u, q));
+  if (path === '/finance/costs' && method === 'GET') return out<T.FinanceCostsResponse>(financeCosts(u, q));
+  if (path.startsWith('/finance/')) return out(financeMutate(u, method, path, b));
   if (path === '/me/domains') return out({ domains: [...allowed(u)].filter((d) => DOMAINS.find((x) => x.hostname === d && x.active)) });
   if (path === '/search') {
     const t = String(q.q || '').toLowerCase(); const al = allowed(u); const results: T.SearchResult[] = [];
@@ -252,7 +257,14 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     return out<T.PlacementsResponse>({ domain: dom, selection: { accounts: accs.length, accountsTotal: new Set(camps.map((c) => c.acc)).size, campaigns: use.length, campaignsTotal: inAcc.length },
       comparison: cmp, totals: agg(cur_, cur), totalsRoiDays: roiDays(rec, cur), groups });
   }
-  if (path === '/urls') { need(u, 'urls.view'); const rows = rowsFor(u, q, (r) => !!DOMAINS.find((d) => d.hostname === r.domain)); return out<T.UrlsResponse>({ urls: [...group(rows, (r) => r.domain + '|' + r.url)].map(([k, rs]) => { const [d, p] = k.split('|'); return { domain: d, path: p, metrics: agg(rs, cur) }; }) }); }
+  if (path === '/urls') {
+    need(u, 'urls.view'); const all = rowsFor(u, q, (r) => !!DOMAINS.find((d) => d.hostname === r.domain)); const origin = q.origin ? String(q.origin) : null;
+    const rows = origin ? all.filter((r) => originOf(r) === origin) : all;
+    const RANK = { google: 0, meta: 1, retention: 2, none: 3 } as const;
+    const origins = [...group(all, originOf)].map(([k, rs]) => ({ key: k, label: k === 'google' ? 'Google Ads' : k === 'meta' ? 'Meta Ads' : k === 'none' ? 'Sem origem' : k.slice(4), kind: (k.startsWith('utm:') ? 'retention' : k) as T.UrlOrigin['kind'], metrics: agg(rs, cur) }))
+      .sort((a, b) => RANK[a.kind] - RANK[b.kind] || b.metrics.revenue - a.metrics.revenue);
+    return out<T.UrlsResponse>({ urls: [...group(rows, (r) => r.domain + '|' + r.url)].map(([k, rs]) => { const [d, p] = k.split('|'); return { domain: d, path: p, metrics: agg(rs, cur) }; }), origins, origin });
+  }
   if (path.startsWith('/reports/')) need(u, 'reports.view');
   if (path === '/reports/daily') {
     const month = String(q.month || TODAY.slice(0, 7)); const dis = DATES.map((d, i) => [d, i] as const).filter(([d]) => d.startsWith(month)).map(([, i]) => i);

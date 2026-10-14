@@ -179,10 +179,10 @@ function EmptyState({ onPick }: { onPick: (d: string) => void }) {
 
 /* ---------------- resultados ---------------- */
 type Mode = 'all' | 'win' | 'loss';
-type CritKey = 'roi' | 'margin' | 'profit' | 'spend' | 'revenue' | 'rps' | 'sessions';
+type CritKey = 'roi' | 'margin' | 'profit' | 'spend' | 'revenue' | 'sessionRpm' | 'sessions';
 const CRIT: { k: CritKey; l: string; unit: '%' | '$' | '' }[] = [
-  { k: 'roi', l: 'ROI', unit: '%' }, { k: 'margin', l: 'Margem', unit: '%' }, { k: 'profit', l: 'Profit', unit: '$' }, { k: 'spend', l: 'Spend', unit: '$' },
-  { k: 'revenue', l: 'Revenue', unit: '$' }, { k: 'rps', l: 'RPS', unit: '$' }, { k: 'sessions', l: 'Sessions', unit: '' },
+  { k: 'roi', l: 'ROI %', unit: '%' }, { k: 'margin', l: 'Margem', unit: '%' }, { k: 'profit', l: 'ROI', unit: '$' }, { k: 'spend', l: 'Despesas', unit: '$' },
+  { k: 'revenue', l: 'Receita', unit: '$' }, { k: 'sessionRpm', l: 'RPM de Sessão', unit: '$' }, { k: 'sessions', l: 'Sessões', unit: '' },
 ];
 type Sort = { k: MetricKey | 'name'; d: 'asc' | 'desc' };
 const isWin = (m: Metrics) => m.profit > 0;
@@ -291,7 +291,7 @@ function Results({ data, sel }: { data: PlacementsResponse; sel: PlacementSel })
         </Grid>
       </Grid>
       <Typography variant="caption" component="div" sx={{ px: 2, py: 1.1, borderTop: 1, borderColor: 'divider' }}>
-        Spend do Google Ads por placement (Display, Demand Gen e YouTube; Pesquisa não tem placement e Performance Max não informa custo por placement). Revenue do Ad Manager pelo key-value <b>placement</b>, que o site recebe do <b>{'{placement}'}</b> na URL do anúncio.
+        Despesas do Google Ads por placement (Display, Demand Gen e YouTube; Pesquisa não tem placement e Performance Max não informa custo por placement). Receita do Ad Manager pelo key-value <b>placement</b>, que o site recebe do <b>{'{placement}'}</b> na URL do anúncio.
       </Typography>
     </Card>
   );
@@ -442,11 +442,12 @@ function sumGroups(gs: PlacementGroup[]): { metrics: Metrics; roiDays: Placement
   const m: Metrics = {
     revenue, grossRevenue: add('grossRevenue'), spend, googleSpend: add('googleSpend'), metaSpend: 0, iva: 0, googleShare: spend ? 100 : null, metaShare: spend ? 0 : null,
     profit, roi: spend > 0 ? (profit / spend) * 100 : null, margin: revenue > 0 ? (profit / revenue) * 100 : null,
-    rps: sessions ? (revenue / sessions) * 1000 : null, ecpm: impressions ? (revenue / impressions) * 1000 : null,
+    rps: sessions ? revenue / sessions : null, sessionRpm: sessions ? (revenue / sessions) * 1000 : null, ecpm: impressions ? (revenue / impressions) * 1000 : null, cpcAdx: ac ? revenue / ac : null,
     impressions, adRequests: ar, responsesServed: rsv, dropOffRate: rsv ? ((rsv - impressions) / rsv) * 100 : null, fillRate: ar ? (impressions / ar) * 100 : null,
     ctr: impressions ? (ac / impressions) * 100 : null, adClicks: ac, viewability: impressions ? (vw / impressions) * 100 : null, sessions,
     trafficClicks: clk, trafficImpressions: ti, trafficCtr: ti ? (clk / ti) * 100 : null, cpc: clk ? spend / clk : null,
     attributedRevenue: revenue, unattributedRevenue: 0, attributionRate: revenue ? 100 : null,
+    metaImpressions: 0, metaLinkClicks: 0, cpcLink: null, metaResults: 0, cpr: null, metaLeads: 0, cpl: null,
   };
   const rd = [0, 1, 2, 3].map((i) => { const sp = gs.reduce((a, g) => a + (g.recent[i]?.[0] ?? 0), 0), rv = gs.reduce((a, g) => a + (g.recent[i]?.[1] ?? 0), 0); return sp > 0 ? ((rv - sp) / sp) * 100 : null; });
   return { metrics: m, roiDays: { today: rd[0], d1: rd[1], d2: rd[2], d3: rd[3] } };

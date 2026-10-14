@@ -16,7 +16,7 @@ export const qk = {
   campaigns: (p: Platform, q: PeriodQuery, extra: object) => ['campaigns', p, q, extra] as const,
   children: (p: Platform, id: string, q: PeriodQuery) => ['children', p, id, q] as const,
   countries: (p: Platform, id: string, q: PeriodQuery) => ['countries', p, id, q] as const,
-  urls: (q: PeriodQuery) => ['urls', q] as const,
+  urls: (q: PeriodQuery & { origin?: string }) => ['urls', q] as const,
   placementFilters: (d: string) => ['placementFilters', d] as const,
   placements: (q: PlacementQuery) => ['placements', q] as const,
   placementCampaigns: (q: PlacementQuery, p: string, level: string) => ['placementCampaigns', q, p, level] as const,
@@ -35,4 +35,6 @@ export const qk = {
   permissions: ['permissions'] as const,
   accounts: (p: string) => ['accounts', p] as const,
   syncSettings: ['syncSettings'] as const,
+  finance: (q: object) => ['finance', q] as const,
+  financeCosts: (q: object) => ['financeCosts', q] as const,
 };

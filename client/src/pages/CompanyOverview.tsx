@@ -58,14 +58,14 @@ export default function CompanyOverviewPage() {
       <KpiRow m={data.totals} cmp={data.comparison} />
       <Grid container spacing={1.75} sx={{ mt: 0.25 }}>
         <Grid size={{ xs: 12, md: 6 }}>
-          <Card><CardHeader title="Spend vs Revenue" subheader="Por dia · hoje (parcial) fica fora" />
+          <Card><CardHeader title="Despesas vs Receita" subheader="Por dia · hoje (parcial) fica fora" />
             <CardContent><SpendRevenueChart height={h} labels={labels} yfmt={yM} revenue={days.map((d) => d.metrics.revenue)} spend={days.map((d) => d.metrics.spend)}
-              tip={(i) => [['Revenue', money(days[i].metrics.revenue, f.currency), '#3d8fec'], ['Spend', money(days[i].metrics.spend, f.currency), '#cf7a2e'], ['Profit', money(days[i].metrics.profit, f.currency)], ['ROI', pct(days[i].metrics.roi)]]} /></CardContent></Card>
+              tip={(i) => [['Receita', money(days[i].metrics.revenue, f.currency), '#3d8fec'], ['Despesas', money(days[i].metrics.spend, f.currency), '#cf7a2e'], ['ROI', money(days[i].metrics.profit, f.currency)], ['ROI %', pct(days[i].metrics.roi)]]} /></CardContent></Card>
         </Grid>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card><CardHeader title="Lucro diário" subheader="Soma de todos os Squads da Empresa" />
             <CardContent><DailyChart height={h} labels={labels} name="Lucro" bars yfmt={yM} values={days.map((d) => d.metrics.profit)}
-              tip={(i) => [['Profit', money(days[i].metrics.profit, f.currency)], ['ROI', pct(days[i].metrics.roi)], ['Margem', pct(days[i].metrics.margin)]]} /></CardContent></Card>
+              tip={(i) => [['ROI', money(days[i].metrics.profit, f.currency)], ['ROI %', pct(days[i].metrics.roi)], ['Margem', pct(days[i].metrics.margin)]]} /></CardContent></Card>
         </Grid>
       </Grid>
       <Stack direction="row" sx={{ alignItems: 'baseline', justifyContent: 'space-between', mt: 3, mb: 1.25 }}>
@@ -100,20 +100,20 @@ function SquadCard({ s }: { s: Sq }) {
     <Card>
       <CardHeader title={s.name} subheader={`${s.domains.length} domínio${s.domains.length === 1 ? '' : 's'}`}
         action={<Stack direction="row" spacing={2} sx={{ alignItems: 'center', pr: 1, display: { xs: 'none', sm: 'flex' } }}>
-          {([['Revenue', <Money key="r" v={m.revenue} />], ['Spend', <Money key="s" v={m.spend} />], ['Profit', <Profit key="p" v={m.profit} />]] as const).map(([l, v]) => <Box key={l} sx={{ textAlign: 'right' }}><Typography variant="caption" component="div">{l}</Typography><Typography sx={{ fontWeight: 600 }} component="div">{v}</Typography></Box>)}
+          {([['Receita', <Money key="r" v={m.revenue} />], ['Despesas', <Money key="s" v={m.spend} />], ['ROI', <Profit key="p" v={m.profit} />]] as const).map(([l, v]) => <Box key={l} sx={{ textAlign: 'right' }}><Typography variant="caption" component="div">{l}</Typography><Typography sx={{ fontWeight: 600 }} component="div">{v}</Typography></Box>)}
           <RoiChip v={m.roi} />
         </Stack>} />
       {mobile ? (
         <Box>{rows.map((d) => (
           <Box key={d.domain} sx={{ p: 1.5, borderTop: 1, borderColor: 'divider', boxShadow: d.metrics.profit < 0 && d.metrics.spend > 0 ? `inset 3px 0 0 ${p.neg}` : 'none' }}>
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}><Box><Link component={RouterLink} to={`/dominios/${encodeURIComponent(d.domain)}`} underline="hover" sx={{ fontWeight: 600 }}>{d.domain}</Link>{gest(d.gestores)}</Box><RoiChip v={d.metrics.roi} /></Stack>
-            <Grid container spacing={1} sx={{ mt: 1 }}>{([['Revenue', <Money key="r" v={d.metrics.revenue} />], ['Spend', <Money key="s" v={d.metrics.spend} />], ['Profit', <Profit key="p" v={d.metrics.profit} />]] as const).map(([l, v]) => <Grid key={l} size={4}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600 }}>{v}</Typography></Grid>)}</Grid>
+            <Grid container spacing={1} sx={{ mt: 1 }}>{([['Receita', <Money key="r" v={d.metrics.revenue} />], ['Despesas', <Money key="s" v={d.metrics.spend} />], ['ROI', <Profit key="p" v={d.metrics.profit} />]] as const).map(([l, v]) => <Grid key={l} size={4}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600 }}>{v}</Typography></Grid>)}</Grid>
           </Box>
         ))}</Box>
       ) : (
         <TableContainer>
           <Table size="small">
-            <TableHead><TableRow>{head('domain', 'Domínio', false)}{head('revenue', 'Revenue')}{head('spend', 'Spend')}{head('profit', 'Profit')}{head('margin', 'Margem')}{head('roi', 'ROI')}</TableRow></TableHead>
+            <TableHead><TableRow>{head('domain', 'Domínio', false)}{head('revenue', 'Receita')}{head('spend', 'Despesas')}{head('profit', 'ROI')}{head('margin', 'Margem')}{head('roi', 'ROI %')}</TableRow></TableHead>
             <TableBody>
               {rows.map((d) => (
                 <TableRow key={d.domain} hover>

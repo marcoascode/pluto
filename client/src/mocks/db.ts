@@ -122,7 +122,7 @@ for (const [platform, acc, domain, name, countries, base, bias, url, paused] of 
   CAMPS.push(c);
 }
 
-export interface Row { di: number; src: 'google' | 'meta' | 'unatt'; acc: string | null; camp: string | null; grp: string | null; ad: string | null; domain: string; url: string; country: string; reason?: IssueType; spendUSD: number; revUSD: number; grossUSD: number; sess: number; adImps: number; rsv: number; adReq: number; adClk: number; view: number; clk: number; tImps: number }
+export interface Row { di: number; src: 'google' | 'meta' | 'unatt'; acc: string | null; camp: string | null; grp: string | null; ad: string | null; domain: string; url: string; country: string; reason?: IssueType; spendUSD: number; revUSD: number; grossUSD: number; sess: number; adImps: number; rsv: number; adReq: number; adClk: number; view: number; clk: number; tImps: number; mlc?: number; mres?: number; mlead?: number; utm?: string }
 export const ROWS: Row[] = [];
 /** Drop-off base por URL (algumas com problema, para a tela de URLs ter alerta) e rev share retido por domínio. */
 const DROP_HOT: Record<string, number> = { 'dominioX.com|/cw/url-03/': 0.27, 'dominioB.com|/quiz/url-02/': 0.31, 'dominioZ.com|/fin/url-02/': 0.19 };
@@ -152,6 +152,14 @@ for (const c of CAMPS) {
     });
   }
 }
+// Meta: cliques no link, conversas iniciadas (campanhas de mensagens) e leads (quiz/finanças), por linha
+for (const r of ROWS) {
+  if (r.src !== 'meta') continue;
+  const c = CAMPS.find((x) => x.id === r.camp)!;
+  r.mlc = Math.round(r.clk * rn(0.86, 0.97));
+  r.mres = /MENSAGENS/.test(c.name) ? Math.round(r.clk * rn(0.18, 0.32)) : 0;
+  r.mlead = /QUIZ|FINANÇAS/.test(c.name) ? Math.round(r.clk * rn(0.03, 0.08)) : 0;
+}
 const REASONS_BY_DOMAIN: Record<string, IssueType[]> = { 'dominioX.com': ['missing_campaign_id', 'gads_creative_not_found'], 'dominioY.com': ['missing_adgroup_id'], 'dominioZ.com': ['invalid_utm', 'meta_ad_not_found'], 'dominioA.com': ['campaign_not_found'], 'dominioB.com': ['missing_campaign_id', 'meta_ad_not_found'] };
 function pushUn(di: number, domain: string, url: string, country: string, rev: number, reason: IssueType) {
   const ct = CT[country] ?? CT.ZZ; const adImps = Math.max(1, Math.round((rev * 1000) / ct.ecpm));
@@ -164,17 +172,25 @@ function pushUn(di: number, domain: string, url: string, country: string, rev: n
   for (let di = 0; di < DAYS; di++) pushUn(di, UNKNOWN_DOMAIN, '/', 'US', rn(3, 8) * (di === 0 ? 0.4 : 1) * volOf(di), 'unknown_domain');
 }
 
+// retenção: parte da receita sem campanha veio de links manuais com ?utm_source=push / whatsapp / email
+for (const r of ROWS) { if (r.src !== 'unatt' || r.domain === UNKNOWN_DOMAIN) continue; const x = rn(0, 1); r.utm = x < 0.36 ? 'push' : x < 0.58 ? 'whatsapp' : x < 0.66 ? 'email' : undefined; }
+/** Origem da linha (igual ao ORIGIN_SQL do servidor). */
+export const originOf = (r: Row) => (r.utm ? 'utm:' + r.utm : r.src === 'google' || r.src === 'meta' ? r.src : 'none');
+
 /** Mesma agregação que o servidor faz em SQL (SUM + fórmulas). */
 export function agg(rows: Row[], cur: Currency): Metrics {
   // spend = Google + Meta + IVA (13,83% sobre a Meta) · revenue = bruta × (1 − revShare do domínio)
-  const s = { spend: 0, gs: 0, ms: 0, iva: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0 };
+  const s = { spend: 0, gs: 0, ms: 0, iva: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0, mi: 0, mlc: 0, mres: 0, mlead: 0 };
   for (const r of rows) { const f = FX[cur][r.di] ?? 1; const fr = cur === 'BRL' ? Math.max(0.0001, f - discountAt(r.di)) : f; const sp = r.spendUSD * f, rv = r.revUSD * fr, iv = r.src === 'meta' ? sp * META_IVA : 0; s.spend += sp + iv; s.iva += iv; if (r.src === 'google') s.gs += sp; else if (r.src === 'meta') s.ms += sp;
-    s.rev += rv; s.gross += r.grossUSD * fr; s.rsv += r.rsv; if (r.src === 'unatt') s.un += rv; else s.att += rv; s.sess += r.sess; s.ai += r.adImps; s.ar += r.adReq; s.ac += r.adClk; s.vw += r.view; s.clk += r.clk; s.ti += r.tImps; }
+    s.rev += rv; s.gross += r.grossUSD * fr; s.rsv += r.rsv; if (r.src === 'unatt') s.un += rv; else s.att += rv; s.sess += r.sess; s.ai += r.adImps; s.ar += r.adReq; s.ac += r.adClk; s.vw += r.view; s.clk += r.clk; s.ti += r.tImps;
+    if (r.src === 'meta') { s.mi += r.tImps; s.mlc += r.mlc ?? 0; s.mres += r.mres ?? 0; s.mlead += r.mlead ?? 0; } }
   const profit = s.rev - s.spend;
   return { revenue: s.rev, grossRevenue: s.gross, spend: s.spend, googleSpend: s.gs, metaSpend: s.ms, iva: s.iva,
     googleShare: s.spend > 0 ? (s.gs / s.spend) * 100 : null, metaShare: s.spend > 0 ? (s.ms / s.spend) * 100 : null, profit, roi: s.spend > 0 ? (profit / s.spend) * 100 : null, margin: s.rev > 0 ? (profit / s.rev) * 100 : null,
-    rps: s.sess ? (s.rev / s.sess) * 1000 : null, ecpm: s.ai ? (s.rev / s.ai) * 1000 : null, impressions: s.ai, adRequests: s.ar, responsesServed: s.rsv, dropOffRate: s.rsv ? ((s.rsv - s.ai) / s.rsv) * 100 : null, fillRate: s.ar ? (s.ai / s.ar) * 100 : null,
+    rps: s.sess ? s.rev / s.sess : null, sessionRpm: s.sess ? (s.rev / s.sess) * 1000 : null, ecpm: s.ai ? (s.rev / s.ai) * 1000 : null, cpcAdx: s.ac ? s.rev / s.ac : null, impressions: s.ai, adRequests: s.ar, responsesServed: s.rsv, dropOffRate: s.rsv ? ((s.rsv - s.ai) / s.rsv) * 100 : null, fillRate: s.ar ? (s.ai / s.ar) * 100 : null,
     ctr: s.ai ? (s.ac / s.ai) * 100 : null, adClicks: s.ac, viewability: s.ai ? (s.vw / s.ai) * 100 : null, sessions: s.sess, trafficClicks: s.clk, trafficImpressions: s.ti,
-    trafficCtr: s.ti ? (s.clk / s.ti) * 100 : null, cpc: s.clk ? s.spend / s.clk : null, attributedRevenue: s.att, unattributedRevenue: s.un, attributionRate: s.rev ? (s.att / s.rev) * 100 : null };
+    trafficCtr: s.ti ? (s.clk / s.ti) * 100 : null, cpc: s.clk ? s.spend / s.clk : null, attributedRevenue: s.att, unattributedRevenue: s.un, attributionRate: s.rev ? (s.att / s.rev) * 100 : null,
+    // custo por ação usa o custo Meta sem IVA (como no Gerenciador de Anúncios)
+    metaImpressions: s.mi, metaLinkClicks: s.mlc, cpcLink: s.mlc ? s.ms / s.mlc : null, metaResults: s.mres, cpr: s.mres ? s.ms / s.mres : null, metaLeads: s.mlead, cpl: s.mlead ? s.ms / s.mlead : null };
 }
 export const dayIndex = (iso: string) => DATES.indexOf(iso);

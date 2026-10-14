@@ -12,7 +12,7 @@
  */
 import { config } from '../../config.js';
 import { q } from '../../db.js';
-import { domainResolver, emptyFact, replaceFacts, setAccountStatus, statusFromError, urlCache, type Fact } from './common.js';
+import { domainResolver, emptyFact, parseUrl, replaceFacts, setAccountStatus, statusFromError, urlCache, type Fact } from './common.js';
 import { requestJson, sleep, SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
 import type { JobResult } from './index.js';
@@ -46,9 +46,10 @@ export async function resolveKeys(network: string, token: string, wanted: [KeyIn
 }
 
 /** Cria o relatório (oculto), roda, espera e baixa todas as linhas. */
-export async function runReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label = 'pluto-sync') {
+/** extra: dimensões nativas a mais depois de COUNTRY_CODE (ex.: URL_NAME). As dimensões personalizadas vêm depois delas. */
+export async function runReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label = 'pluto-sync', extra: string[] = []) {
   const auth = { Authorization: `Bearer ${token}` };
-  const dims = ['DATE', 'SITE', 'COUNTRY_CODE', ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`)];
+  const dims = ['DATE', 'SITE', 'COUNTRY_CODE', ...extra, ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`)];
   const metrics = ['REVENUE', 'IMPRESSIONS', 'AD_REQUESTS', 'RESPONSES_SERVED', 'CLICKS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS'];
   const report = await requestJson<{ name: string }>(`${config.api.gam}/v1/networks/${network}/reports`, {
     method: 'POST', headers: auth,
@@ -102,9 +103,28 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const all = await resolveKeys(net.external_id, token);
   const keys = all.filter((k) => k.usable);
   const missing = all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));   // source e path são opcionais
-  const { rows } = await runReport(net.external_id, token, w.from, w.to, keys);
-  const ki = (role: KeyInfo['role']) => { const i = keys.findIndex((k) => k.role === role); return i < 0 ? -1 : 3 + i; };
-  const iCamp = ki('campaign'), iContent = ki('content'), iSource = ki('source'), iPath = ki('path');
+  /*
+   * URL da página (slug) para a tela URLs, nesta ordem:
+   *  1. key-value do caminho (GAM_KEY_PATH, padrão page_path) como dimensão personalizada: o caminho exato;
+   *  2. sem ele, a dimensão nativa URL_NAME do Ad Manager (Inventário → URL). A API REST ainda recusa essa dimensão
+   *     em parte das redes: na 1ª recusa a rede é marcada e o relatório segue sem URL (sem quebrar o sync);
+   *  3. sem nenhum dos dois, a receita fica em "(sem URL)" e a rede mostra o aviso de como configurar.
+   */
+  const pathKey = keys.find((k) => k.role === 'path');
+  const tryUrlDim = !pathKey && !URL_DIM_UNSUPPORTED.has(net.external_id);
+  let rows: Awaited<ReturnType<typeof runReport>>['rows'];
+  let urlDim = false;
+  try {
+    rows = (await runReport(net.external_id, token, w.from, w.to, keys, 'pluto-sync', tryUrlDim ? ['URL_NAME'] : [])).rows;
+    urlDim = tryUrlDim;
+  } catch (e) {
+    if (!tryUrlDim || !(e instanceof SyncError) || !/URL_NAME|INVALID_ARGUMENT|invalid|not (supported|available)/i.test(e.message)) throw e;
+    URL_DIM_UNSUPPORTED.add(net.external_id);
+    rows = (await runReport(net.external_id, token, w.from, w.to, keys)).rows;
+  }
+  const base = 3 + (urlDim ? 1 : 0);
+  const ki = (role: KeyInfo['role']) => { const i = keys.findIndex((k) => k.role === role); return i < 0 ? -1 : base + i; };
+  const iCamp = ki('campaign'), iContent = ki('content'), iSource = ki('source'), iPath = ki('path'), iUrl = urlDim ? 3 : -1;
   const facts: Fact[] = [];
   // descartes, agrupados para o aviso final da rede (setAccountStatus): linhas e receita (USD) de cada caso
   const noSite = { rows: 0, revenue: 0 };                                       // SITE vazio/inválido na API
@@ -144,10 +164,10 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
         if (adGroupId && a && !EMPTY.test(a)) adId = idx.ad.get(`${adGroupId}|${a}`) ?? null;
       }
     }
-    const path = iPath >= 0 ? str(d[iPath]) : '';
+    const path = iPath >= 0 ? str(d[iPath]) : iUrl >= 0 ? urlPath(str(d[iUrl])) : '';
     facts.push(emptyFact({
       date: day, domainId: domain.id, urlId: path && !EMPTY.test(path) ? await url(domain.id, path) : null,
-      platform, campaignId, adGroupId, adId, country: str(d[2]).toUpperCase() || 'ZZ', reason,
+      platform, campaignId, adGroupId, adId, country: str(d[2]).toUpperCase() || 'ZZ', reason, utmSource: normSource(source),
       revenueUsd: revenue, impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]),
     }));
   }
@@ -159,7 +179,11 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     unlinked.size ? `${sum(unlinked)} linhas de sites sem rede ligada ignoradas (${usd(rev(unlinked))}): ${sites(unlinked)}. Ligue cada site a esta rede em Domínios` : '',
     otherNet.size ? `${sum(otherNet)} linhas de sites ligados a outra rede ignoradas (${usd(rev(otherNet))}): ${sites(otherNet)}. Se o site é desta rede, troque a rede em Domínios` : '',
   ].filter(Boolean).join(' · ');
-  await setAccountStatus(net.id, warn ? 'warn' : 'ok', warn || null);
+  // URL é informativo (não deixa a rede amarela): sem caminho, a tela URLs mostra "(sem URL)"
+  const urlNote = !pathKey && !urlDim && config.gamKeys.path
+    ? `URLs: sem o key-value "${config.gamKeys.path}" como dimensão personalizada a receita fica em "(sem URL)". O site manda googletag.pubads().setTargeting('${config.gamKeys.path}', location.pathname)`
+    : '';
+  await setAccountStatus(net.id, warn ? 'warn' : 'ok', [warn, urlNote].filter(Boolean).join(' · ') || null);
   return { rows: rows.length, n, warn };
 }
 
@@ -197,3 +221,20 @@ const sum = (m: Lost) => [...m.values()].reduce((a, x) => a + x.rows, 0);
 const rev = (m: Lost) => [...m.values()].reduce((a, x) => a + x.revenue, 0);
 /** Os 5 sites com mais receita descartada, para o admin saber onde mexer. */
 const sites = (m: Lost) => { const l = [...m].sort((a, b) => b[1].revenue - a[1].revenue); return l.slice(0, 5).map(([h]) => h).join(', ') + (l.length > 5 ? ` e mais ${l.length - 5}` : ''); };
+
+/** Redes em que a API recusou a dimensão URL_NAME (vale até reiniciar a api; aí tenta de novo uma vez). */
+const URL_DIM_UNSUPPORTED = new Set<string>();
+/** URL_NAME vem como "site.com/caminho", "https://site.com/caminho?x=1" ou "(not set)": devolve só o caminho. */
+export function urlPath(v: string): string {
+  if (!v || EMPTY.test(v)) return '';
+  const u = parseUrl(/^https?:\/\//i.test(v) ? v : 'https://' + v.replace(/^\/+/, ''));
+  return u ? u.pathname : '';
+}
+
+/** utm_source gravado na linha (origem da receita na tela URLs): minúsculo, só [a-z0-9_.-], até 40. Vazio/macro → null. */
+export function normSource(v: string): string | null {
+  const x = v.trim().toLowerCase();
+  if (!x || EMPTY.test(x) || /[{}]/.test(x)) return null;
+  const c = x.replace(/[^a-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  return c || null;
+}

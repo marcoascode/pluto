@@ -1,6 +1,6 @@
 /** Todos os hooks de dados. Cada tela usa só estes, nunca fetch direto. */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { meApi, searchApi, adminApi, companiesApi, attributionApi, campaignsApi, dashboardApi, domainsApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
+import { meApi, searchApi, adminApi, companiesApi, attributionApi, campaignsApi, dashboardApi, domainsApi, financeApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
 import { qk } from '@/lib/api/keys';
 import { useFilters } from '@/context/FiltersContext';
 import type { Platform, PlacementQuery, Provider } from '@/types/api';
@@ -44,7 +44,7 @@ export function usePlacementCampaigns(sel: PlacementSel | null, placement: strin
   const q = usePlacementQuery(sel);
   return useQuery({ queryKey: qk.placementCampaigns(q!, placement ?? '', level), queryFn: () => placementsApi.campaigns({ ...q!, placement: placement!, level }), enabled: !!q && !!placement });
 }
-export function useUrls(domain: string) { const { query } = useFilters(); const q = { ...query, domain: domain || undefined }; return useQuery({ queryKey: qk.urls(q), queryFn: () => urlsApi.list(q), ...opts }); }
+export function useUrls(domain: string, origin = '') { const { query } = useFilters(); const q = { ...query, domain: domain || undefined, origin: origin || undefined }; return useQuery({ queryKey: qk.urls(q), queryFn: () => urlsApi.list(q), ...opts }); }
 export function useGam() { const { query } = useFilters(); return useQuery({ queryKey: qk.gam(query), queryFn: () => gamApi.summary(query), ...opts }); }
 /** Relatórios usam só Domínio e Moeda do topo (o mês é escolhido na própria tela). */
 function useReportQuery() { const { domain, currency, company } = useFilters(); return { domain: domain || undefined, currency, company: company || undefined }; }
@@ -77,4 +77,21 @@ export function useSyncSettings() { return useQuery({ queryKey: qk.syncSettings,
 export function useAdminMutation<A, R>(fn: (a: A) => Promise<R>, invalidate: readonly (readonly unknown[])[]) {
   const qc = useQueryClient();
   return useMutation({ mutationFn: fn, onSuccess: () => invalidate.forEach((k) => qc.invalidateQueries({ queryKey: k as unknown[] })) });
+}
+
+/* ---- Finance ---- */
+export function useFinanceOverview(from: string, to: string) {
+  const { company, currency } = useFilters();
+  const q = { company: company || undefined, from, to, currency };
+  return useQuery({ queryKey: qk.finance(q), queryFn: () => financeApi.overview(q), ...opts });
+}
+export function useFinanceCosts(month: string) {
+  const { company, currency } = useFilters();
+  const q = { company: company || undefined, month, currency };
+  return useQuery({ queryKey: qk.financeCosts(q), queryFn: () => financeApi.costs(q), ...opts });
+}
+/** Salvar/excluir custo ou lançamento de caixa atualiza as duas telas do Finance. */
+export function useFinanceMutation<A, R>(fn: (a: A) => Promise<R>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: fn, onSuccess: () => { qc.invalidateQueries({ queryKey: ['finance'] }); qc.invalidateQueries({ queryKey: ['financeCosts'] }); } });
 }

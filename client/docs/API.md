@@ -48,7 +48,7 @@ Os tipos exatos de cada resposta estão em `src/types/api.ts` (é a fonte da ver
 | GET | `/campaigns` | `platform=google\|meta`, `accountId?`, `includePaused?` | `CampaignsResponse` (com `roiDays` = ROI Hoje, D-1, D-2, D-3) |
 | GET | `/campaigns/:platform/:id/children` | — | `CampaignChildrenResponse` (Google: Ad Group → Ad · Meta: Ad Set → Ad) |
 | GET | `/campaigns/:platform/:id/countries` | — | `CampaignCountriesResponse` |
-| GET | `/urls` | — | `UrlsResponse` |
+| GET | `/urls` | `origin?` (`google`, `meta`, `none` ou `utm:<valor>`) | `UrlsResponse`: `urls` (domínio + slug) e `origins` (receita/custo por origem: Google Ads, Meta Ads, cada utm_source de retenção como push/whatsapp, Sem origem). `origin` filtra as URLs |
 | GET | `/placements/filters` | `domain` (obrigatório) | `PlacementFiltersResponse` — contas e campanhas Google Ads do domínio |
 | GET | `/placements` | `domain` (obrigatório), `accounts?`, `campaigns?` (listas separadas por vírgula; vazio = todas) | `PlacementsResponse` — placements agrupados pelo domínio principal |
 | GET | `/placements/campaigns` | os mesmos + `placement`, `level=root\|host` | `PlacementCampaignsResponse` — campanhas que gastaram no placement |
@@ -83,9 +83,27 @@ Onde os anúncios do Google Ads apareceram (sites, apps, YouTube) × receita do 
 - Busca, "Dão ROI / Prejuízo", critério (ex.: ROI ≤ −10%), ordenação e "Selecionar métricas" são feitos no front sobre a resposta.
 - Sessions e RPS dependem do tracking próprio do site (vêm 0 / null até existir).
 
-## Ordem das colunas
+## Ordem das colunas e blocos de métricas
 
-ROI e ROI Hoje / D-1 / D-2 / D-3 ficam **sempre na ponta direita** das tabelas, nessa ordem. Qualquer métrica escolhida em "Selecionar métricas" entra à esquerda do ROI (`roiLast()` em `src/lib/metrics.ts`, aplicado em `usePicked`).
+"Selecionar métricas" é separado em blocos (`BLOCKS` em `src/lib/metrics.ts`, com `ListSubheader`) e as colunas seguem essa ordem:
+- **Resultados**: Receita · Despesas · IVA · ROI (Receita − Google − Meta − IVA) · ROI % (ROI ÷ Despesas) · Margem · RNA (não atribuída) · Atribuição
+- **Despesas**: Custo Google · Custo Meta · IVA · Google % · Meta % · Impressões Meta · Cliques Meta (link_click) · CPC-L · Resultados (conversas iniciadas 7d) · CPR · Leads · CPL (+ métricas de tráfego das campanhas)
+- **Receitas**: Receita · Imp. ADX · Cliques ADX · CPC ADX · CTR · eCPM · Respostas servidas · Viewability · Drop-off · Fill Rate · Sessões · RPS (Receita ÷ Sessões) · RPM de Sessão (RPS × 1000)
+
+Receita e IVA aparecem em dois blocos e são uma coluna só (no primeiro bloco). CPC-L, CPR e CPL usam o custo Meta **sem IVA** (como no Gerenciador de Anúncios).
+Relatórios mistos (Relatórios e URLs) mostram o cabeçalho dos 3 blocos (`components/ui/MetricBlocks.tsx`). Nas telas de campanha, ROI % e ROI Hoje / D-1 / D-2 / D-3 continuam **sempre na ponta direita** (`roiLast()`).
+
+## Finance (Caixa Empresa e Custos) — Admin/SuperAdmin e sócios (`company_users`); os outros recebem `403 forbidden_finance`
+| Método | Rota | Corpo / query | Resposta / regra |
+|---|---|---|---|
+| GET | `/finance/overview` | `company?`, `from`/`to` (`YYYY-MM`, padrão mês anterior → atual, máx. 36), `currency` | `FinanceOverview`: `cash` (caixa estimado por Empresa e total), `months` (fechamento: receita, Google, Meta, IVA, custos por categoria, resultado, margem, quebra por Empresa), `totals`, `outside` (Admin: domínios sem Empresa) |
+| GET | `/finance/costs` | `company?`, `month`, `currency` | `FinanceCostsResponse`: custos com `appliesInMonth` e `monthAmount` convertido + totais do mês |
+| POST / PUT | `/finance/costs` · `/finance/costs/:id` | `{ companyId, name, category, amount, currency, recurrence: monthly\|once, startMonth, endMonth?, payDay, notes? }` | custo. Categorias: tools, domains, hosting, team, taxes, services, other |
+| DELETE | `/finance/costs/:id` | — | 204 |
+| POST | `/finance/cash` | `{ companyId, date, kind: balance\|deposit\|withdrawal, amount, currency, note? }` | `balance` = saldo conferido no banco (fim do dia). Data futura → 422 |
+| DELETE | `/finance/cash/:id` | — | 204 |
+
+Caixa estimado = último saldo conferido + (receita − anúncios) dos dias seguintes − custos com dia de pagamento depois dele + aportes − retiradas. Receita por competência. Custos convertidos pela cotação do último dia do mês (ou de hoje).
 
 ## Drop-off (Google Ad Manager)
 
