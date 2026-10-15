@@ -52,14 +52,14 @@ export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind; hint?: 
   // Despesas
   googleSpend: { label: 'Custo Google', kind: 'money' }, metaSpend: { label: 'Custo Meta', kind: 'money', hint: 'sem IVA' },
   googleShare: { label: 'Google %', kind: 'pct0' }, metaShare: { label: 'Meta %', kind: 'pct0' },
-  metaImpressions: { label: 'Impressões Meta', kind: 'int' },
+  metaImpressions: { label: 'Imp. Meta', kind: 'int' },
   metaLinkClicks: { label: 'Cliques Meta', kind: 'int', hint: 'Cliques no link (link_click)' },
   cpcLink: { label: 'CPC-L', kind: 'money', hint: 'Custo Meta ÷ cliques no link' },
-  metaResults: { label: 'Resultados', kind: 'int', hint: 'Conversas por mensagem iniciadas (7 dias)' },
+  metaResults: { label: 'Resultados', kind: 'int', hint: 'Conversas por mensagem iniciadas' },
   cpr: { label: 'CPR', kind: 'money', hint: 'Custo Meta ÷ conversas iniciadas' },
   metaLeads: { label: 'Leads', kind: 'int' }, cpl: { label: 'CPL', kind: 'money', hint: 'Custo Meta ÷ leads' },
-  trafficImpressions: { label: 'Impressões', kind: 'int', hint: 'Impressões das campanhas (Google/Meta)' },
-  trafficClicks: { label: 'Cliques', kind: 'int', hint: 'Cliques das campanhas (Google/Meta)' },
+  trafficImpressions: { label: 'Impressões', kind: 'int', hint: 'Impressões das campanhas (Google + Meta)' },
+  trafficClicks: { label: 'Cliques', kind: 'int', hint: 'Cliques das campanhas (Google + Meta)' },
   trafficCtr: { label: 'CTR campanha', kind: 'pct2' }, cpc: { label: 'CPC', kind: 'money', hint: 'Despesas ÷ cliques' },
   // Receitas
   impressions: { label: 'Imp. ADX', kind: 'int', hint: 'Impressões de anúncio no Ad Manager' },
