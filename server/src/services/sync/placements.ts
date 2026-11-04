@@ -7,6 +7,8 @@
  *  gam.placements         receita bruta e delivery por site × utm_campaign × placement × dia. O site repassa o
  *                         {placement} da URL do anúncio para o GPT como key-value "placement" (GAM_KEY_PLACEMENT),
  *                         que precisa estar como "Custom dimension" no Ad Manager.
+ *                         Formato do dash antigo (utm_campaign={creative}, utm_content={creative}_{placement}): sem o
+ *                         key-value "placement", o placement sai do utm_content e a campanha sai do {creative}.
  *
  * Os dois lados usam a mesma chave normalizada (normPlacement): host sem "www.", "youtube.com" para vídeos/canais
  * e "mobileapp::…" para apps. placement_root agrupa subdomínios no domínio principal (lp.site.com → site.com).
@@ -15,7 +17,7 @@
 import { config } from '../../config.js';
 import { q, tx } from '../../db.js';
 import { domainResolver, fxToUsd, setAccountStatus, statusFromError } from './common.js';
-import { EMPTY, isoDate, num, resolveKeys, runReport, str } from './gam.js';
+import { attributionIndex, EMPTY, isLegacyUtm, isoDate, num, resolveKeys, runReport, str } from './gam.js';
 import { ctx, gaql } from './googleAds.js';
 import { SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
@@ -165,16 +167,23 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
   const camps = await q<{ id: string; ext: string; platform: string }>(`SELECT id::text, external_id AS ext, platform FROM campaigns`);
   const byExt = new Map(camps.filter((x) => x.platform === 'google').map((x) => [x.ext, x.id]));
   const metaIds = new Set(camps.filter((x) => x.platform === 'meta').map((x) => x.ext));   // placements aqui são só do Google Ads
+  const idx = await attributionIndex();   // {creative} → campanha (formato do dash antigo)
   const dom = await domainResolver();
   const notes: string[] = [];
   let ok = 0, skippedNets = 0, saved = 0, rowsTotal = 0;
   for (const net of nets) {
     try {
-      const keys = await resolveKeys(net.external_id, token, [['campaign', config.gamKeys.campaign], ['placement', config.gamPlacementKey]]);
-      const bad = keys.filter((k) => !k.usable);
-      if (bad.length) { skippedNets++; notes.push(`${net.name}: key-values sem dimensão personalizada no Ad Manager: ${bad.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension). O site precisa enviar "${config.gamPlacementKey}" com o {placement} da URL.`); continue; }
+      const all = await resolveKeys(net.external_id, token, [['campaign', config.gamKeys.campaign], ['placement', config.gamPlacementKey], ['content', config.gamKeys.content]]);
+      const keys = all.filter((k) => k.usable);
+      const has = (r: string) => keys.some((k) => k.role === r);
+      // precisa da campanha e de onde tirar o placement: o key-value "placement" ou o utm_content do formato antigo ({creative}_{placement})
+      if (!has('campaign') || (!has('placement') && !has('content'))) {
+        const bad = all.filter((k) => !k.usable && (k.role === 'campaign' || !has('placement') && !has('content')));
+        skippedNets++; notes.push(`${net.name}: key-values sem dimensão personalizada no Ad Manager: ${bad.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension). O site precisa enviar "${config.gamPlacementKey}" com o {placement} da URL, ou o utm_content={creative}_{placement}.`); continue;
+      }
       const { rows } = await runReport(net.external_id, token, w.from, w.to, keys, 'pluto-placements');
-      const iCamp = 3 + keys.findIndex((k) => k.role === 'campaign'), iPl = 3 + keys.findIndex((k) => k.role === 'placement');
+      const at = (r: string) => { const i = keys.findIndex((k) => k.role === r); return i < 0 ? -1 : 3 + i; };
+      const iCamp = at('campaign'), iPl = at('placement'), iContent = at('content');
       // relatório com DATE, SITE, COUNTRY_CODE + key-values; o país é somado aqui
       const facts: PFact[] = [];
       let noPl = 0;
@@ -184,11 +193,15 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
         if (!day || !site || EMPTY.test(site)) continue;
         const cv = str(d[iCamp]);
         if (metaIds.has(cv)) continue;
-        const p = normPlacement(str(d[iPl]));
+        const content = iContent >= 0 ? str(d[iContent]) : '';
+        // placement: key-value próprio; sem ele, a parte depois de "{creative}_" no utm_content (formato do dash antigo)
+        const legacy = isLegacyUtm(cv, content);
+        const plRaw = (iPl >= 0 ? str(d[iPl]) : '') || (legacy ? content.slice(cv.length + 1) : '');
+        const p = normPlacement(plRaw);
         if (!p) { noPl++; continue; }
         const domain = await dom.ensure(site);
         if (!domain || domain.pending || domain.gam !== net.id) continue;   // só domínios ligados a esta rede (manual, em Domínios)
-        facts.push({ ...zero, date: day, domainId: domain.id, campaignId: cv && !EMPTY.test(cv) ? byExt.get(cv) ?? null : null, placement: p.key,
+        facts.push({ ...zero, date: day, domainId: domain.id, campaignId: cv && !EMPTY.test(cv) ? (legacy ? null : byExt.get(cv)) ?? idx.creative.get(cv)?.cid ?? null : null, placement: p.key,
           revenueUsd: num(m[0]), impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]) });
       }
       const mine = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);

@@ -1,19 +1,28 @@
-import { Alert, Box, Button, Card, CardHeader, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, MenuItem, Select, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography, alpha, useTheme } from '@mui/material';
+import { Alert, Autocomplete, Box, Button, Card, CardHeader, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, MenuItem, Select, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography, alpha, useTheme } from '@mui/material';
 import AccountBalanceRoundedIcon from '@mui/icons-material/AccountBalanceRounded';
+import AddCircleOutlineRoundedIcon from '@mui/icons-material/AddCircleOutlineRounded';
+import RemoveCircleOutlineRoundedIcon from '@mui/icons-material/RemoveCircleOutlineRounded';
 import SwapVertRoundedIcon from '@mui/icons-material/SwapVertRounded';
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useFilters } from '@/context/FiltersContext';
-import { useFinanceMutation, useFinanceOverview } from '@/hooks/queries';
-import { financeApi } from '@/lib/api/endpoints';
+import { useFinanceMutation } from '@/hooks/queries';
 import { ApiError } from '@/lib/api/client';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton } from '@/components/ui/States';
 import { money, pct0 } from '@/lib/format';
-import { CATEGORY, COST_CATEGORIES, ddmmyyyy, monthOptions, monthShort, monthTitle, shiftMonth } from '@/lib/finance';
+import {
+  CATEGORY, COST_CATEGORIES, ENTRY_CAT, ENTRY_KINDS, EXPENSE_CATS, INCOME_CATS, KIND, cashApi, ddmmyyyy, monthOptions, monthShort, monthTitle, shiftMonth,
+  type CashCompany, type CashEntry, type CashEntryInput, type CashMonth, type CashOverview, type EntryKind,
+} from '@/lib/finance';
 import { todayISO } from '@/lib/period';
-import type { CashCompany, CashInput, Currency, FinanceOverview, MonthClose } from '@/types/api';
+import { AttachmentsButton, AttachmentsDialog, type AttachmentContext } from './Attachments';
+import { DEFAULT_REVSHARE, sitesApi } from '@/lib/financeOps';
+import type { Currency } from '@/types/api';
 
 const NOW = todayISO().slice(0, 7);
 const PRESETS: { key: string; label: string; from: (now: string) => string }[] = [
@@ -24,34 +33,52 @@ const PRESETS: { key: string; label: string; from: (now: string) => string }[] =
   { key: 'y', label: 'Ano atual', from: (n) => `${n.slice(0, 4)}-01` },
 ];
 
-/** Finance → Caixa Empresa: caixa estimado de hoje + fechamento mês a mês (receita dos sites × Google + Meta × custos). */
+/** Caixa + fechamento. Chave ['finance', …]: salvar um custo ou um lançamento atualiza esta tela. */
+function useCash(from: string, to: string) {
+  const { company, currency } = useFilters();
+  const q = { company: company || undefined, from, to, currency };
+  return useQuery({ queryKey: ['finance', 'cash', q], queryFn: () => cashApi.overview(q), placeholderData: keepPreviousData, staleTime: 60_000 });
+}
+
+/**
+ * Finance → Caixa Empresa. É MANUAL: a receita que de fato caiu na conta e os gastos pagos são lançados aqui;
+ * os custos da aba Custos entram sozinhos no dia do pagamento. Nada vem do sync das campanhas.
+ */
 export default function CashPage() {
   const f = useFilters();
   const [preset, setPreset] = useState('2');
   const [range, setRange] = useState({ from: shiftMonth(NOW, -1), to: NOW });
-  const { data, error, refetch } = useFinanceOverview(range.from, range.to);
-  const [dialog, setDialog] = useState<'balance' | 'move' | null>(null);
+  const { data, error, refetch } = useCash(range.from, range.to);
+  const [edit, setEdit] = useState<{ kind: EntryKind; entry?: CashEntry } | null>(null);
+  const [att, setAtt] = useState<AttachmentContext | null>(null);
+  const attach = (e: CashEntry) => setAtt({ entryId: e.id, title: `${KIND[e.kind].short}${e.category ? ' · ' + ENTRY_CAT[e.category] : ''} · ${ddmmyyyy(e.date)}`, amount: e.amount, currency: e.currency });
   const pick = (k: string) => { const p = PRESETS.find((x) => x.key === k); if (!p) return; setPreset(k); setRange({ from: p.from(NOW), to: NOW }); };
   if (error && !data) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data) return <PageSkeleton />;
   const coName = data.selected ? data.companies.find((c) => c.id === data.selected)?.name : null;
+  const add = (kind: EntryKind) => setEdit({ kind });
   return (
     <>
-      <PageHead title="Caixa Empresa" sub={`${coName ?? 'Todas as Empresas'} · valores em ${f.currency} · receita por competência`}
-        right={<Stack direction="row" spacing={1}>
-          <Button size="small" variant="outlined" startIcon={<SwapVertRoundedIcon />} onClick={() => setDialog('move')} disabled={!data.companies.length}>Aporte / retirada</Button>
-          <Button size="small" variant="contained" startIcon={<AccountBalanceRoundedIcon />} onClick={() => setDialog('balance')} disabled={!data.companies.length}>Conferir saldo</Button>
-        </Stack>} />
+      <PageHead title="Caixa Empresa" sub={`${coName ?? 'Todas as Empresas'} · valores em ${f.currency} · lançamentos manuais`}
+        right={data.companies.length > 0 && (
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <Button size="small" variant="contained" color="success" startIcon={<AddCircleOutlineRoundedIcon />} onClick={() => add('income')}>Receita recebida</Button>
+            <Button size="small" variant="contained" color="warning" startIcon={<RemoveCircleOutlineRoundedIcon />} onClick={() => add('expense')}>Gasto pago</Button>
+            <Button size="small" variant="outlined" startIcon={<SwapVertRoundedIcon />} onClick={() => add('deposit')}>Aporte / retirada</Button>
+            <Button size="small" variant="outlined" startIcon={<AccountBalanceRoundedIcon />} onClick={() => add('balance')}>Conferir saldo</Button>
+          </Stack>
+        )} />
       {!data.companies.length ? (
-        <Alert severity="info" variant="outlined">Nenhuma Empresa cadastrada. O Finance é por Empresa: cadastre em Usuários &amp; Squads → Empresas e ligue os Squads (domínios) a ela.</Alert>
+        <Alert severity="info" variant="outlined">Nenhuma Empresa cadastrada. O Finance é por Empresa: cadastre em Usuários &amp; Squads → Empresas.</Alert>
       ) : (
         <>
+          <HowItWorks />
           <Grid container spacing={1.75}>
-            <Grid size={{ xs: 12, lg: 8 }}><CashCard data={data} onBalance={() => setDialog('balance')} /></Grid>
+            <Grid size={{ xs: 12, lg: 8 }}><CashCard data={data} onBalance={() => add('balance')} /></Grid>
             <Grid size={{ xs: 12, lg: 4 }}><MonthNow m={data.months.find((x) => x.month === NOW) ?? null} prev={data.months.find((x) => x.month === shiftMonth(NOW, -1)) ?? null} /></Grid>
           </Grid>
           <Card sx={{ mt: 1.75 }}>
-            <CardHeader title="Fechamento mensal" subheader="Receita dos sites (Ad Manager, sem revShare) − Google Ads − Meta Ads − IVA − custos lançados" />
+            <CardHeader title="Fechamento mensal" subheader="Receitas recebidas − gastos pagos − custos fixos (aba Custos) = resultado do mês. Clique no mês para ver os lançamentos." />
             <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center', px: 2, pb: 1.5 }}>
               <Box sx={{ overflowX: 'auto', maxWidth: '100%' }}>
                 <ToggleButtonGroup size="small" exclusive value={preset} onChange={(_, v) => v && pick(v)} aria-label="Período">
@@ -61,19 +88,47 @@ export default function CashPage() {
               <MonthSelect label="De" value={range.from} onChange={(v) => { setPreset(''); setRange((r) => ({ from: v, to: v > r.to ? v : r.to })); }} />
               <MonthSelect label="Até" value={range.to} onChange={(v) => { setPreset(''); setRange((r) => ({ to: v, from: v < r.from ? v : r.from })); }} max={NOW} />
             </Stack>
-            <CloseTable data={data} />
+            <CloseTable data={data} onEdit={(e) => setEdit({ kind: e.kind, entry: e })} onAttach={attach} />
           </Card>
-          {data.outside && (
-            <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
-              Fora do Finance no período: domínios sem Empresa (inclusive "Sem domínio") somaram {money(data.outside.revenue, f.currency)} de receita e {money(data.outside.adSpend, f.currency)} de anúncios.
-              Ligue os Squads às Empresas em Usuários &amp; Squads para entrarem aqui.
-            </Typography>
-          )}
-          <Entries cash={data.cash.companies} showCompany={!data.selected && data.companies.length > 1} />
+          <Entries data={data} onEdit={(e) => setEdit({ kind: e.kind, entry: e })} onAttach={attach} />
         </>
       )}
-      {dialog && <CashDialog kind={dialog} data={data} onClose={() => setDialog(null)} />}
+      {att && <AttachmentsDialog ctx={att} onClose={() => setAtt(null)} />}
+      {edit && <EntryDialog key={edit.entry?.id ?? edit.kind} initialKind={edit.kind} entry={edit.entry} data={data} onClose={() => setEdit(null)} />}
     </>
+  );
+}
+
+/** Faixa curta que deixa claro de onde vêm os números. */
+function HowItWorks() {
+  const { pluto: p } = useTheme();
+  const items: [string, string, string][] = [
+    ['+', 'Receita recebida', 'o que caiu na conta'],
+    ['−', 'Gastos pagos', 'faturas Google Ads / Meta'],
+    ['−', 'Custos fixos', 'automático, da aba Custos'],
+    ['=', 'Resultado', 'por mês; o caixa soma tudo'],
+  ];
+  return (
+    <Card sx={{ p: 1.5, mb: 1.75, bgcolor: alpha(p.accent, 0.06), borderColor: alpha(p.accent, 0.35) }}>
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={{ xs: 1, md: 2 }} sx={{ alignItems: { md: 'center' } }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexShrink: 0 }}>
+          <InfoOutlinedIcon sx={{ fontSize: 18, color: p.accent }} />
+          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>O caixa é lançado à mão</Typography>
+        </Stack>
+        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', flex: 1 }}>
+          {items.map(([s, l, d]) => (
+            <Stack key={l} direction="row" spacing={0.75} sx={{ alignItems: 'baseline', px: 1.25, py: 0.5, borderRadius: 2, bgcolor: p.panel2 }}>
+              <Typography sx={{ fontFamily: 'Sora', fontWeight: 700, color: s === '+' ? p.pos : s === '=' ? p.accent : p.neg }}>{s}</Typography>
+              <Typography sx={{ fontSize: 12.5, fontWeight: 600 }}>{l}</Typography>
+              <Typography variant="caption">{d}</Typography>
+            </Stack>
+          ))}
+        </Stack>
+      </Stack>
+      <Typography variant="caption" component="p" sx={{ mt: 1 }}>
+        Nada aqui vem do sync das campanhas: o caixa mostra o que foi recebido e pago de verdade. Informe o site na receita e no gasto: é daí que sai o resultado de cada site em Comissões.
+      </Typography>
+    </Card>
   );
 }
 
@@ -89,31 +144,31 @@ function MonthSelect({ label, value, onChange, max }: { label: string; value: st
   );
 }
 
-/** Caixa estimado hoje com a conta que leva até ele. */
-function CashCard({ data, onBalance }: { data: FinanceOverview; onBalance: () => void }) {
+/** Caixa de hoje com a conta que leva até ele. */
+function CashCard({ data, onBalance }: { data: CashOverview; onBalance: () => void }) {
   const { pluto: p } = useTheme();
   const { currency } = useFilters();
   const cos = data.cash.companies;
   const one = cos.length === 1 ? cos[0] : null;
   const missing = cos.filter((c) => c.balance == null);
   const total = data.cash.total;
-  const line = (l: string, v: number, sign: '+' | '−' | '', tone?: string) => (
-    <Stack direction="row" sx={{ justifyContent: 'space-between', py: 0.75, borderBottom: `1px dashed ${p.line}` }}>
-      <Typography sx={{ fontSize: 13, color: 'text.secondary' }}>{l}</Typography>
-      <Typography sx={{ fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: tone }}>{sign} {money(Math.abs(v), currency)}</Typography>
+  const line = (l: string, v: number, sign: '+' | '−' | '', tone?: string, hint?: string) => (
+    <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', py: 0.75, borderBottom: `1px dashed ${p.line}` }}>
+      <Typography sx={{ fontSize: 13, color: 'text.secondary' }}>{l}{hint && <Typography component="span" variant="caption"> · {hint}</Typography>}</Typography>
+      <Typography sx={{ fontSize: 13.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: tone, whiteSpace: 'nowrap' }}>{sign} {money(Math.abs(v), currency)}</Typography>
     </Stack>
   );
   return (
     <Card sx={{ p: 2.25, height: '100%', background: `linear-gradient(135deg, ${alpha(p.pos, 0.1)}, transparent 55%), ${p.panel}` }}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
         <AccountBalanceRoundedIcon sx={{ fontSize: 18, color: p.pos }} />
-        <Typography variant="overline" sx={{ color: p.fg2 }}>Caixa estimado hoje</Typography>
+        <Typography variant="overline" sx={{ color: p.fg2 }}>Caixa hoje</Typography>
       </Stack>
       {total == null ? (
         <Box sx={{ py: 1.5 }}>
           <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 22, mb: 0.75 }}>Informe o saldo do banco para começar</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, maxWidth: 520 }}>
-            A partir do saldo conferido, o caixa soma a receita dos sites, tira Google, Meta, IVA e os custos lançados, e considera aportes e retiradas.
+            A partir do saldo conferido, o caixa soma as receitas recebidas, tira os gastos pagos e os custos fixos, e considera aportes e retiradas.
           </Typography>
           <Button variant="contained" size="small" onClick={onBalance} startIcon={<AccountBalanceRoundedIcon />}>Conferir saldo</Button>
         </Box>
@@ -121,45 +176,47 @@ function CashCard({ data, onBalance }: { data: FinanceOverview; onBalance: () =>
         <>
           <Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: { xs: 32, md: 40 }, letterSpacing: '-.02em', color: total < 0 ? p.neg : p.fg, my: 0.5, fontVariantNumeric: 'tabular-nums' }}>{money(total, currency)}</Typography>
           {one && one.anchor ? (
-            <Box sx={{ mt: 1, maxWidth: 560 }}>
+            <Box sx={{ mt: 1, maxWidth: 580 }}>
               {line(`Saldo conferido em ${ddmmyyyy(one.anchor.date)}`, one.anchor.amount, '')}
-              {line('Resultado desde então (receita − anúncios)', one.resultSince, one.resultSince < 0 ? '−' : '+', one.resultSince < 0 ? p.neg : p.pos)}
-              {line('Custos pagos desde então', one.costsSince, '−', one.costsSince ? p.neg : undefined)}
+              {line('Receitas recebidas', one.income, '+', p.pos, 'desde o saldo')}
+              {line('Gastos pagos', one.expenses, '−', one.expenses ? p.neg : undefined, 'Google Ads, Meta…')}
+              {line('Custos fixos pagos', one.costsSince, '−', one.costsSince ? p.neg : undefined, 'da aba Custos')}
               {(one.deposits > 0 || one.withdrawals > 0) && line('Aportes − retiradas', one.deposits - one.withdrawals, one.deposits - one.withdrawals < 0 ? '−' : '+')}
             </Box>
           ) : (
-            <TableContainer sx={{ mt: 1 }}><Table size="small">
-              <TableHead><TableRow><TableCell>Empresa</TableCell><TableCell align="right">Saldo conferido</TableCell><TableCell align="right">Resultado</TableCell><TableCell align="right">Custos pagos</TableCell><TableCell align="right">Caixa</TableCell></TableRow></TableHead>
+            <TableContainer sx={{ mt: 1, overflowX: 'auto' }}><Table size="small" sx={{ '& td, & th': { px: 1, fontSize: 13 }, '& td:first-of-type, & th:first-of-type': { pl: 0 }, '& td:last-of-type, & th:last-of-type': { pr: 0 } }}>
+              <TableHead><TableRow><TableCell>Empresa</TableCell><TableCell align="right">Saldo conferido</TableCell><TableCell align="right">Receitas</TableCell><TableCell align="right">Gastos</TableCell><TableCell align="right">Custos fixos</TableCell><TableCell align="right">Caixa</TableCell></TableRow></TableHead>
               <TableBody>{cos.map((c) => (
                 <TableRow key={c.companyId} sx={{ '& td': { whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' } }}>
                   <TableCell><b>{c.companyName}</b><Typography variant="caption" component="div" sx={{ color: c.anchor ? undefined : p.warn }}>{c.anchor ? `conferido em ${ddmmyyyy(c.anchor.date)}` : 'sem saldo conferido'}</Typography></TableCell>
                   <TableCell align="right">{c.anchor ? money(c.anchor.amount, currency) : '—'}</TableCell>
-                  <TableCell align="right" sx={{ color: c.resultSince < 0 ? p.neg : p.pos }}>{c.anchor ? money(c.resultSince, currency) : '—'}</TableCell>
-                  <TableCell align="right">{c.anchor ? money(c.costsSince, currency) : '—'}</TableCell>
+                  <TableCell align="right" sx={{ color: p.pos }}>{c.anchor ? `+ ${money(c.income, currency)}` : '—'}</TableCell>
+                  <TableCell align="right">{c.anchor ? `− ${money(c.expenses, currency)}` : '—'}</TableCell>
+                  <TableCell align="right">{c.anchor ? `− ${money(c.costsSince, currency)}` : '—'}</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>{c.balance == null ? '—' : money(c.balance, currency)}</TableCell>
                 </TableRow>
               ))}</TableBody>
             </Table></TableContainer>
           )}
           {missing.length > 0 && cos.length > 1 && <Typography variant="caption" component="p" sx={{ mt: 1, color: p.warn }}>{missing.map((c) => c.companyName).join(', ')} ainda sem saldo conferido: fora da soma.</Typography>}
-          <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>Estimado: a receita do Ad Manager entra no dia em que foi gerada, não no dia do pagamento. Confira o saldo do banco de tempos em tempos para zerar a diferença.</Typography>
+          <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>Confira o saldo do banco de tempos em tempos: o caixa recomeça do último saldo conferido.</Typography>
         </>
       )}
     </Card>
   );
 }
 
-/** Mês atual (parcial) com a comparação com o mês anterior inteiro. */
-function MonthNow({ m, prev }: { m: MonthClose | null; prev: MonthClose | null }) {
+/** Mês atual até hoje, comparado com o resultado do mês anterior. */
+function MonthNow({ m, prev }: { m: CashMonth | null; prev: CashMonth | null }) {
   const { pluto: p } = useTheme();
   const { currency } = useFilters();
   if (!m) return <Card sx={{ p: 2.25, height: '100%' }}><Typography variant="overline">Este mês</Typography><Typography variant="body2" color="text.secondary">Inclua o mês atual no período para ver o parcial.</Typography></Card>;
-  const items: [string, number, string?][] = [['Receita', m.revenue, p.rev], ['Anúncios (Google + Meta + IVA)', -m.adSpend, p.spend], ['Custos lançados', -m.costs, p.warn]];
-  const max = Math.max(m.revenue, m.adSpend + m.costs, 1);
+  const items: [string, number, string][] = [['Receitas recebidas', m.income, p.pos], ['Gastos pagos', -m.expenses, p.spend], ['Custos fixos', -m.costs, p.warn]];
+  const max = Math.max(m.income, m.expenses, m.costs, 1);
   return (
     <Card sx={{ p: 2.25, height: '100%' }}>
       <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="overline">{monthTitle(m.month)} · parcial</Typography>
+        <Typography variant="overline">{monthTitle(m.month)}</Typography>
         <Chip size="small" label="até hoje" sx={{ height: 20, fontSize: 11, color: p.warn, bgcolor: alpha(p.warn, 0.14) }} />
       </Stack>
       <Stack spacing={1.1} sx={{ mt: 1.25 }}>
@@ -181,8 +238,15 @@ function MonthNow({ m, prev }: { m: MonthClose | null; prev: MonthClose | null }
   );
 }
 
-/** Tabela do fechamento: um mês por linha, abre a quebra dos custos por categoria e por Empresa. */
-function CloseTable({ data }: { data: FinanceOverview }) {
+const kindChip = (k: EntryKind) => {
+  const d = KIND[k];
+  return <Chip size="small" label={d.short} sx={{ height: 20, fontSize: 11.5, fontWeight: 600, color: d.color, bgcolor: alpha(d.color, 0.14) }} />;
+};
+/** Valor com sinal: + receita/aporte · − gasto/retirada · saldo conferido sem sinal. */
+const signed = (e: CashEntry, cur: Currency) => `${KIND[e.kind].sign === '=' ? '' : KIND[e.kind].sign + ' '}${money(e.converted, cur)}`;
+
+/** Fechamento: um mês por linha; abre os lançamentos do mês e os custos fixos por categoria. */
+function CloseTable({ data, onEdit, onAttach }: { data: CashOverview; onEdit: (e: CashEntry) => void; onAttach: (e: CashEntry) => void }) {
   const { pluto: p } = useTheme();
   const { currency } = useFilters();
   const [open, setOpen] = useState<Set<string>>(new Set([NOW]));
@@ -197,42 +261,44 @@ function CloseTable({ data }: { data: FinanceOverview }) {
       <Box sx={{ width: 44, height: 6, borderRadius: 3, bgcolor: p.panel3, overflow: 'hidden', display: { xs: 'none', md: 'block' } }}><Box sx={{ width: `${(Math.abs(v) / maxAbs) * 100}%`, height: '100%', bgcolor: v < 0 ? p.neg : p.pos }} /></Box>
     </Stack>
   );
+  const T = data.totals;
   return (
     <TableContainer>
       <Table size="small" sx={{ '& td, & th': { py: 1.1 } }}>
         <TableHead><TableRow>
           <TableCell>Mês</TableCell>
-          {['Receita', 'Google Ads', 'Meta Ads', 'IVA', 'Custos', 'Resultado', 'Margem'].map((h) => <TableCell key={h} align="right">{h}</TableCell>)}
+          {['Receitas recebidas', 'Google Ads', 'Meta Ads', 'Outros gastos', 'Custos fixos', 'Resultado', 'Margem'].map((h) => <TableCell key={h} align="right">{h}</TableCell>)}
         </TableRow></TableHead>
         <TableBody>
           <TableRow sx={{ '& td': { bgcolor: p.panel2, fontWeight: 700 } }}>
             <TableCell>Total · {months.length} {months.length === 1 ? 'mês' : 'meses'}</TableCell>
-            <TableCell align="right" sx={num}>{money(data.totals.revenue, currency)}</TableCell>
-            <TableCell align="right" sx={num}>{money(data.totals.googleSpend, currency)}</TableCell>
-            <TableCell align="right" sx={num}>{money(data.totals.metaSpend, currency)}</TableCell>
-            <TableCell align="right" sx={num}>{money(data.totals.iva, currency)}</TableCell>
-            <TableCell align="right" sx={num}>{money(data.totals.costs, currency)}</TableCell>
-            <TableCell align="right" sx={num}>{resultCell(data.totals.result, true)}</TableCell>
-            <TableCell align="right">{pct0(data.totals.margin)}</TableCell>
+            <TableCell align="right" sx={{ ...num, color: p.pos }}>{money(T.income, currency)}</TableCell>
+            <TableCell align="right" sx={num}>{money(T.googleAds, currency)}</TableCell>
+            <TableCell align="right" sx={num}>{money(T.metaAds, currency)}</TableCell>
+            <TableCell align="right" sx={num}>{money(T.otherExpense, currency)}</TableCell>
+            <TableCell align="right" sx={num}>{money(T.costs, currency)}</TableCell>
+            <TableCell align="right" sx={num}>{resultCell(T.result, true)}</TableCell>
+            <TableCell align="right">{pct0(T.margin)}</TableCell>
           </TableRow>
           {months.map((m) => {
             const isOpen = open.has(m.month);
             const cats = COST_CATEGORIES.filter((c) => m.costsByCategory[c.key]);
+            const empty = !m.entries.length && !m.costs;
             return (
               <Fragment key={m.month}>
-                <TableRow hover sx={{ cursor: 'pointer' }} onClick={() => setOpen((s) => { const n = new Set(s); if (n.has(m.month)) n.delete(m.month); else n.add(m.month); return n; })}>
+                <TableRow hover sx={{ cursor: 'pointer' }} onClick={() => setOpen((s) => { const n = new Set(s); if (n.has(m.month)) n.delete(m.month); else n.add(m.month); return n; })} aria-expanded={isOpen}>
                   <TableCell>
                     <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
                       <ChevronRightRoundedIcon sx={{ fontSize: 18, color: 'text.disabled', transform: isOpen ? 'rotate(90deg)' : 'none', transition: '.15s' }} />
                       <Typography sx={{ fontWeight: 600, fontSize: 13.5 }}>{monthTitle(m.month)}</Typography>
-                      {m.partial ? <Chip size="small" label="parcial" sx={{ height: 18, fontSize: 11, color: p.warn, bgcolor: alpha(p.warn, 0.15) }} />
+                      {m.partial ? <Chip size="small" label="em andamento" sx={{ height: 18, fontSize: 11, color: p.warn, bgcolor: alpha(p.warn, 0.15) }} />
                         : <Chip size="small" label="fechado" sx={{ height: 18, fontSize: 11, color: p.fg2, bgcolor: p.panel3 }} />}
                     </Stack>
                   </TableCell>
-                  <TableCell align="right" sx={num}>{money(m.revenue, currency)}</TableCell>
-                  <TableCell align="right" sx={num}>{money(m.googleSpend, currency)}</TableCell>
-                  <TableCell align="right" sx={num}>{money(m.metaSpend, currency)}</TableCell>
-                  <TableCell align="right" sx={num}>{money(m.iva, currency)}</TableCell>
+                  <TableCell align="right" sx={{ ...num, color: m.income ? p.pos : undefined }}>{money(m.income, currency)}</TableCell>
+                  <TableCell align="right" sx={num}>{money(m.googleAds, currency)}</TableCell>
+                  <TableCell align="right" sx={num}>{money(m.metaAds, currency)}</TableCell>
+                  <TableCell align="right" sx={num}>{money(m.otherExpense, currency)}</TableCell>
                   <TableCell align="right" sx={num}>{money(m.costs, currency)}</TableCell>
                   <TableCell align="right" sx={num}>{resultCell(m.result)}</TableCell>
                   <TableCell align="right">{pct0(m.margin)}</TableCell>
@@ -240,27 +306,43 @@ function CloseTable({ data }: { data: FinanceOverview }) {
                 {isOpen && (
                   <TableRow>
                     <TableCell colSpan={8} sx={{ bgcolor: alpha(p.panel2, 0.6), py: 1.5 }}>
-                      <Grid container spacing={2}>
-                        <Grid size={{ xs: 12, md: showCo ? 6 : 12 }}>
-                          <Typography variant="overline">Custos por categoria</Typography>
-                          {cats.length ? (
-                            <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap', mt: 0.5 }}>
-                              {cats.map((c) => <Chip key={c.key} size="small" label={`${CATEGORY[c.key].label} · ${money(m.costsByCategory[c.key]!, currency)}`} sx={{ bgcolor: alpha(c.color, 0.14), color: c.color, fontWeight: 600 }} />)}
-                            </Stack>
-                          ) : <Typography variant="caption" component="div">Nenhum custo lançado neste mês. <RouterLink to="/finance/custos" style={{ color: p.accent }}>Lançar custos</RouterLink></Typography>}
-                        </Grid>
-                        {showCo && (
-                          <Grid size={{ xs: 12, md: 6 }}>
-                            <Typography variant="overline">Por Empresa</Typography>
-                            {m.companies.map((c) => (
-                              <Stack key={c.companyId} direction="row" spacing={1} sx={{ justifyContent: 'space-between', fontSize: 13, py: 0.4 }}>
-                                <span>{cos.get(c.companyId)}</span>
-                                <Box component="span" sx={{ color: 'text.secondary', ...num }}>receita {money(c.revenue, currency)} · anúncios {money(c.adSpend, currency)} · custos {money(c.costs, currency)} · <b style={{ color: c.result < 0 ? p.neg : p.pos }}>{money(c.result, currency)}</b></Box>
+                      {empty ? <Typography variant="caption">Nenhum lançamento nem custo neste mês. Use os botões do topo para lançar a receita recebida e os gastos pagos.</Typography> : (
+                        <Grid container spacing={2}>
+                          <Grid size={{ xs: 12, md: 7 }}>
+                            <Typography variant="overline">Lançamentos do mês</Typography>
+                            {m.entries.length ? m.entries.map((e) => (
+                              <Stack key={e.id} direction="row" spacing={1} sx={{ alignItems: 'center', py: 0.5, borderBottom: `1px dashed ${p.line}` }}>
+                                <Typography sx={{ fontSize: 12.5, width: 44, flexShrink: 0, color: 'text.secondary' }}>{ddmmyyyy(e.date).slice(0, 5)}</Typography>
+                                {kindChip(e.kind)}
+                                <Typography sx={{ fontSize: 13, flex: 1, minWidth: 0 }} noWrap>{e.category ? ENTRY_CAT[e.category] : KIND[e.kind].label}{e.site ? <Typography component="span" sx={{ fontSize: 12.5, color: p.accent }}> · {e.site}</Typography> : null}{e.note ? <Typography component="span" variant="caption"> · {e.note}</Typography> : null}{showCo && <Typography component="span" variant="caption"> · {cos.get(e.companyId)}</Typography>}</Typography>
+                                <Typography sx={{ fontSize: 13, fontWeight: 600, ...num }}>{signed(e, currency)}</Typography>
+                                <AttachmentsButton count={e.attachments} required={e.kind === 'expense'} onClick={() => onAttach(e)} />
+                                <IconButton size="small" onClick={(ev) => { ev.stopPropagation(); onEdit(e); }} aria-label="Editar lançamento"><EditOutlinedIcon sx={{ fontSize: 16 }} /></IconButton>
                               </Stack>
-                            ))}
+                            )) : <Typography variant="caption" component="div">Nenhum lançamento manual neste mês.</Typography>}
                           </Grid>
-                        )}
-                      </Grid>
+                          <Grid size={{ xs: 12, md: 5 }}>
+                            <Typography variant="overline">Custos fixos (aba Custos)</Typography>
+                            {cats.length ? (
+                              <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap', mt: 0.5 }}>
+                                {cats.map((c) => <Chip key={c.key} size="small" label={`${CATEGORY[c.key].label} · ${money(m.costsByCategory[c.key]!, currency)}`} sx={{ bgcolor: alpha(c.color, 0.14), color: c.color, fontWeight: 600 }} />)}
+                              </Stack>
+                            ) : <Typography variant="caption" component="div">Nenhum custo neste mês. <RouterLink to="/finance/custos" style={{ color: p.accent }}>Lançar custos</RouterLink></Typography>}
+                            {(m.deposits > 0 || m.withdrawals > 0) && <Typography variant="caption" component="div" sx={{ mt: 1 }}>Aportes {money(m.deposits, currency)} · retiradas {money(m.withdrawals, currency)} (mexem no caixa, não no resultado)</Typography>}
+                            {showCo && (
+                              <Box sx={{ mt: 1.25 }}>
+                                <Typography variant="overline">Por Empresa</Typography>
+                                {m.companies.map((c) => (
+                                  <Stack key={c.companyId} direction="row" spacing={1} sx={{ justifyContent: 'space-between', fontSize: 13, py: 0.3 }}>
+                                    <span>{cos.get(c.companyId)}</span>
+                                    <b style={{ color: c.result < 0 ? p.neg : p.pos, fontVariantNumeric: 'tabular-nums' }}>{money(c.result, currency)}</b>
+                                  </Stack>
+                                ))}
+                              </Box>
+                            )}
+                          </Grid>
+                        </Grid>
+                      )}
                     </TableCell>
                   </TableRow>
                 )}
@@ -273,79 +355,174 @@ function CloseTable({ data }: { data: FinanceOverview }) {
   );
 }
 
-const KIND_LABEL = { balance: 'Saldo conferido', deposit: 'Aporte', withdrawal: 'Retirada' } as const;
+type Filter = 'all' | 'income' | 'expense' | 'moves' | 'balance';
+const FILTERS: { key: Filter; label: string; kinds: EntryKind[] }[] = [
+  { key: 'all', label: 'Todos', kinds: ['income', 'expense', 'deposit', 'withdrawal', 'balance'] },
+  { key: 'income', label: 'Receitas', kinds: ['income'] },
+  { key: 'expense', label: 'Gastos', kinds: ['expense'] },
+  { key: 'moves', label: 'Aportes e retiradas', kinds: ['deposit', 'withdrawal'] },
+  { key: 'balance', label: 'Saldos', kinds: ['balance'] },
+];
 
-/** Lançamentos do caixa (saldos conferidos, aportes, retiradas). */
-function Entries({ cash, showCompany }: { cash: CashCompany[]; showCompany: boolean }) {
+/** Todos os lançamentos manuais (últimos 50 por Empresa), com filtro, editar e excluir. */
+function Entries({ data, onEdit, onAttach }: { data: CashOverview; onEdit: (e: CashEntry) => void; onAttach: (e: CashEntry) => void }) {
   const { pluto: p } = useTheme();
   const { currency } = useFilters();
-  const [del, setDel] = useState<{ id: string; label: string } | null>(null);
-  const remove = useFinanceMutation(financeApi.deleteCash);
-  const rows = cash.flatMap((c) => c.entries.map((e) => ({ ...e, company: c.companyName }))).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
-  if (!rows.length) return null;
+  const [filter, setFilter] = useState<Filter>('all');
+  const [del, setDel] = useState<CashEntry | null>(null);
+  const remove = useFinanceMutation(cashApi.remove);
+  const showCompany = !data.selected && data.companies.length > 1;
+  const names = new Map(data.cash.companies.map((c: CashCompany) => [c.companyId, c.companyName]));
+  const kinds = FILTERS.find((f) => f.key === filter)!.kinds;
+  const all = data.cash.companies.flatMap((c) => c.entries).sort((a, b) => b.date.localeCompare(a.date) || Number(b.id) - Number(a.id));
+  const rows = all.filter((e) => kinds.includes(e.kind));
+  const missingNf = all.filter((e) => e.kind === 'expense' && !e.attachments).length;
   return (
     <Card sx={{ mt: 1.75 }}>
-      <CardHeader title="Lançamentos do caixa" subheader="Saldos conferidos no banco, aportes e retiradas" />
+      <CardHeader title="Lançamentos" subheader="Tudo o que foi lançado à mão no caixa · clique no clipe para anexar a NF (link do Drive ou PDF)"
+        action={missingNf > 0 ? <Chip size="small" label={`${missingNf} gasto${missingNf > 1 ? 's' : ''} sem NF`} onClick={() => setFilter('expense')} sx={{ color: p.warn, bgcolor: alpha(p.warn, 0.14), fontWeight: 600 }} /> : undefined} />
+      <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap', px: 2, pb: 1.25 }}>
+        {FILTERS.map((f) => {
+          const n = all.filter((e) => f.kinds.includes(e.kind)).length;
+          return <Chip key={f.key} label={`${f.label} · ${n}`} onClick={() => setFilter(f.key)} color={filter === f.key ? 'primary' : 'default'} variant={filter === f.key ? 'filled' : 'outlined'} size="small" />;
+        })}
+      </Stack>
       <TableContainer><Table size="small">
-        <TableHead><TableRow><TableCell>Data</TableCell>{showCompany && <TableCell>Empresa</TableCell>}<TableCell>Tipo</TableCell><TableCell>Observação</TableCell><TableCell align="right">Valor</TableCell><TableCell /></TableRow></TableHead>
-        <TableBody>{rows.map((e) => (
-          <TableRow key={e.id}>
-            <TableCell sx={{ whiteSpace: 'nowrap' }}>{ddmmyyyy(e.date)}</TableCell>
-            {showCompany && <TableCell>{e.company}</TableCell>}
-            <TableCell><Chip size="small" label={KIND_LABEL[e.kind]} sx={{ height: 20, fontSize: 11.5, color: e.kind === 'withdrawal' ? p.neg : e.kind === 'deposit' ? p.pos : p.accent, bgcolor: alpha(e.kind === 'withdrawal' ? p.neg : e.kind === 'deposit' ? p.pos : p.accent, 0.14) }} /></TableCell>
-            <TableCell sx={{ color: 'text.secondary', whiteSpace: 'normal' }}>{e.note || '—'}{e.createdBy && <Typography variant="caption" component="span"> · {e.createdBy}</Typography>}</TableCell>
-            <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>
-              {e.kind === 'withdrawal' ? '− ' : e.kind === 'deposit' ? '+ ' : ''}{money(e.converted, currency)}
-              {e.currency !== currency && <Typography variant="caption" component="div">{money(e.amount, e.currency)}</Typography>}
-            </TableCell>
-            <TableCell align="right"><Tooltip title="Excluir lançamento"><IconButton size="small" onClick={() => setDel({ id: e.id, label: `${KIND_LABEL[e.kind]} de ${ddmmyyyy(e.date)}` })} aria-label="Excluir lançamento"><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip></TableCell>
-          </TableRow>
-        ))}</TableBody>
+        <TableHead><TableRow><TableCell>Data</TableCell>{showCompany && <TableCell>Empresa</TableCell>}<TableCell>Tipo</TableCell><TableCell>Origem / destino</TableCell><TableCell>Site</TableCell><TableCell>Observação</TableCell><TableCell align="right">Valor</TableCell><TableCell align="center">NF</TableCell><TableCell /></TableRow></TableHead>
+        <TableBody>
+          {rows.map((e) => (
+            <TableRow key={e.id}>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>{ddmmyyyy(e.date)}</TableCell>
+              {showCompany && <TableCell>{names.get(e.companyId)}</TableCell>}
+              <TableCell>{kindChip(e.kind)}</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>{e.category ? ENTRY_CAT[e.category] : '—'}</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>{e.site ?? <Typography variant="caption">—</Typography>}{e.site && e.competence && e.competence !== e.date.slice(0, 7) && <Typography variant="caption" component="div">ref. {monthShort(e.competence)}</Typography>}</TableCell>
+              <TableCell sx={{ color: 'text.secondary', whiteSpace: 'normal' }}>{e.note || '—'}{e.createdBy && <Typography variant="caption" component="span"> · {e.createdBy}</Typography>}</TableCell>
+              <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                {signed(e, currency)}
+                {e.currency !== currency && <Typography variant="caption" component="div">{money(e.amount, e.currency)}</Typography>}
+                {e.revsharePct != null && e.grossAmount != null && <Typography variant="caption" component="div">bruto {money(e.grossAmount, e.currency)} − {String(e.revsharePct).replace('.', ',')}% revshare</Typography>}
+              </TableCell>
+              <TableCell align="center">{e.kind === 'balance' ? null : <AttachmentsButton count={e.attachments} required={e.kind === 'expense'} onClick={() => onAttach(e)} />}</TableCell>
+              <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                <Tooltip title="Editar"><IconButton size="small" onClick={() => onEdit(e)} aria-label="Editar lançamento"><EditOutlinedIcon fontSize="small" /></IconButton></Tooltip>
+                <Tooltip title="Excluir"><IconButton size="small" onClick={() => setDel(e)} aria-label="Excluir lançamento"><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip>
+              </TableCell>
+            </TableRow>
+          ))}
+          {!rows.length && <TableRow><TableCell colSpan={showCompany ? 9 : 8} align="center" sx={{ py: 4, color: 'text.disabled' }}>{all.length ? 'Nenhum lançamento deste tipo.' : 'Nenhum lançamento ainda. Comece conferindo o saldo do banco.'}</TableCell></TableRow>}
+        </TableBody>
       </Table></TableContainer>
       <ConfirmDialog open={!!del} title="Excluir lançamento?" busy={remove.isPending} onClose={() => setDel(null)} onConfirm={() => del && remove.mutate(del.id, { onSuccess: () => setDel(null) })}>
-        <b>{del?.label}</b> sai do caixa. Se era o último saldo conferido, o caixa passa a contar a partir do anterior.
+        <b>{del ? `${KIND[del.kind].label} de ${ddmmyyyy(del.date)} · ${money(del.converted, currency)}` : ''}</b> sai do caixa e do fechamento.
+        {del?.kind === 'balance' && ' O caixa passa a contar a partir do saldo conferido anterior.'}
       </ConfirmDialog>
     </Card>
   );
 }
 
-/** Conferir saldo (valor do banco hoje/numa data) ou lançar aporte/retirada. */
-function CashDialog({ kind, data, onClose }: { kind: 'balance' | 'move'; data: FinanceOverview; onClose: () => void }) {
+const parseMoney = (s: string) => Number(s.trim().replace(/\s/g, '').replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.'));
+
+/** Lançar ou editar: receita recebida, gasto pago, aporte, retirada ou saldo conferido. */
+function EntryDialog({ initialKind, entry, data, onClose }: { initialKind: EntryKind; entry?: CashEntry; data: CashOverview; onClose: () => void }) {
   const { currency } = useFilters();
-  const [f, setF] = useState<CashInput>({ companyId: data.selected ?? data.companies[0]?.id ?? '', date: todayISO(), kind: kind === 'balance' ? 'balance' : 'deposit', amount: 0, currency: currency === 'USD' ? 'BRL' : currency, note: '' });
-  const [amount, setAmount] = useState('');
+  const [f, setF] = useState<CashEntryInput>(entry
+    ? { id: entry.id, companyId: entry.companyId, date: entry.date, kind: entry.kind, category: entry.category, amount: entry.amount, currency: entry.currency, note: entry.note ?? '', site: entry.site ?? '', competence: entry.competence ?? null }
+    : { companyId: data.selected ?? data.companies[0]?.id ?? '', date: todayISO(), kind: initialKind, category: initialKind === 'income' ? 'adx' : initialKind === 'expense' ? 'google_ads' : null, amount: 0, currency: currency === 'EUR' ? 'EUR' : 'BRL', note: '', site: '',
+        // receita do AdX costuma cair no mês seguinte: já sugere "referente ao mês passado"
+        competence: initialKind === 'income' ? shiftMonth(todayISO().slice(0, 7), -1) : null });
+  const sitesQ = useQuery({ queryKey: ['finance', 'sites'], queryFn: () => sitesApi.list({}) });
+  const flow = f.kind === 'income' || f.kind === 'expense';
+  const refMonths = useMemo(() => monthOptions(24, 0).filter((m) => m <= f.date.slice(0, 7)), [f.date]);
+  const [amount, setAmount] = useState(entry ? String(entry.grossAmount ?? entry.amount).replace('.', ',') : '');
+  // receita: o valor informado já tem o revshare do parceiro descontado? ('net' = sim · 'gross' = não, o dash desconta)
+  const [rsMode, setRsMode] = useState<'net' | 'gross'>(entry?.revsharePct != null ? 'gross' : 'net');
+  const [rsPct, setRsPct] = useState(entry?.revsharePct != null ? String(entry.revsharePct).replace('.', ',') : '');
+  const siteRs = (sitesQ.data?.sites ?? []).find((s) => s.companyId === f.companyId && s.site === (f.site ?? '').trim().toLowerCase())?.revshare;
+  const pctNum = rsPct.trim() ? parseMoney(rsPct) : siteRs ?? DEFAULT_REVSHARE;
+  const gross = parseMoney(amount);
+  const discount = f.kind === 'income' && rsMode === 'gross' && isFinite(gross) && gross > 0;
+  const net = discount ? Math.round(gross * (1 - pctNum / 100) * 100) / 100 : gross;
   const [err, setErr] = useState('');
-  const save = useFinanceMutation(financeApi.addCash);
+  const save = useFinanceMutation(cashApi.save);
+  const setKind = (k: EntryKind) => setF((x) => ({ ...x, kind: k, category: k === 'income' ? (x.kind === 'income' ? x.category : 'adx') : k === 'expense' ? (x.kind === 'expense' ? x.category : 'google_ads') : null }));
+  const cats = f.kind === 'income' ? INCOME_CATS : f.kind === 'expense' ? EXPENSE_CATS : null;
+  const groups: EntryKind[][] = initialKind === 'deposit' || initialKind === 'withdrawal' ? [['deposit', 'withdrawal']] : [ENTRY_KINDS.map((k) => k.key)];
   const submit = () => {
-    const v = Number(amount.replace(/\./g, '').replace(',', '.'));
+    const v = parseMoney(amount);
     if (!amount.trim() || !isFinite(v)) return setErr('Informe o valor.');
-    if (kind === 'move' && v <= 0) return setErr('O valor precisa ser maior que zero.');
-    save.mutate({ ...f, amount: v, note: f.note || null }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
+    if (f.kind !== 'balance' && v <= 0) return setErr('O valor precisa ser maior que zero.');
+    if (f.kind === 'income' && rsMode === 'gross' && !(pctNum >= 0 && pctNum < 100)) return setErr('Informe o % do revshare (entre 0 e 100).');
+    save.mutate({ ...f, amount: v, note: f.note || null, site: flow ? (f.site ?? '').trim() || null : null, competence: flow ? f.competence ?? null : null,
+      revsharePct: f.kind === 'income' && rsMode === 'gross' ? pctNum : null }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
   };
+  const title = entry ? 'Editar lançamento' : f.kind === 'income' ? 'Lançar receita recebida' : f.kind === 'expense' ? 'Lançar gasto pago' : f.kind === 'balance' ? 'Conferir saldo do banco' : 'Aporte ou retirada';
   return (
     <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{kind === 'balance' ? 'Conferir saldo do banco' : 'Aporte ou retirada'}</DialogTitle>
+      <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <Stack spacing={1.75} sx={{ mt: 0.5 }}>
-          {kind === 'balance' && <Typography variant="body2" color="text.secondary">O saldo que está no banco no fim do dia escolhido. O caixa passa a contar a partir dele.</Typography>}
+          {(entry || groups[0].length === 2) && (
+            <ToggleButtonGroup exclusive size="small" value={f.kind} onChange={(_, v) => v && setKind(v)} fullWidth sx={{ flexWrap: 'wrap' }}>
+              {(entry ? ENTRY_KINDS.map((k) => k.key) : groups[0]).map((k) => <ToggleButton key={k} value={k} sx={{ fontSize: 12 }}>{KIND[k].short}</ToggleButton>)}
+            </ToggleButtonGroup>
+          )}
+          <Typography variant="body2" color="text.secondary">{KIND[f.kind].hint}</Typography>
           {data.companies.length > 1 && (
             <TextField select size="small" label="Empresa" value={f.companyId} onChange={(e) => setF({ ...f, companyId: e.target.value })}>
               {data.companies.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
             </TextField>
           )}
-          {kind === 'move' && (
-            <ToggleButtonGroup exclusive size="small" value={f.kind} onChange={(_, v) => v && setF({ ...f, kind: v })} fullWidth>
-              <ToggleButton value="deposit">Aporte (entrou)</ToggleButton><ToggleButton value="withdrawal">Retirada (saiu)</ToggleButton>
-            </ToggleButtonGroup>
+          {cats && (
+            <TextField select size="small" label={f.kind === 'income' ? 'De onde veio' : 'Gasto com'} value={f.category ?? ''} onChange={(e) => setF({ ...f, category: e.target.value as CashEntryInput['category'] })}>
+              {cats.map((c) => <MenuItem key={c.key} value={c.key}>{c.label}</MenuItem>)}
+            </TextField>
           )}
           <Stack direction="row" spacing={1}>
-            <TextField size="small" label={kind === 'balance' ? 'Saldo' : 'Valor'} value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus inputMode="decimal" placeholder="0,00" sx={{ flex: 1 }} error={!!err} />
+            <TextField size="small" label={f.kind === 'balance' ? 'Saldo no banco' : f.kind === 'income' && rsMode === 'gross' ? 'Valor bruto (sem o revshare)' : 'Valor'} value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus inputMode="decimal" placeholder="0,00" sx={{ flex: 1 }} error={!!err} />
             <TextField select size="small" label="Moeda" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value as Currency })} sx={{ width: 96 }}>
               {(['BRL', 'USD', 'EUR'] as Currency[]).map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
             </TextField>
           </Stack>
-          <TextField size="small" type="date" label="Data" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: todayISO() } }} />
-          <TextField size="small" label="Observação (opcional)" value={f.note ?? ''} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder={kind === 'balance' ? 'ex.: extrato Banco X' : 'ex.: distribuição de lucro'} />
+          <TextField size="small" type="date" label={f.kind === 'income' ? 'Data em que caiu na conta' : f.kind === 'expense' ? 'Data do pagamento' : 'Data'} value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: todayISO() } }} />
+          {flow && (
+            <Stack direction="row" spacing={1}>
+              <Autocomplete freeSolo size="small" sx={{ flex: 1.4 }} value={f.site ?? ''} onInputChange={(_, v) => setF((x) => ({ ...x, site: v }))}
+                options={(sitesQ.data?.sites ?? []).filter((s) => s.companyId === f.companyId).map((s) => s.site)}
+                renderInput={(pr) => <TextField {...pr} label="Site (para Comissões)" placeholder="dominiox.com" />} />
+              <TextField select size="small" label="Referente a" value={f.competence ?? ''} onChange={(e) => setF({ ...f, competence: e.target.value || null })} sx={{ flex: 1 }}
+                slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
+                <MenuItem value="">mês da data</MenuItem>
+                {refMonths.map((m) => <MenuItem key={m} value={m}>{monthShort(m)}</MenuItem>)}
+              </TextField>
+            </Stack>
+          )}
+          {f.kind === 'income' && (
+            <Box>
+              <Typography variant="caption" component="div" sx={{ mb: 0.5 }}>O valor acima já tem o revshare do parceiro descontado?</Typography>
+              <ToggleButtonGroup exclusive size="small" fullWidth value={rsMode} onChange={(_, v) => v && setRsMode(v)}>
+                <ToggleButton value="net" sx={{ fontSize: 12 }}>Sim, já descontado</ToggleButton>
+                <ToggleButton value="gross" sx={{ fontSize: 12 }}>Não, descontar agora</ToggleButton>
+              </ToggleButtonGroup>
+              {rsMode === 'gross' ? (
+                <Box sx={{ mt: 1, p: 1.25, borderRadius: 1.5, border: 1, borderColor: 'divider' }}>
+                  <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.75 }}>
+                    <Typography sx={{ fontSize: 13, flex: 1 }}>Revshare do parceiro</Typography>
+                    <TextField size="small" value={rsPct} onChange={(e) => setRsPct(e.target.value)} placeholder={String(siteRs ?? DEFAULT_REVSHARE).replace('.', ',')} sx={{ width: 96 }}
+                      slotProps={{ input: { endAdornment: <Typography variant="caption">%</Typography> } }} />
+                  </Stack>
+                  <Stack direction="row" sx={{ justifyContent: 'space-between' }}><Typography variant="caption">Valor informado (bruto)</Typography><Typography sx={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>{isFinite(gross) && gross > 0 ? money(gross, f.currency) : '—'}</Typography></Stack>
+                  <Stack direction="row" sx={{ justifyContent: 'space-between' }}><Typography variant="caption">− Revshare {String(Math.round(pctNum * 100) / 100).replace('.', ',')}%</Typography><Typography sx={{ fontSize: 13, color: 'warning.main', fontVariantNumeric: 'tabular-nums' }}>{discount ? `− ${money(gross - net, f.currency)}` : '—'}</Typography></Stack>
+                  <Stack direction="row" sx={{ justifyContent: 'space-between', borderTop: 1, borderColor: 'divider', mt: 0.5, pt: 0.5 }}><Typography sx={{ fontSize: 13, fontWeight: 700 }}>Entra no caixa</Typography><Typography sx={{ fontSize: 14, fontWeight: 700, color: 'success.main', fontVariantNumeric: 'tabular-nums' }}>{discount ? money(net, f.currency) : '—'}</Typography></Stack>
+                  <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>{siteRs != null && !rsPct.trim() ? 'Usando o % cadastrado neste domínio no dash.' : rsPct.trim() ? 'Usando o % informado.' : 'Sem % cadastrado para o site: usando 7,5%.'}</Typography>
+                </Box>
+              ) : (
+                <Typography variant="caption" component="div" sx={{ mt: 0.75 }}>O valor entra no caixa como está (é o que caiu no banco), sem descontar de novo.</Typography>
+              )}
+            </Box>
+          )}
+          <TextField size="small" label="Observação (opcional)" value={f.note ?? ''} onChange={(e) => setF({ ...f, note: e.target.value })}
+            placeholder={f.kind === 'income' ? 'ex.: pagamento AdX de setembro' : f.kind === 'expense' ? 'ex.: fatura cartão final 4821' : f.kind === 'balance' ? 'ex.: extrato Banco X' : 'ex.: distribuição de lucro'} />
           {err && <Alert severity="error" variant="outlined">{err}</Alert>}
         </Stack>
       </DialogContent>

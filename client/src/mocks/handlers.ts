@@ -456,6 +456,18 @@ function debugUtm(raw: string): T.UtmDebugResponse {
   checks.push(dom ? { level: dom.active ? 'ok' : 'warn', message: dom.active ? `Domínio cadastrado: ${dom.hostname}` : `Domínio ${dom.hostname} está inativo` } : { level: 'error', message: `Domínio não identificado: ${host}` });
   Object.entries(q).filter(([, v]) => /[{}]/.test(v)).forEach(([k, v]) => checks.push({ level: 'error', message: `Macro não substituída em ${k}`, detail: `Valor "${v}".` }));
   const [p1, p2] = (q.utm_content || '').split('_');
+  // formato do dash antigo (Google Ads): utm_campaign={creative} e utm_content={creative}_{placement}
+  const legacy = !isMeta && okv(q.utm_campaign) && ((q.utm_content || '') === q.utm_campaign || (q.utm_content || '').startsWith(q.utm_campaign + '_'));
+  if (legacy) {
+    const g = CAMPS.filter((x) => x.platform === 'google');
+    const lc = g[[...q.utm_campaign].reduce((a, ch) => a + ch.charCodeAt(0), 0) % g.length];   // no demo, qualquer criativo cai numa campanha de exemplo
+    const fields = { campaignId: lc?.id ?? null, adGroupId: null, creative: q.utm_campaign, keyword: q.utm_term ?? null, placement: (q.utm_content || '').slice(q.utm_campaign.length + 1) || null, network: q.network ?? null, device: q.device ?? null };
+    checks.push({ level: 'ok', message: 'Formato do dash antigo: utm_campaign={creative} e utm_content={creative}_{placement}', detail: 'Campanha e grupo encontrados pelo ID do criativo.' });
+    checks.push(okv(fields.placement ?? undefined) ? { level: 'ok', message: 'placement detectado' } : { level: 'warn', message: 'placement vazio' });
+    if (lc) checks.push({ level: 'ok', message: `Campanha localizada: ${lc.name}` });
+    const base = url.origin + url.pathname;
+    return { status: checks.some((x) => x.level === 'error') ? 'invalid' : 'valid', source, domain: host, campaign: lc ? { id: lc.id, name: lc.name } : null, fields, checks, preview: { google: base + '?' + UTM.google, meta: base + '?' + UTM.meta } };
+  }
   const fields: Record<string, string | null> = isMeta ? { campaignId: q.utm_campaign ?? null, adSetId: p1 ?? null, adId: p2 ?? null, placement: q.utm_term ?? null } : { campaignId: q.utm_campaign ?? null, adGroupId: p1 ?? null, creative: p2 ?? null, keyword: q.utm_term ?? null, placement: q.placement ?? null, network: q.network ?? null, device: q.device ?? null };
   const need = isMeta ? [['campaignId', 'campaign.id'], ['adSetId', 'adset.id'], ['adId', 'ad.id']] : [['campaignId', 'campaignid'], ['adGroupId', 'adgroupid']];
   need.forEach(([k, l]) => checks.push(okv(fields[k] ?? undefined) ? { level: 'ok', message: `${l} detectado` } : { level: 'error', message: `${l} ausente` }));

@@ -4,6 +4,8 @@
  *   métricas REVENUE, IMPRESSIONS, AD_REQUESTS, RESPONSES_SERVED, CLICKS, ACTIVE_VIEW_VIEWABLE_IMPRESSIONS.
  * Atribuição: o site manda no GPT os key-values utm_campaign ({campaignid} / {{campaign.id}}) e
  * utm_content ({adgroupid}_{creative} / {{adset.id}}_{{ad.id}}). Linha sem key-value válido → receita
+ * (também aceita o formato do dash antigo do Google Ads: utm_campaign={creative} e utm_content={creative}_{placement};
+ *  o {creative} é o ID do anúncio, e dele saem o grupo e a campanha — veja attribute()),
  * "não atribuída" (platform = 'none' + motivo), nunca rateada entre campanhas.
  * Receita gravada BRUTA; o revShare do domínio é aplicado na consulta.
  * Rede × domínio: VALIDAÇÃO ESTRITA. Só entra a linha cujo domínio está ligado a ESTA rede em Domínios
@@ -84,22 +86,57 @@ export async function runReport(network: string, token: string, from: string, to
 }
 
 /** Índices de campanha/grupo/anúncio por id externo (Google e Meta). */
-async function attributionIndex() {
+export async function attributionIndex() {
   const camps = await q<{ id: string; ext: string; platform: 'google' | 'meta'; domain_id: string | null }>('SELECT id::text, external_id AS ext, platform, domain_id::text FROM campaigns');
   const groups = await q<{ id: string; ext: string; cid: string }>('SELECT id::text, external_id AS ext, campaign_id::text AS cid FROM ad_groups');
   const ads = await q<{ id: string; ext: string; gid: string }>('SELECT id::text, external_id AS ext, ad_group_id::text AS gid FROM ads');
+  // formato do dash antigo: o {creative} (ID do anúncio do Google Ads) sozinho → anúncio, grupo e campanha.
+  // Só entra ID que aparece uma vez (se o mesmo ID existir em dois lugares, não adivinha).
+  const gAds = await q<{ id: string; ext: string; gid: string; cid: string }>(`
+    SELECT a.id::text, a.external_id AS ext, a.ad_group_id::text AS gid, g.campaign_id::text AS cid
+      FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id WHERE c.platform = 'google'`);
+  const seen = new Map<string, number>();
+  for (const a of gAds) seen.set(a.ext, (seen.get(a.ext) ?? 0) + 1);
   return {
     camp: new Map(camps.map((c) => [c.ext, c])),
     group: new Map(groups.map((g) => [`${g.cid}|${g.ext}`, g.id])),
     ad: new Map(ads.map((a) => [`${a.gid}|${a.ext}`, a.id])),
+    creative: new Map(gAds.filter((a) => seen.get(a.ext) === 1).map((a) => [a.ext, a])),
   };
 }
 
 type Resolver = Awaited<ReturnType<typeof domainResolver>>;
+type Index = Awaited<ReturnType<typeof attributionIndex>>;
+
+/** Formato do dash antigo (Google Ads): utm_campaign={creative} e utm_content={creative}_{placement}. */
+export const isLegacyUtm = (campVal: string, content: string) => !!campVal && (content === campVal || content.startsWith(`${campVal}_`));
+
+/**
+ * Campanha, grupo e anúncio de uma linha do Ad Manager, nos dois formatos de UTM:
+ *   padrão do dash ........ utm_campaign={campaignid}   utm_content={adgroupid}_{creative}   (Meta: {{campaign.id}} / {{adset.id}}_{{ad.id}})
+ *   formato do dash antigo  utm_campaign={creative}     utm_content={creative}_{placement}   (só Google Ads)
+ * O formato antigo é reconhecido quando utm_content começa com o próprio utm_campaign + "_"; se o ID do utm_campaign não for
+ * de nenhuma campanha, também tenta como {creative}. Assim os dois dashes funcionam com o mesmo sufixo nas campanhas.
+ */
+export function attribute(idx: Index, campVal: string, content: string, source: string):
+  { platform: 'google' | 'meta'; campaignId: string; adGroupId: string | null; adId: string | null } | { reason: string } {
+  const legacy = isLegacyUtm(campVal, content);
+  const c = legacy ? undefined : idx.camp.get(campVal);
+  if (c) {
+    const [g, a] = content.split('_');
+    const adGroupId = g && !EMPTY.test(g) ? idx.group.get(`${c.id}|${g}`) ?? null : null;
+    const adId = adGroupId && a && !EMPTY.test(a) ? idx.ad.get(`${adGroupId}|${a}`) ?? null : null;
+    return { platform: c.platform, campaignId: c.id, adGroupId, adId };
+  }
+  const cr = idx.creative.get(campVal);
+  if (cr) return { platform: 'google', campaignId: cr.cid, adGroupId: cr.gid, adId: cr.id };
+  if (legacy) return { reason: 'gads_creative_not_found' };
+  return { reason: source && /^(fb|facebook|ig|instagram|an|msg|meta)$/.test(source) ? 'meta_ad_not_found' : 'campaign_not_found' };
+}
 
 /** Uma rede do Ad Manager: relatório → fatos → grava só os domínios desta rede. */
 async function runNetwork(net: { id: string; external_id: string; name: string }, token: string, w: { from: string; to: string }, isFinal: boolean,
-  dom: Resolver, idx: Awaited<ReturnType<typeof attributionIndex>>, url: ReturnType<typeof urlCache>) {
+  dom: Resolver, idx: Index, url: ReturnType<typeof urlCache>) {
   const all = await resolveKeys(net.external_id, token);
   const keys = all.filter((k) => k.usable);
   const missing = all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));   // source e path são opcionais
@@ -155,14 +192,9 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     else if (EMPTY.test(campVal)) reason = 'missing_campaign_id';
     else if (/[{}]/.test(campVal) || /[{}]/.test(content)) reason = 'invalid_utm';
     else {
-      const c = idx.camp.get(campVal);
-      if (!c) reason = source && /^(fb|facebook|ig|instagram|an|msg|meta)$/.test(source) ? 'meta_ad_not_found' : 'campaign_not_found';
-      else {
-        platform = c.platform; campaignId = c.id;
-        const [g, a] = content.split('_');
-        if (g && !EMPTY.test(g)) adGroupId = idx.group.get(`${c.id}|${g}`) ?? null;
-        if (adGroupId && a && !EMPTY.test(a)) adId = idx.ad.get(`${adGroupId}|${a}`) ?? null;
-      }
+      const a = attribute(idx, campVal, content, source);
+      if ('reason' in a) reason = a.reason;
+      else ({ platform, campaignId, adGroupId, adId } = a);
     }
     const path = iPath >= 0 ? str(d[iPath]) : iUrl >= 0 ? urlPath(str(d[iUrl])) : '';
     facts.push(emptyFact({

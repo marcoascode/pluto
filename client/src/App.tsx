@@ -28,6 +28,7 @@ const IntegrationMeta = lazy(() => import('@/pages/admin/IntegrationMeta'));
 const IntegrationGam = lazy(() => import('@/pages/admin/IntegrationGam'));
 const FinanceCash = lazy(() => import('@/pages/finance/Cash'));
 const FinanceCosts = lazy(() => import('@/pages/finance/Costs'));
+const FinanceCommissions = lazy(() => import('@/pages/finance/Commissions'));
 
 /** Esconde as telas de admin do Gestor. O servidor também responde 403 em /admin/*. */
 function RequireAdmin({ children }: { children: ReactNode }) {
@@ -70,6 +71,8 @@ export default function App() {
           <Route index element={<Navigate to="caixa" replace />} />
           <Route path="caixa" element={F(<FinanceCash />)} />
           <Route path="custos" element={F(<FinanceCosts />)} />
+          {/* Comissões: também o Gestor com site vinculado (o servidor só devolve os sites dele) */}
+          <Route path="comissoes" element={S(<FinanceCommissions />)} />
         </Route>
         <Route path="admin">
           <Route path="contas" element={A(<Accounts />)} />

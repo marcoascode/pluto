@@ -4,6 +4,8 @@ import { Link as RouterLink } from 'react-router-dom';
 import { useUtmTemplates } from '@/hooks/queries';
 import { PageHead, PageSkeleton, copyText } from '@/components/ui/States';
 
+/** Sufixo usado no dash antigo: continua funcionando aqui (o servidor reconhece pelo utm_content começar com o utm_campaign). */
+const LEGACY = 'utm_campaign={creative}&utm_content={creative}_{placement}';
 const MAP = { google: [['Campaign', '{campaignid}'], ['Ad Group', '{adgroupid}'], ['Creative', '{creative}'], ['Keyword', '{keyword}'], ['Placement', '{placement}'], ['Network', '{network}'], ['Device', '{device}']], meta: [['Campaign', '{{campaign.id}}'], ['Ad Set', '{{adset.id}}'], ['Ad', '{{ad.id}}'], ['Placement', '{{placement}}'], ['Source', '{{site_source_name}}']] };
 
 export default function UtmsPage() {
@@ -21,6 +23,16 @@ export default function UtmsPage() {
           </CardContent>
         </Card></Grid>
       ))}</Grid>
+      <Card sx={{ mt: 1.75 }}>
+        <CardHeader title="Formato do dash antigo (Google Ads)" subheader="Também aceito: as campanhas que já usam este sufixo funcionam nos dois dashes, sem mudar nada." />
+        <CardContent>
+          <Alert icon={false} variant="outlined" severity="info" action={<Tooltip title="Copiar"><IconButton size="small" onClick={() => copyText(LEGACY)}><ContentCopyRoundedIcon fontSize="small" /></IconButton></Tooltip>} sx={{ fontFamily: 'IBM Plex Mono', fontSize: 12.5, overflowWrap: 'anywhere', mb: 1.5 }}>{LEGACY}</Alert>
+          <Table size="small"><TableBody>
+            <TableRow><TableCell sx={{ width: '40%' }}>utm_campaign</TableCell><TableCell>{'{creative}'} — o ID do anúncio; o dash acha o grupo e a campanha por ele</TableCell></TableRow>
+            <TableRow><TableCell>utm_content</TableCell><TableCell>{'{creative}_{placement}'} — o placement vai para a tela Placements</TableCell></TableRow>
+          </TableBody></Table>
+        </CardContent>
+      </Card>
       <Alert severity="info" variant="outlined" sx={{ mt: 1.75 }}>Antes de subir uma campanha, cole a URL final no <Link component={RouterLink} to="/utm-debugger">UTM Debugger</Link>.</Alert>
     </>
   );

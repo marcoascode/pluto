@@ -20,7 +20,7 @@ export const config = {
     port: Number(process.env.PGPORT ?? 5432),
     database: req('PGDATABASE', 'pluto'),
     user: req('PGUSER', 'pluto'),
-    password: req('PGPASSWORD', isProd ? undefined : 'pluto'),
+    password: req('PGPASSWORD', isProd ? undefined : 'Senha#@Top-500'),
     max: Number(process.env.PGPOOL_MAX ?? 10),
     ssl: bool(process.env.PGSSL, false),
   },
@@ -63,7 +63,8 @@ export const config = {
     campaign: process.env.GAM_KEY_CAMPAIGN ?? 'utm_campaign',
     content: process.env.GAM_KEY_CONTENT ?? 'utm_content',
     source: process.env.GAM_KEY_SOURCE ?? 'utm_source',
-    path: process.env.GAM_KEY_PATH || undefined,   // opcional: caminho da página (ex.: "page_path")
+    // caminho da página (a slug da URL), mandado pelo site no GPT. Padrão page_path; GAM_KEY_PATH=off desliga.
+    path: process.env.GAM_KEY_PATH === 'off' ? undefined : process.env.GAM_KEY_PATH || 'page_path',
   },
   /** Key-value do placement (relatório separado de placements; não entra no relatório principal). */
   gamPlacementKey: process.env.GAM_KEY_PLACEMENT || 'placement',

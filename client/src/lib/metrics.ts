@@ -37,7 +37,6 @@ export type MetricKey =
   | 'iva' | 'googleSpend' | 'metaSpend' | 'googleShare' | 'metaShare' | 'unattributedRevenue' | 'responsesServed' | 'dropOffRate'
   | 'metaImpressions' | 'metaLinkClicks' | 'cpcLink' | 'metaResults' | 'cpr' | 'metaLeads' | 'cpl';
 type Kind = 'money' | 'money3' | 'profit' | 'chip' | 'pct' | 'pct0' | 'pct2' | 'int' | 'drop';
-
 /** label = cabeçalho da coluna · hint = explicação curta no seletor. */
 export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind; hint?: string }> = {
   // Resultados
@@ -87,7 +86,7 @@ export const BLOCKS: { key: BlockKey; label: string; keys: MetricKey[] }[] =
     { key: 'costs', label: 'Despesas', keys: ['googleSpend', 'metaSpend', 'iva', 'googleShare', 'metaShare', 'metaImpressions', 'metaLinkClicks', 'cpcLink', 'metaResults', 'cpr', 'metaLeads', 'cpl', 'trafficImpressions', 'trafficClicks', 'trafficCtr', 'cpc'] },
     { key: 'revenue', label: 'Receitas', keys: ['revenue', 'impressions', 'adClicks', 'cpcAdx', 'ctr', 'ecpm', 'responsesServed', 'viewability', 'dropOffRate', 'fillRate', 'sessions', 'rps', 'sessionRpm', 'adRequests'] },
     { key: 'roiDays', label: 'ROI por dia', keys: ['r0', 'r1', 'r2', 'r3'] },
-  ];
+];
 /** Ordem global de exibição (primeira ocorrência de cada métrica nos blocos). */
 const ORDER: MetricKey[] = [...new Set(BLOCKS.flatMap((b) => b.keys))];
 /** Bloco "dono" da coluna (primeiro em que a métrica aparece). */
@@ -109,6 +108,7 @@ export function roiLast(keys: MetricKey[]): MetricKey[] {
 const R: MetricKey[] = ['revenue', 'spend', 'iva', 'profit', 'roi', 'margin'];
 const META_RES: MetricKey[] = ['metaImpressions', 'metaLinkClicks', 'cpcLink', 'metaResults', 'cpr', 'metaLeads', 'cpl'];
 const PICKERS_RAW: Record<string, { all: MetricKey[]; def: MetricKey[]; mixed?: boolean }> = {
+  
   home: {
     all: ['rps', 'sessionRpm', 'ecpm', 'dropOffRate', 'impressions', 'adRequests', 'responsesServed', 'fillRate', 'ctr', 'adClicks', 'cpcAdx', 'viewability', 'sessions'],
     def: ['sessionRpm', 'ecpm', 'dropOffRate', 'impressions', 'ctr']

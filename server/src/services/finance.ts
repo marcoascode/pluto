@@ -1,31 +1,46 @@
 /**
- * Finance (Caixa Empresa e Custos). Tudo é por Empresa (companies): domínios = os dos Squads da Empresa.
+ * Finance (Caixa Empresa e Custos). Tudo é por Empresa (companies).
  *
- * Fechamento do mês (por Empresa):
- *   Receita (Ad Manager, já sem revShare) − Anúncios (Google + Meta + IVA) − Custos lançados = Resultado
- *   Receita e anúncios vêm de daily_metrics pela mesma agregação do resto do painel (aggregate), na moeda escolhida
- *   (BRL com deságio na receita). Custos são convertidos pela cotação do último dia do mês (ou de hoje, no mês atual).
+ * O CAIXA É MANUAL (0.11): nada vem do sync das campanhas nem do Ad Manager. Quem cuida do financeiro lança:
+ *   - receita recebida   (kind 'income')  — o dinheiro que caiu na conta: pagamento do Ad Manager/AdX, AdSense, outra
+ *   - gasto              (kind 'expense') — o que foi pago: fatura do Google Ads, da Meta, outro gasto
+ *   - aporte / retirada  (kind 'deposit' / 'withdrawal')
+ *   - saldo conferido    (kind 'balance') — o saldo do banco no fim de um dia; o caixa conta a partir dele
+ * Os CUSTOS da aba Custos (finance_costs) continuam entrando sozinhos: no fechamento, no mês em que valem;
+ * no caixa, no dia do pagamento (pay_day).
+ * Valor do custo num mês (0.12): o valor real lançado pela fatura/NF daquele mês (finance_cost_months) ou,
+ * sem ele, o valor do plano vigente (finance_costs.amount ou a última mudança de plano em finance_cost_prices).
  *
- * Caixa estimado (por Empresa):
- *   último saldo conferido ('balance', vale no fim daquele dia)
- *   + resultado (receita − anúncios) dos dias seguintes até hoje
- *   − custos com dia de pagamento depois do saldo conferido e até hoje
- *   + aportes − retiradas lançados depois dele
- *   Receita entra por competência (o Ad Manager paga depois), por isso o valor é "estimado".
+ * Fechamento do mês = receitas recebidas − gastos − custos (pela data de cada lançamento).
+ * Caixa hoje       = último saldo conferido + receitas − gastos − custos pagos + aportes − retiradas lançados depois dele.
+ * Conversão de moeda: lançamento pela cotação do dia dele; custo pela cotação do último dia do mês (ou de hoje).
  */
 import { q } from '../db.js';
-import { addDays, today } from '../lib/dates.js';
-import { aggregate, type Currency } from './metrics.js';
+import { today } from '../lib/dates.js';
 
 export const CATEGORIES = ['tools', 'domains', 'hosting', 'team', 'taxes', 'services', 'other'] as const;
 export type Category = (typeof CATEGORIES)[number];
+/** Origem da receita recebida e destino do gasto (lançamentos manuais do caixa). */
+export const INCOME_CATEGORIES = ['adx', 'adsense', 'other_income'] as const;
+export const EXPENSE_CATEGORIES = ['google_ads', 'meta_ads', 'other_expense'] as const;
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+export type EntryKind = 'balance' | 'deposit' | 'withdrawal' | 'income' | 'expense';
+export type EntryCategory = (typeof INCOME_CATEGORIES)[number] | ExpenseCategory;
 type Cur = 'BRL' | 'USD' | 'EUR';
 
 export interface CostRow {
   id: string; company_id: string; company_name: string; name: string; category: Category; amount: number; currency: Cur;
-  recurrence: 'monthly' | 'once'; start_month: string; end_month: string | null; pay_day: number; notes: string | null;
+  recurrence: 'monthly' | 'once'; start_month: string; end_month: string | null; pay_day: number; notes: string | null; attachments: number;
+  site: string | null;   // custo atribuído a um site (entra no resultado do site e na comissão)
+  prices: { id: string; from: string; amount: number; note: string | null }[];          // mudanças de plano, em ordem
+  actuals: Record<string, { amount: number; note: string | null }>;                      // valor real por mês (YYYY-MM)
 }
-export interface CashRow { id: string; company_id: string; date: string; kind: 'balance' | 'deposit' | 'withdrawal'; amount: number; currency: Cur; note: string | null; created_by_name: string | null }
+export interface EntryRow {
+  id: string; company_id: string; date: string; kind: EntryKind; category: EntryCategory | null; amount: number; currency: Cur; note: string | null; created_by_name: string | null; attachments: number;
+  site: string | null;         // 0.14: de qual site é a receita/gasto
+  competence: string | null;   // 0.14: mês de referência (YYYY-MM); vazio = mês da data
+  gross_amount: number | null; revshare_pct: number | null;   // receita informada sem o revshare: bruto e % descontado (amount = líquido)
+}
 
 const ym = (d: string) => d.slice(0, 7);
 export const monthStart = (m: string) => `${m}-01`;
@@ -40,6 +55,15 @@ export function monthsBetween(from: string, to: string) {
 /** O custo vale no mês? */
 export const appliesIn = (c: Pick<CostRow, 'recurrence' | 'start_month' | 'end_month'>, m: string) =>
   c.recurrence === 'once' ? ym(c.start_month) === m : ym(c.start_month) <= m && (!c.end_month || m <= ym(c.end_month));
+
+/** Valor do plano no mês (moeda do custo): o último plano que começou até o mês. */
+export function plannedIn(c: Pick<CostRow, 'amount' | 'prices'>, m: string) {
+  let v = c.amount;
+  for (const p of c.prices) if (p.from <= m) v = p.amount;
+  return v;
+}
+/** Valor que conta no mês (moeda do custo): o real lançado pela NF ou, sem ele, o do plano. */
+export const amountIn = (c: Pick<CostRow, 'amount' | 'prices' | 'actuals'>, m: string) => c.actuals[m]?.amount ?? plannedIn(c, m);
 
 /** Cotações (1 USD = x) por dia, com a última conhecida para trás. USD = 1. */
 export async function fxTable(from: string, to: string) {
@@ -58,72 +82,73 @@ export async function fxTable(from: string, to: string) {
   return (amount: number, src: Cur, dst: Cur, date: string) => (src === dst ? amount : (amount / rateAt(src, date)) * rateAt(dst, date));
 }
 
-/** Domínios ativos de cada Empresa (pelos Squads). */
-export async function companyDomains(companyIds: string[]) {
-  const rows = await q<{ company_id: string; domain_id: string }>(
-    `SELECT s.company_id::text, sd.domain_id::text FROM squads s JOIN squad_domains sd ON sd.squad_id = s.id JOIN domains d ON d.id = sd.domain_id
-      WHERE s.company_id = ANY($1::bigint[]) AND d.active`, [companyIds]);
-  const map = new Map<string, string[]>(companyIds.map((c) => [c, []]));
-  for (const r of rows) map.get(r.company_id)!.push(r.domain_id);
-  return map;
-}
-
 export async function loadCosts(companyIds: string[]) {
   return q<CostRow>(`
     SELECT c.id::text, c.company_id::text, co.name AS company_name, c.name, c.category, c.amount::float AS amount, c.currency, c.recurrence,
-           c.start_month::text, c.end_month::text, c.pay_day, c.notes
+           c.start_month::text, c.end_month::text, c.pay_day, c.notes, c.site,
+           (SELECT count(*)::int FROM finance_attachments a WHERE a.cost_id = c.id) AS attachments,
+           COALESCE((SELECT json_agg(json_build_object('id', p.id::text, 'from', to_char(p.from_month, 'YYYY-MM'), 'amount', p.amount::float, 'note', p.note) ORDER BY p.from_month)
+                       FROM finance_cost_prices p WHERE p.cost_id = c.id), '[]'::json) AS prices,
+           COALESCE((SELECT json_object_agg(to_char(m.month, 'YYYY-MM'), json_build_object('amount', m.amount::float, 'note', m.note))
+                       FROM finance_cost_months m WHERE m.cost_id = c.id), '{}'::json) AS actuals
       FROM finance_costs c JOIN companies co ON co.id = c.company_id
      WHERE c.company_id = ANY($1::bigint[]) ORDER BY co.name, c.category, c.name`, [companyIds]);
 }
-
-export interface MonthClose {
-  month: string; partial: boolean; revenue: number; googleSpend: number; metaSpend: number; iva: number; adSpend: number;
-  costs: number; costsByCategory: Partial<Record<Category, number>>; result: number; margin: number | null;
-  companies: { companyId: string; revenue: number; adSpend: number; costs: number; result: number }[];
+export async function loadEntries(companyIds: string[]) {
+  return q<EntryRow>(`
+    SELECT e.id::text, e.company_id::text, e.date::text, e.kind, e.category, e.amount::float AS amount, e.currency, e.note, u.name AS created_by_name, e.site, to_char(e.competence, 'YYYY-MM') AS competence, e.gross_amount::float AS gross_amount, e.revshare_pct::float AS revshare_pct,
+           (SELECT count(*)::int FROM finance_attachments a WHERE a.entry_id = e.id) AS attachments
+      FROM finance_cash_entries e LEFT JOIN users u ON u.id = e.created_by
+     WHERE e.company_id = ANY($1::bigint[]) ORDER BY e.date, e.id`, [companyIds]);
 }
 
-/** Fechamento mês a mês das Empresas pedidas (somadas), com a quebra por Empresa. */
-export async function monthlyClose(companyIds: string[], months: string[], currency: Currency): Promise<MonthClose[]> {
+export interface EntryOut { id: string; companyId: string; date: string; kind: EntryKind; category: EntryCategory | null; amount: number; currency: Cur; converted: number; note: string | null; createdBy: string | null; attachments: number; site: string | null; competence: string | null; grossAmount: number | null; revsharePct: number | null }
+const entryOut = (e: EntryRow, converted: number): EntryOut => ({ id: e.id, companyId: e.company_id, date: e.date, kind: e.kind, category: e.category, amount: e.amount, currency: e.currency, converted, note: e.note, createdBy: e.created_by_name, attachments: e.attachments, site: e.site, competence: e.competence, grossAmount: e.gross_amount, revsharePct: e.revshare_pct });
+
+export interface MonthClose {
+  month: string; partial: boolean;
+  income: number; incomeByCategory: Partial<Record<(typeof INCOME_CATEGORIES)[number], number>>;
+  googleAds: number; metaAds: number; otherExpense: number; expenses: number;
+  costs: number; costsByCategory: Partial<Record<Category, number>>;
+  deposits: number; withdrawals: number;
+  result: number;          // receitas − gastos − custos (aportes e retiradas não entram no resultado)
+  margin: number | null;   // resultado ÷ receitas
+  entries: EntryOut[];     // lançamentos do mês (mais recentes primeiro)
+  companies: { companyId: string; income: number; expenses: number; costs: number; result: number }[];
+}
+
+/** Fechamento mês a mês das Empresas pedidas (somadas), só com lançamentos manuais + custos. */
+export async function monthlyClose(companyIds: string[], months: string[], currency: Cur): Promise<MonthClose[]> {
   if (!months.length) return [];
   const t = today();
-  const from = monthStart(months[0]);
-  const to = [monthEnd(months[months.length - 1]), t].sort()[0];
-  const doms = await companyDomains(companyIds);
-  const domOwner = new Map<string, string>();
-  for (const [c, ds] of doms) for (const d of ds) domOwner.set(d, c);
-  const ids = [...domOwner.keys()];
-  const [agg, costs, conv] = await Promise.all([
-    from <= to && ids.length ? aggregate({ from, to, domainIds: ids, filter: null, currency, groupBy: `m.domain_id || '|' || to_char(m.date, 'YYYY-MM')` }) : Promise.resolve(new Map()),
-    loadCosts(companyIds),
-    fxTable(from, [monthEnd(months[months.length - 1]), t].sort()[0]),
-  ]);
+  const last = [monthEnd(months[months.length - 1]), t].sort()[0];
+  const [entries, costs, conv] = await Promise.all([loadEntries(companyIds), loadCosts(companyIds), fxTable(monthStart(months[0]), last)]);
   return months.map((m) => {
     const rateDay = [monthEnd(m), t].sort()[0];
+    const inMonth = entries.filter((e) => ym(e.date) === m);
+    const v = (e: EntryRow) => conv(e.amount, e.currency, currency, e.date);
     const per = companyIds.map((cid) => {
-      let revenue = 0, gs = 0, ms = 0, iva = 0, spend = 0;
-      for (const d of doms.get(cid) ?? []) {
-        const x = agg.get(`${d}|${m}`);
-        if (!x) continue;
-        revenue += x.revenue; gs += x.googleSpend; ms += x.metaSpend; iva += x.iva; spend += x.spend;
-      }
-      const byCat: Partial<Record<Category, number>> = {};
+      const es = inMonth.filter((e) => e.company_id === cid);
+      const income = es.filter((e) => e.kind === 'income').reduce((a, e) => a + v(e), 0);
+      const expenses = es.filter((e) => e.kind === 'expense').reduce((a, e) => a + v(e), 0);
       let c = 0;
-      for (const k of costs) {
-        if (k.company_id !== cid || !appliesIn(k, m)) continue;
-        const v = conv(k.amount, k.currency, currency, rateDay);
-        c += v; byCat[k.category] = (byCat[k.category] ?? 0) + v;
-      }
-      return { companyId: cid, revenue, gs, ms, iva, spend, costs: c, byCat };
+      for (const k of costs) if (k.company_id === cid && appliesIn(k, m)) c += conv(amountIn(k, m), k.currency, currency, rateDay);
+      return { companyId: cid, income, expenses, costs: c, result: income - expenses - c };
     });
-    const sum = (f: (x: (typeof per)[number]) => number) => per.reduce((a, x) => a + f(x), 0);
-    const revenue = sum((x) => x.revenue), adSpend = sum((x) => x.spend), cst = sum((x) => x.costs);
-    const byCat: Partial<Record<Category, number>> = {};
-    for (const x of per) for (const [k, v] of Object.entries(x.byCat)) byCat[k as Category] = (byCat[k as Category] ?? 0) + (v as number);
-    const result = revenue - adSpend - cst;
+    const sumKind = (kind: EntryKind, cat?: EntryCategory) => inMonth.filter((e) => e.kind === kind && (!cat || e.category === cat)).reduce((a, e) => a + v(e), 0);
+    const incomeByCategory: MonthClose['incomeByCategory'] = {};
+    for (const c of INCOME_CATEGORIES) { const x = sumKind('income', c); if (x) incomeByCategory[c] = x; }
+    const costsByCategory: MonthClose['costsByCategory'] = {};
+    for (const k of costs) if (appliesIn(k, m)) costsByCategory[k.category] = (costsByCategory[k.category] ?? 0) + conv(amountIn(k, m), k.currency, currency, rateDay);
+    const income = per.reduce((a, x) => a + x.income, 0), expenses = per.reduce((a, x) => a + x.expenses, 0), cst = per.reduce((a, x) => a + x.costs, 0);
+    const result = income - expenses - cst;
     return {
-      month: m, partial: m === ym(t), revenue, googleSpend: sum((x) => x.gs), metaSpend: sum((x) => x.ms), iva: sum((x) => x.iva), adSpend,
-      costs: cst, costsByCategory: byCat, result, margin: revenue > 0 ? (result / revenue) * 100 : null,
-      companies: per.map((x) => ({ companyId: x.companyId, revenue: x.revenue, adSpend: x.spend, costs: x.costs, result: x.revenue - x.spend - x.costs })),
+      month: m, partial: m === ym(t), income, incomeByCategory,
+      googleAds: sumKind('expense', 'google_ads'), metaAds: sumKind('expense', 'meta_ads'), otherExpense: sumKind('expense', 'other_expense'), expenses,
+      costs: cst, costsByCategory, deposits: sumKind('deposit'), withdrawals: sumKind('withdrawal'),
+      result, margin: income > 0 ? (result / income) * 100 : null,
+      entries: inMonth.slice().reverse().map((e) => entryOut(e, v(e))),
+      companies: per,
     };
   });
 }
@@ -131,55 +156,42 @@ export async function monthlyClose(companyIds: string[], months: string[], curre
 export interface CashCompany {
   companyId: string; companyName: string;
   anchor: { date: string; amount: number } | null;   // saldo conferido (na moeda pedida)
-  resultSince: number; costsSince: number; deposits: number; withdrawals: number;
-  balance: number | null;                             // caixa estimado hoje (null sem saldo conferido)
-  entries: { id: string; date: string; kind: CashRow['kind']; amount: number; currency: Cur; converted: number; note: string | null; createdBy: string | null }[];
+  income: number; expenses: number; costsSince: number; deposits: number; withdrawals: number;   // depois do saldo conferido
+  balance: number | null;                             // caixa hoje (null sem saldo conferido)
+  entries: EntryOut[];                                // últimos 50 lançamentos
 }
 
-/** Caixa estimado de cada Empresa. */
-export async function cashPosition(companies: { id: string; name: string }[], currency: Currency): Promise<CashCompany[]> {
+/** Caixa de hoje de cada Empresa (só lançamentos manuais + custos da aba Custos). */
+export async function cashPosition(companies: { id: string; name: string }[], currency: Cur): Promise<CashCompany[]> {
   const t = today();
   const ids = companies.map((c) => c.id);
-  const [entries, costs, doms] = await Promise.all([
-    q<CashRow>(`SELECT e.id::text, e.company_id::text, e.date::text, e.kind, e.amount::float AS amount, e.currency, e.note, u.name AS created_by_name
-                  FROM finance_cash_entries e LEFT JOIN users u ON u.id = e.created_by WHERE e.company_id = ANY($1::bigint[]) ORDER BY e.date, e.id`, [ids]),
-    loadCosts(ids),
-    companyDomains(ids),
-  ]);
-  const first = entries.length ? entries[0].date : t;
-  const conv = await fxTable(first, t);
-  const out: CashCompany[] = [];
-  for (const co of companies) {
+  const [entries, costs] = await Promise.all([loadEntries(ids), loadCosts(ids)]);
+  const conv = await fxTable(entries.length ? entries[0].date : t, t);
+  const v = (e: EntryRow) => conv(e.amount, e.currency, currency, e.date);
+  return companies.map((co) => {
     const mine = entries.filter((e) => e.company_id === co.id);
-    const anchorIdx = mine.map((e) => e.kind).lastIndexOf('balance');
-    const anchor = anchorIdx >= 0 ? mine[anchorIdx] : null;
-    const list = mine.slice().reverse().slice(0, 30).map((e) => ({ id: e.id, date: e.date, kind: e.kind, amount: e.amount, currency: e.currency, converted: conv(e.amount, e.currency, currency, e.date), note: e.note, createdBy: e.created_by_name }));
-    if (!anchor) { out.push({ companyId: co.id, companyName: co.name, anchor: null, resultSince: 0, costsSince: 0, deposits: 0, withdrawals: 0, balance: null, entries: list }); continue; }
-    const since = addDays(anchor.date, 1);
-    let resultSince = 0;
-    const ds = doms.get(co.id) ?? [];
-    if (since <= t && ds.length) {
-      const m = (await aggregate({ from: since, to: t, domainIds: ds, filter: null, currency })).get('');
-      if (m) resultSince = m.revenue - m.spend;
-    }
-    // custos com dia de pagamento entre o saldo conferido (exclusive) e hoje
+    const list = mine.slice().reverse().slice(0, 50).map((e) => entryOut(e, v(e)));
+    const ai = mine.map((e) => e.kind).lastIndexOf('balance');
+    if (ai < 0) return { companyId: co.id, companyName: co.name, anchor: null, income: 0, expenses: 0, costsSince: 0, deposits: 0, withdrawals: 0, balance: null, entries: list };
+    const anchor = mine[ai];
+    // lançados depois do saldo conferido (mesmo dia e lançado antes dele = já estava no saldo)
+    const after = mine.slice(ai + 1);
+    const sum = (k: EntryKind) => after.filter((e) => e.kind === k).reduce((a, e) => a + v(e), 0);
+    // custos da aba Custos com dia de pagamento depois do saldo conferido e até hoje
     let costsSince = 0;
     for (const k of costs.filter((x) => x.company_id === co.id)) {
-      for (const m of monthsBetween(ym(since), ym(t))) {
+      for (const m of monthsBetween(ym(anchor.date), ym(t))) {
         if (!appliesIn(k, m)) continue;
         const day = `${m}-${String(k.pay_day).padStart(2, '0')}`;
-        if (day < since || day > t) continue;
-        costsSince += conv(k.amount, k.currency, currency, day);
+        if (day <= anchor.date || day > t) continue;
+        costsSince += conv(amountIn(k, m), k.currency, currency, day);
       }
     }
-    const after = mine.slice(anchorIdx + 1);
-    const deposits = after.filter((e) => e.kind === 'deposit').reduce((a, e) => a + conv(e.amount, e.currency, currency, e.date), 0);
-    const withdrawals = after.filter((e) => e.kind === 'withdrawal').reduce((a, e) => a + conv(e.amount, e.currency, currency, e.date), 0);
-    const base = conv(anchor.amount, anchor.currency, currency, anchor.date);
-    out.push({
-      companyId: co.id, companyName: co.name, anchor: { date: anchor.date, amount: base }, resultSince, costsSince, deposits, withdrawals,
-      balance: base + resultSince - costsSince + deposits - withdrawals, entries: list,
-    });
-  }
-  return out;
+    const base = v(anchor);
+    const income = sum('income'), expenses = sum('expense'), deposits = sum('deposit'), withdrawals = sum('withdrawal');
+    return {
+      companyId: co.id, companyName: co.name, anchor: { date: anchor.date, amount: base }, income, expenses, costsSince, deposits, withdrawals,
+      balance: base + income - expenses - costsSince + deposits - withdrawals, entries: list,
+    };
+  });
 }

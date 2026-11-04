@@ -40,10 +40,7 @@ export function AppShell() {
         : <Drawer variant="permanent" sx={{ width: w, flexShrink: 0, transition: 'width .18s' }} slotProps={{ paper: { sx: paper } }}><Sidebar mini={!!prefs.sideMini} /></Drawer>}
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Topbar showFilters={showFilters} />
-        {/* <Box component="main" sx={{ px: { xs: 1.75, md: 3 }, pt: { xs: 2, md: 2.75 }, pb: { xs: 12, md: 7.5 }, maxWidth: 1560, '& .MuiTableCell-root': prefs.dense ? { py: 0.75, px: 1.25, fontSize: 12.5 } : undefined }}>
-          {loading || !user ? <PageSkeleton /> : <Outlet />}
-        </Box> */}
-        <Box component="main" sx={{ px: { xs: 1.75, md: 3 }, pt: { xs: 2, md: 2.75 }, pb: { xs: 12, md: 7.5 }, maxWidth: 'none', '& .MuiTableCell-root': prefs.dense ? { py: 0.75, px: 1.25, fontSize: 12.5 } : undefined }}>
+        <Box component="main" sx={{ px: { xs: 1.75, md: 3 }, pt: { xs: 2, md: 2.75 }, pb: { xs: 12, md: 7.5 }, maxWidth: 1560, '& .MuiTableCell-root': prefs.dense ? { py: 0.75, px: 1.25, fontSize: 12.5 } : undefined }}>
           {loading || !user ? <PageSkeleton /> : <Outlet />}
         </Box>
       </Box>

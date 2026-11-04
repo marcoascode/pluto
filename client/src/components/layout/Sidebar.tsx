@@ -38,7 +38,7 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
       <List sx={{ flex: 1, overflowY: 'auto', px: 1.25, pt: 0 }}>
         {NAV_MAIN.map((g) => ({ ...g, items: g.items.filter((it) => !it.cap || can(it.cap)) })).filter((g) => g.items.length).map((g, i) => <Box key={i}>{g.title && <Head mini={mini}>{g.title}</Head>}{g.items.map(item)}</Box>)}
         {/* Finance: clica e abre Caixa Empresa e Custos */}
-        {canFinance && (
+        {(canFinance || user?.role === 'gestor') && (
           <>
             <Head mini={mini}>Finance</Head>
             <Tooltip title={mini ? 'Finance' : ''} placement="right">
@@ -48,7 +48,7 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
                 {!mini && <ExpandMoreRoundedIcon fontSize="small" sx={{ transform: fin ? 'none' : 'rotate(-90deg)', transition: '.15s', color: 'text.disabled' }} />}
               </ListItemButton>
             </Tooltip>
-            <Collapse in={fin}><Box sx={{ pl: mini ? 0 : 1.5 }}>{NAV_FINANCE.map(item)}</Box></Collapse>
+            <Collapse in={fin}><Box sx={{ pl: mini ? 0 : 1.5 }}>{NAV_FINANCE.filter((it) => canFinance || it.manager).map(item)}</Box></Collapse>
           </>
         )}
         {isAdmin && (
