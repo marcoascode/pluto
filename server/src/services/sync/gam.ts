@@ -208,15 +208,19 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
    *  3. sem nenhum dos dois, a receita fica em "(sem URL)" e a rede mostra o aviso de como configurar.
    */
   const pathKey = keys.find((k) => k.role === 'path');
-  // 0.15 (modo keyvalues): page_path e utm_source também sem dimensão personalizada, cada um num relatório de Key-values
+  // page_path e utm_source sem dimensão personalizada (só "Incluir valores nos relatórios"), cada um num relatório
+  // de Key-values. 0.15.1: vale nos DOIS modos (antes só no keyvalues: com utm_campaign/utm_content como dimensão
+  // personalizada o utm_source era ignorado e a retenção nunca aparecia).
   const reportsValues = (k?: KeyInfo) => !!k?.id && (k.reportable === 'ON' || k.reportable === 'CUSTOM_DIMENSION');
   const pathAll = all.find((k) => k.role === 'path'), srcAll = all.find((k) => k.role === 'source');
-  const pathKv = mode === 'keyvalues' && !pathKey && reportsValues(pathAll) ? pathAll! : null;
-  const srcKv = mode === 'keyvalues' && reportsValues(srcAll) ? srcAll! : null;
+  const pathKv = !pathKey && reportsValues(pathAll) ? pathAll! : null;
+  const srcKv = reportsValues(srcAll) && !keys.some((k) => k.role === 'source') ? srcAll! : null;
+  // relatórios de Key-values: só o caminho como dimensão personalizada (se houver), para casar com o balde do total
+  const auxKeys = keys.filter((k) => k.role === 'path');
   const tryUrlDim = !pathKey && !pathKv && !URL_DIM_UNSUPPORTED.has(net.external_id);
   type Rows = Awaited<ReturnType<typeof runReport>>['rows'];
   const both = async (extra: string[]) => {
-    const run = (label: string, kv?: string) => runReport(net.external_id, token, w.from, w.to, keys, label, extra, kv).then((r) => r.rows);
+    const run = (label: string, kv?: string) => runReport(net.external_id, token, w.from, w.to, kv ? auxKeys : keys, label, extra, kv).then((r) => r.rows);
     const base = await run('pluto-sync');
     const kv = mode === 'keyvalues' ? await run('pluto-sync-kv', contentKey.adTagName) : [];
     const path = pathKv ? await run('pluto-sync-path', pathKv.adTagName) : [];
@@ -236,7 +240,8 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const base = 3 + (urlDim ? 1 : 0);
   const ki = (role: KeyInfo['role']) => { const i = keys.findIndex((k) => k.role === role); return i < 0 ? -1 : base + i; };
   const iCamp = ki('campaign'), iContent = ki('content'), iSource = ki('source'), iPath = ki('path'), iUrl = urlDim ? 3 : -1;
-  const iKv = base + keys.length;   // KEY_VALUES_NAME, a última dimensão do relatório de key-values
+  const iKvAux = base + auxKeys.length;              // KEY_VALUES_NAME, a última dimensão dos relatórios de Key-values
+  const iPathAux = auxKeys.length ? base : -1;        // caminho (dimensão personalizada) nesses relatórios
   const facts: Fact[] = [];
   // descartes, agrupados para o aviso final da rede (setAccountStatus): linhas e receita (USD) de cada caso
   const noSite = { rows: 0, revenue: 0 };                                       // SITE vazio/inválido na API
@@ -244,7 +249,7 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const otherNet = new Map<string, { rows: number; revenue: number }>();        // domínio ligado a OUTRA rede
   const bump = (m: Map<string, { rows: number; revenue: number }>, host: string, rev: number) => { const x = m.get(host) ?? { rows: 0, revenue: 0 }; x.rows++; x.revenue += rev; m.set(host, x); };
   /** Data, domínio (só desta rede), país, caminho e métricas de uma linha; null = descartada (count = entra no aviso). */
-  const read = async (r: Rows[number], count: boolean) => {
+  const read = async (r: Rows[number], count: boolean, iPath: number) => {
     const d = r.dimensionValues;
     const day = isoDate(d[0]);
     const site = str(d[1]);
@@ -263,15 +268,27 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   };
   const urlOf = async (domainId: string, path: string) => (path && !EMPTY.test(path) ? await url(domainId, path) : null);
 
+  /*
+   * Cada linha vira um "pre-fato" (campanha ou sem campanha) no balde dia × site × país × caminho; depois, em comum:
+   *   a) utm_source de retenção (push, whatsapp…) vindo da dimensão Key-values sai da receita SEM campanha do balde;
+   *   b) page_path vindo da dimensão Key-values divide cada pre-fato entre as páginas do balde (proporção da página).
+   * Dimensão personalizada (mode dimension) ou só "Incluir valores nos relatórios" (keyvalues): a e b valem nos dois,
+   * então utm_source/page_path funcionam mesmo se utm_campaign/utm_content estiverem como dimensão personalizada.
+   */
+  type Pre = { x: NonNullable<Awaited<ReturnType<typeof read>>>; v: typeof zeroM; platform: 'google' | 'meta' | 'none'; campaignId: string | null; adGroupId: string | null; adId: string | null; reason: string | null; utmSource: string | null };
+  const pre: Pre[] = [];
+  const baseBy = new Map<string, typeof zeroM>();
+  const addTo = (m: Map<string, typeof zeroM>, b: string, v: typeof zeroM) => { const u = m.get(b) ?? { ...zeroM }; for (const k of M_KEYS) u[k] += v[k]; m.set(b, u); };
+
   if (mode === 'dimension') {
     for (const r of rows) {
-      const x = await read(r, true);
+      const x = await read(r, true, iPath);
       if (!x) continue;
       const { d, domain } = x;
+      addTo(baseBy, x.bucket, x.v);
       const campVal = iCamp >= 0 ? str(d[iCamp]) : '';
       const content = iContent >= 0 ? str(d[iContent]) : '';
       const source = iSource >= 0 ? str(d[iSource]).toLowerCase() : '';
-      // ---- atribuição ----
       let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
       let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
       if (iCamp < 0) reason = 'gam_kv_not_configured';
@@ -283,31 +300,17 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
         if ('reason' in a) reason = a.reason;
         else ({ platform, campaignId, adGroupId, adId } = a);
       }
-      facts.push(emptyFact({
-        date: x.day, domainId: domain.id, urlId: await urlOf(domain.id, x.path),
-        platform, campaignId, adGroupId, adId, country: x.country, reason, utmSource: normSource(source), ...x.v,
-      }));
+      pre.push({ x, v: x.v, platform, campaignId, adGroupId, adId, reason, utmSource: normSource(source) });
     }
   } else {
-    /*
-     * Modo keyvalues: o Ad Manager devolve UM key por linha (dimensão "Key-values"), então cada informação vem num
-     * relatório e é casada pelo balde dia × site × país:
-     *   1) utm_content → campanha (exato)                         2) total do site − (1) = tráfego sem campanha
-     *   3) utm_source de retenção (push, whatsapp…) sai de (2)     4) o que sobra = sem origem
-     *   5) page_path: cada linha acima é dividida entre as páginas do balde na proporção da receita/impressões de cada
-     *      página (o total por URL e o total por campanha ficam exatos; só o cruzamento campanha × página é proporcional).
-     */
-    type Pre = { x: NonNullable<Awaited<ReturnType<typeof read>>>; v: typeof zeroM; platform: 'google' | 'meta' | 'none'; campaignId: string | null; adGroupId: string | null; adId: string | null; reason: string | null; utmSource: string | null };
-    const pre: Pre[] = [];
+    // 1) linhas com utm_content (dimensão "Key-values") → campanha · 2) total do site − (1) = sem campanha
     const used = new Map<string, typeof zeroM>();
     for (const r of kvRows) {
-      const x = await read(r, false);
+      const x = await read(r, false, iPathAux);
       if (!x) continue;
-      const content = kvValue(str(x.d[iKv]), contentKey.adTagName);
+      const content = kvValue(str(x.d[iKvAux]), contentKey.adTagName);
       if (content == null) continue;
-      const u = used.get(x.bucket) ?? { ...zeroM };
-      for (const k of M_KEYS) u[k] += x.v[k];
-      used.set(x.bucket, u);
+      addTo(used, x.bucket, x.v);
       let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
       let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
       if (x.domain.pending) reason = 'unknown_domain';
@@ -320,39 +323,52 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
       }
       pre.push({ x, v: x.v, platform, campaignId, adGroupId, adId, reason, utmSource: null });
     }
-    // utm_source de retenção por balde (os de anúncio — google, fb… — já estão nas campanhas)
-    const srcBy = new Map<string, { s: string; v: typeof zeroM }[]>();
-    for (const r of srcRows) {
-      const x = await read(r, false);
-      if (!x || !srcKv) continue;
-      const src = normSource(kvValue(str(x.d[iKv]), srcKv.adTagName) ?? '');
-      if (!src || !retentionChannel(src)) continue;
-      srcBy.set(x.bucket, [...(srcBy.get(x.bucket) ?? []), { s: src, v: x.v }]);
-    }
-    const baseBy = new Map<string, typeof zeroM>();
     for (const r of rows) {
-      const x = await read(r, true);
+      const x = await read(r, true, iPath);
       if (!x) continue;
-      baseBy.set(x.bucket, x.v);
+      addTo(baseBy, x.bucket, x.v);
       const u = used.get(x.bucket);
       const rest = { ...x.v };
       if (u) for (const k of M_KEYS) rest[k] = Math.max(0, rest[k] - u[k]);
-      const reason = x.domain.pending ? 'unknown_domain' : 'missing_campaign_id';
-      for (const sv of (srcBy.get(x.bucket) ?? []).sort((a, z) => z.v.revenueUsd - a.v.revenueUsd)) {
-        const take = { ...zeroM };
-        for (const k of M_KEYS) { take[k] = Math.min(sv.v[k], rest[k]); rest[k] -= take[k]; }
-        if (take.revenueUsd > 0.00005 || take.impressions >= 1 || take.adRequests >= 1)
-          pre.push({ x, v: take, platform: 'none', campaignId: null, adGroupId: null, adId: null, reason, utmSource: sv.s });
-      }
       if (rest.revenueUsd < 0.00005 && rest.impressions < 1 && rest.adRequests < 1) continue;
-      pre.push({ x, v: rest, platform: 'none', campaignId: null, adGroupId: null, adId: null, reason, utmSource: null });
+      pre.push({ x, v: rest, platform: 'none', campaignId: null, adGroupId: null, adId: null, reason: x.domain.pending ? 'unknown_domain' : 'missing_campaign_id', utmSource: null });
     }
-    // páginas por balde (até 100 por balde; o resto fica sem URL)
-    const pathBy = new Map<string, { path: string; v: typeof zeroM }[]>();
+  }
+
+  // a) retenção por utm_source (os de anúncio — google, fb… — ficam nas campanhas)
+  let retentionRows = 0;
+  if (srcKv) {
+    const srcBy = new Map<string, { s: string; v: typeof zeroM }[]>();
+    for (const r of srcRows) {
+      const x = await read(r, false, iPathAux);
+      if (!x) continue;
+      const src = normSource(kvValue(str(x.d[iKvAux]), srcKv.adTagName) ?? '');
+      if (!src || !retentionChannel(src)) continue;
+      retentionRows++;
+      srcBy.set(x.bucket, [...(srcBy.get(x.bucket) ?? []), { s: src, v: x.v }]);
+    }
+    const carved: Pre[] = [];
+    for (const [b, list] of srcBy) {
+      const pool = pre.filter((f) => f.x.bucket === b && f.platform === 'none' && !f.utmSource && f.reason !== 'unknown_domain');
+      for (const sv of list.sort((a, z) => z.v.revenueUsd - a.v.revenueUsd)) {
+        const want = { ...sv.v };
+        for (const f of pool) {
+          const take = { ...zeroM };
+          for (const k of M_KEYS) { take[k] = Math.min(want[k], f.v[k]); f.v[k] -= take[k]; want[k] -= take[k]; }
+          if (take.revenueUsd > 0.00005 || take.impressions >= 1 || take.adRequests >= 1) carved.push({ ...f, v: take, utmSource: sv.s });
+        }
+      }
+    }
+    pre.push(...carved);
+  }
+
+  // b) páginas por balde (até 100 por balde; o resto fica com o caminho que a linha já tinha, ou sem URL)
+  const pathBy = new Map<string, { path: string; v: typeof zeroM }[]>();
+  if (pathKv) {
     for (const r of pathRows) {
-      const x = await read(r, false);
-      if (!x || !pathKv) continue;
-      const path = kvPath(kvValue(str(x.d[iKv]), pathKv.adTagName) ?? '');
+      const x = await read(r, false, iPathAux);
+      if (!x) continue;
+      const path = kvPath(kvValue(str(x.d[iKvAux]), pathKv.adTagName) ?? '');
       if (!path) continue;
       const list = pathBy.get(x.bucket) ?? [];
       const hit = list.find((p) => p.path === path);
@@ -360,29 +376,29 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
       pathBy.set(x.bucket, list);
     }
     for (const [b, list] of pathBy) pathBy.set(b, list.sort((a, z) => z.v.revenueUsd - a.v.revenueUsd).slice(0, 100));
-    for (const f of pre) {
-      const pages = pathBy.get(f.x.bucket);
-      const tot = baseBy.get(f.x.bucket);
-      const push = async (path: string, v: typeof zeroM) => {
-        if (v.revenueUsd < 0.0000005 && v.impressions < 0.0005 && v.adRequests < 0.0005) return;
-        facts.push(emptyFact({ date: f.x.day, domainId: f.x.domain.id, urlId: await urlOf(f.x.domain.id, path), platform: f.platform, campaignId: f.campaignId, adGroupId: f.adGroupId, adId: f.adId,
-          country: f.x.country, reason: f.reason, utmSource: f.utmSource, ...v }));
-      };
-      if (!pages?.length || !tot) { await push(f.x.path, f.v); continue; }
-      const left = { ...f.v };
-      for (const pg of pages) {
-        const part = { ...zeroM };
-        for (const k of M_KEYS) {
-          const sum = pages.reduce((a, q2) => a + q2.v[k], 0);
-          const den = Math.max(tot[k], sum);
-          part[k] = den > 0 ? f.v[k] * (pg.v[k] / den) : 0;
-          left[k] -= part[k];
-        }
-        await push(pg.path, part);
+  }
+  for (const f of pre) {
+    const pages = pathBy.get(f.x.bucket);
+    const tot = baseBy.get(f.x.bucket);
+    const push = async (path: string, v: typeof zeroM) => {
+      if (v.revenueUsd < 0.0000005 && v.impressions < 0.0005 && v.adRequests < 0.0005) return;
+      facts.push(emptyFact({ date: f.x.day, domainId: f.x.domain.id, urlId: await urlOf(f.x.domain.id, path), platform: f.platform, campaignId: f.campaignId, adGroupId: f.adGroupId, adId: f.adId,
+        country: f.x.country, reason: f.reason, utmSource: f.utmSource, ...v }));
+    };
+    if (!pages?.length || !tot) { await push(f.x.path, f.v); continue; }
+    const left = { ...f.v };
+    for (const pg of pages) {
+      const part = { ...zeroM };
+      for (const k of M_KEYS) {
+        const sum = pages.reduce((a, q2) => a + q2.v[k], 0);
+        const den = Math.max(tot[k], sum);
+        part[k] = den > 0 ? f.v[k] * (pg.v[k] / den) : 0;
+        left[k] -= part[k];
       }
-      for (const k of M_KEYS) left[k] = Math.max(0, left[k]);
-      await push(f.x.path, left);
+      await push(pg.path, part);
     }
+    for (const k of M_KEYS) left[k] = Math.max(0, left[k]);
+    await push(f.x.path, left);
   }
   const mine = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);
   const n = await replaceFacts('gam', w.from, w.to, { domains: mine }, facts, isFinal);
@@ -400,7 +416,13 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const urlNote = !pathKey && !pathKv && !urlDim && config.gamKeys.path
     ? `URLs: sem o key-value "${config.gamKeys.path}" nos relatórios a receita fica em "(sem URL)". O site manda googletag.pubads().setTargeting('${config.gamKeys.path}', location.pathname) e o key fica com "Incluir valores nos relatórios"`
     : '';
-  const modeNote = mode === 'keyvalues' ? `atribuição pelo key-value ${contentKey.adTagName}${pathKv ? ` · URLs por ${pathKv.adTagName}` : ''}${srcKv ? ` · retenção por ${srcKv.adTagName}` : ''} (sem dimensão personalizada)` : '';
+  const modeNote = [
+    mode === 'keyvalues' ? `atribuição pelo key-value ${contentKey.adTagName} (sem dimensão personalizada)` : 'atribuição por dimensão personalizada',
+    pathKv ? `URLs por ${pathKv.adTagName}` : '',
+    srcKv ? `retenção por ${srcKv.adTagName} (${retentionRows} linhas de push/whatsapp/outros)`
+      : keys.some((k) => k.role === 'source') ? `retenção por ${config.gamKeys.source} (dimensão)`
+      : config.gamKeys.source ? `retenção: key "${config.gamKeys.source}" não encontrado nos relatórios do Ad Manager` : '',
+  ].filter(Boolean).join(' · ');
   await setAccountStatus(net.id, warn ? 'warn' : 'ok', [warn, modeNote, urlNote].filter(Boolean).join(' · ') || null);
   return { rows: rows.length + kvRows.length + pathRows.length + srcRows.length, n, warn };
 }
