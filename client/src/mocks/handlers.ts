@@ -261,7 +261,7 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     need(u, 'urls.view'); const all = rowsFor(u, q, (r) => !!DOMAINS.find((d) => d.hostname === r.domain)); const origin = q.origin ? String(q.origin) : null;
     const rows = origin ? all.filter((r) => originOf(r) === origin) : all;
     const RANK = { google: 0, meta: 1, retention: 2, none: 3 } as const;
-    const origins = [...group(all, originOf)].map(([k, rs]) => ({ key: k, label: k === 'google' ? 'Google Ads' : k === 'meta' ? 'Meta Ads' : k === 'none' ? 'Sem origem' : k.slice(4), kind: (k.startsWith('utm:') ? 'retention' : k) as T.UrlOrigin['kind'], metrics: agg(rs, cur) }))
+    const origins = [...group(all, originOf)].map(([k, rs]) => ({ key: k, label: k === 'google' ? 'Google Ads' : k === 'meta' ? 'Meta Ads' : k === 'none' ? 'Sem origem' : `${/^pushalert|push$/.test(k.slice(4)) ? 'Push' : /(wpp|whatsapp)$/.test(k.slice(4)) ? 'WhatsApp' : 'Retenção'} · ${k.slice(4)}`, kind: (k.startsWith('utm:') ? 'retention' : k) as T.UrlOrigin['kind'], metrics: agg(rs, cur) }))
       .sort((a, b) => RANK[a.kind] - RANK[b.kind] || b.metrics.revenue - a.metrics.revenue);
     return out<T.UrlsResponse>({ urls: [...group(rows, (r) => r.domain + '|' + r.url)].map(([k, rs]) => { const [d, p] = k.split('|'); return { domain: d, path: p, metrics: agg(rs, cur) }; }), origins, origin });
   }

@@ -9,7 +9,7 @@ const GROUPS: [string, [string, 'GAM' | 'Pluto' | 'GAM + atribuição' | 'a defi
   ['Delivery', [['Ad Requests', 'GAM'], ['Matched Requests', 'GAM'], ['Responses served (Total code served)', 'GAM'], ['Impressions', 'GAM'], ['Unfilled Impressions', 'GAM'], ['Fill Rate', 'Pluto'], ['Drop-off = (Responses served − Impressions) / Responses served', 'Pluto']]],
   ['Performance', [['Clicks', 'GAM'], ['CTR', 'GAM'], ['eCPM / CPM', 'GAM'], ['Active View measurable / viewable', 'GAM'], ['Active View viewable %', 'GAM']]],
   ['Dimensões', [['Date · Domain · Country · Device', 'GAM'], ['Ad Unit · Placement', 'GAM'], ['Custom targeting (key-values)', 'GAM'], ['URL / landing page', 'GAM + atribuição']]],
-  ['Derivadas', [['Sessões', 'Pluto'], ['RPS = Receita ÷ Sessões · RPM de Sessão = RPS × 1000', 'Pluto'], ['ROI, ROI %, Margem', 'Pluto'], ['PMR', 'a definir']]],
+  ['Derivadas', [['eCPM = Receita ÷ Impressões × 1000', 'Pluto'], ['ROI, ROI %, Margem', 'Pluto'], ['PMR', 'a definir']]],
 ];
 const STEPS = ['Conectar', 'Login Google', 'OAuth', 'Autorizar a conta com acesso ao GAM', 'Rede identificada', 'Sincroniza dados'];
 
@@ -39,9 +39,12 @@ export default function IntegrationGamPage() {
       </Card>
       <AccountsCard provider="gam" title="Redes do Ad Manager" />
       <Alert severity="info" variant="outlined" sx={{ mt: 1.75 }}>
-        Para a receita entrar por campanha, o site precisa mandar no GPT os key-values <b>utm_campaign</b> e <b>utm_content</b> (e, se quiser, utm_source),
-        e no Ad Manager esses keys precisam estar como <b>dimensão personalizada</b> (Inventário → Key-values → “Report on values”). Sem isso a receita entra como “não atribuída”.
-        Para a tela <b>Placements</b>, o site também manda o key-value <b>placement</b> com o valor do <b>{'{placement}'}</b> da URL do anúncio (mesma configuração de dimensão personalizada).
+        Para a receita entrar por campanha, o site manda no GPT os key-values <b>utm_campaign</b> e <b>utm_content</b> (os mesmos da URL do anúncio).
+        No Ad Manager basta deixar esses keys com <b>“Incluir valores nos relatórios”</b> (Inventário → Key-values → Report on values), como na Publeno:
+        <b>não precisa de dimensão personalizada</b> e não há limite de valores. O dash lê o <b>utm_content</b> pela dimensão “Key-values” e acha a campanha
+        pelo {'{creative}'} (formato <b>{'{creative}_{placement}'}</b>) ou pelo grupo ({'{adgroupid}_{creative}'}). O placement do utm_content vai para a tela <b>Placements</b>.
+        Com <b>page_path</b> (caminho da página) a receita vai para cada URL; com <b>utm_source</b> a receita de retenção aparece separada (Push = pushalert ou …push · WhatsApp = …wpp ou …whatsapp).
+        Os dois também só precisam de “Incluir valores nos relatórios”. Receita sem esses key-values (orgânico, direto) fica como “não atribuída” no site.
       </Alert>
       <SyncPanel provider="gam" />{snack}
     </>

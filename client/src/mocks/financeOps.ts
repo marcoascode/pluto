@@ -48,16 +48,24 @@ function init() {
 /* ---------- mesmas contas do servidor ---------- */
 function siteResults(ids: string[], month: string) {
   const map = new Map<string, Omit<SiteCard, 'managers'>>();
-  const get = (c: string, s: string) => { let x = map.get(`${c}|${s}`); if (!x) { x = { companyId: c, site: s, month, revenue: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null }; map.set(`${c}|${s}`, x); } return x; };
+  const get = (c: string, s: string) => { let x = map.get(`${c}|${s}`); if (!x) { x = { companyId: c, site: s, month, revenue: 0, ads: 0, otherExpenses: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null }; map.set(`${c}|${s}`, x); } return x; };
+  // 0.15: receita líquida e anúncios "do dash" (no demo, os números de cada site por mês, mês corrente proporcional até hoje)
+  const k = Math.round((Date.parse(`${month}-15`) - Date.parse(`${M()}-15`)) / (30.44 * 864e5));
+  const grow = [0.82, 0.88, 0.94, 1, 1.03][Math.max(0, Math.min(4, k + 4))];
+  const part = month === M() ? Number(TODAY.slice(8, 10)) / Number(mEnd(month).slice(8, 10)) : month > M() ? 0 : 1;
+  for (const x of FIN_SITES) {
+    if (!ids.includes(x.companyId) || k < x.from) continue;
+    const g = grow * (1 + ((x.site.length + (k + 4) * 3) % 5 - 2) / 100) * part;
+    const y = get(x.companyId, x.site); y.revenue += x.income * g; y.ads = (y.ads ?? 0) + (x.google + x.meta) * g;
+  }
   for (const e of FIN_CASH) {
-    if (!e.site || !ids.includes(e.companyId) || (e.kind !== 'income' && e.kind !== 'expense')) continue;
+    if (!e.site || !ids.includes(e.companyId) || e.kind !== 'expense' || e.category === 'google_ads' || e.category === 'meta_ads') continue;
     if ((e.competence ?? e.date.slice(0, 7)) !== month) continue;
-    const v = finMock.conv(e.amount, e.currency, 'BRL', e.date);
-    if (e.kind === 'income') get(e.companyId, e.site).revenue += v; else get(e.companyId, e.site).expenses += v;
+    get(e.companyId, e.site).otherExpenses! += finMock.conv(e.amount, e.currency, 'BRL', e.date);
   }
   const rd = [mEnd(month), TODAY].sort()[0];
   for (const c of FIN_COSTS) if (c.site && ids.includes(c.companyId) && finMock.applies(c, month)) get(c.companyId, c.site).siteCosts += finMock.conv(finMock.amountIn(c, month), c.currency, 'BRL', rd);
-  for (const x of map.values()) { x.revenue = r2(x.revenue); x.expenses = r2(x.expenses); x.siteCosts = r2(x.siteCosts); x.costs = r2(x.expenses + x.siteCosts); x.result = r2(x.revenue - x.costs); x.roi = x.costs > 0 ? r2((x.result / x.costs) * 100) : null; }
+  for (const x of map.values()) { x.revenue = r2(x.revenue); x.ads = r2(x.ads!); x.otherExpenses = r2(x.otherExpenses!); x.siteCosts = r2(x.siteCosts); x.expenses = r2(x.ads + x.otherExpenses); x.costs = r2(x.expenses + x.siteCosts); x.result = r2(x.revenue - x.costs); x.roi = x.costs > 0 ? r2((x.result / x.costs) * 100) : null; }
   return [...map.values()].sort((a, b) => b.result - a.result);
 }
 const coverage = (a: Assignment, m: string) => {
@@ -88,7 +96,7 @@ function commissionsFor(ids: string[], month: string, userId?: string): Commissi
       periodId: null, userId: uid, userName: list[0]?.userName ?? '', companyId, month, sites, revenue: w((s) => s.revenue), costs: w((s) => s.costs), profit,
       negatives: r2(sites.filter((s) => s.base < 0).reduce((a, s) => a + s.base, 0)), profitTier, tierCurrency: RULE.tierCurrency as CommissionLine['tierCurrency'], pct, calculated,
       adjustments: 0, adjustmentNote: null, approved: null, status: month >= M() ? 'open' : 'to_approve', frozen: false, liveDiff: null,
-      incomplete: sites.filter((s) => !res.some((x) => x.companyId === companyId && x.site === s.site && x.revenue > 0)).map((s) => `${s.site}: sem receita lançada no Caixa para o mês`),
+      incomplete: sites.filter((s) => !res.some((x) => x.companyId === companyId && x.site === s.site && x.revenue > 0)).map((s) => `${s.site}: sem receita no dash para o mês`),
       approvedBy: null, approvedAt: null, paidAt: null, paidNote: null,
     };
     const per = PER.find((p) => p.userId === uid && p.companyId === companyId && p.month === month);
@@ -134,7 +142,7 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
     const lines = b.user ? allLines.filter((l) => l.userId === b.user) : allLines;
     const owners = (c: string, s: string) => ASG.filter((a) => a.companyId === c && a.site === s && allLines.some((l) => l.userId === a.userId && l.companyId === c && l.sites.some((x) => x.site === s))).map((a) => ({ userId: a.userId, userName: a.userName, sharePct: a.sharePct }));
     let cards: SiteCard[] = siteResults(ids, month).map((s) => ({ ...s, managers: owners(s.companyId, s.site) }));
-    for (const l of allLines) for (const s of l.sites) if (!cards.some((c) => c.companyId === l.companyId && c.site === s.site)) cards.push({ companyId: l.companyId, site: s.site, month, revenue: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null, managers: owners(l.companyId, s.site) });
+    for (const l of allLines) for (const s of l.sites) if (!cards.some((c) => c.companyId === l.companyId && c.site === s.site)) cards.push({ companyId: l.companyId, site: s.site, month, revenue: 0, ads: 0, otherExpenses: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null, managers: owners(l.companyId, s.site) });
     if (mine) cards = cards.filter((c) => c.managers.some((x) => x.userId === mine));
     if (b.user) cards = cards.filter((c) => c.managers.some((x) => x.userId === b.user));
     const sum = (f: (x: CommissionLine) => number) => r2(lines.reduce((a, x) => a + f(x), 0));

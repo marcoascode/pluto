@@ -23,7 +23,7 @@
  */
 import express, { Router, type Request } from 'express';
 import { z } from 'zod';
-import { one, q } from '../db.js';
+import { one, q, tx } from '../db.js';
 import { HttpError, notFound, parse } from '../lib/http.js';
 import { today } from '../lib/dates.js';
 import { isAdminRole } from '../auth/permissions.js';
@@ -83,7 +83,7 @@ financeRouter.get('/overview', async (req, res) => {
   const totals = { income: sum('income'), googleAds: sum('googleAds'), metaAds: sum('metaAds'), otherExpense: sum('otherExpense'), expenses: sum('expenses'), costs: sum('costs'), deposits: sum('deposits'), withdrawals: sum('withdrawals'), result: sum('result') };
   res.json({
     currency, from, to, companies: all, selected: req.query.company || null,
-    cash: { total: cash.some((c) => c.balance != null) ? cash.reduce((a, c) => a + (c.balance ?? 0), 0) : null, companies: cash },
+    cash: { total: cash.reduce((a, c) => a + c.balance, 0), companies: cash },
     months: close, totals: { ...totals, margin: totals.income > 0 ? (totals.result / totals.income) * 100 : null },
   });
 });
@@ -253,8 +253,8 @@ const cashBody = z.object({
   .refine((b) => b.kind !== 'income' || (INCOME_CATEGORIES as readonly string[]).includes(b.category ?? ''), { message: 'Escolha de onde veio a receita.', path: ['category'] })
   .refine((b) => b.kind !== 'expense' || (EXPENSE_CATEGORIES as readonly string[]).includes(b.category ?? ''), { message: 'Escolha o tipo do gasto.', path: ['category'] });
 
-const checkCash = async (req: Request) => {
-  const b = parse(cashBody, req.body);
+const checkCash = async (req: Request, body: unknown = req.body) => {
+  const b = parse(cashBody, body);
   await assertCompany(req, b.companyId);
   if (b.date > today()) throw new HttpError(422, 'future_date', 'A data não pode ser depois de hoje.');
   const flow = b.kind === 'income' || b.kind === 'expense';
@@ -274,6 +274,40 @@ async function getEntry(req: Request) {
   await assertCompany(req, e.company_id);
   return id;
 }
+
+/**
+ * 0.15: receita (ou gasto) de vários sites num lançamento só — mesmo pagamento, data, origem, moeda, mês de referência
+ * e observação; um registro por site (cada site segue para Comissões). Tudo ou nada.
+ * Cada linha pode ter o próprio % de revshare (o do domínio); sem ele vale o revsharePct do lançamento.
+ */
+const splitBody = z.object({ lines: z.array(z.object({
+  site: z.string().trim().max(120).nullable().optional(),
+  amount: z.number().positive().max(1e11),
+  revsharePct: z.number().min(0).max(99.999).nullable().optional(),
+})).min(2).max(40) });
+financeRouter.post('/cash/split', async (req, res) => {
+  const { lines } = parse(splitBody, req.body);
+  const base = { ...req.body }; delete base.lines;
+  const rows: Awaited<ReturnType<typeof checkCash>>[] = [];
+  for (const l of lines) {
+    const b = await checkCash(req, { ...base, site: l.site ?? null, amount: l.amount, revsharePct: l.revsharePct !== undefined ? l.revsharePct : base.revsharePct ?? null });
+    if (b.kind !== 'income' && b.kind !== 'expense') throw new HttpError(422, 'split_kind', 'Só receita e gasto podem ser divididos por site.');
+    rows.push(b);
+  }
+  const sites = rows.map((r) => r.site).filter(Boolean);
+  if (new Set(sites).size !== sites.length) throw new HttpError(422, 'duplicate_site', 'O mesmo site aparece duas vezes no lançamento.');
+  const ids = await tx(async (c) => {
+    const out: string[] = [];
+    for (const b of rows) {
+      const r = await one<{ id: string }>(`INSERT INTO finance_cash_entries (company_id, date, kind, category, amount, currency, note, created_by, site, competence, gross_amount, revshare_pct) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id::text`,
+        [b.companyId, b.date, b.kind, b.category, b.amount, b.currency, b.note || null, req.user!.id, b.site, b.competence, b.grossAmount, b.revsharePct], c);
+      out.push(r!.id);
+    }
+    return out;
+  });
+  res.status(201).json({ ids, total: r2c(rows.reduce((a, b) => a + b.amount, 0)) });
+});
+const r2c = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 financeRouter.post('/cash', async (req, res) => {
   const b = await checkCash(req);

@@ -12,7 +12,10 @@
  * sem ele, o valor do plano vigente (finance_costs.amount ou a última mudança de plano em finance_cost_prices).
  *
  * Fechamento do mês = receitas recebidas − gastos − custos (pela data de cada lançamento).
- * Caixa hoje       = último saldo conferido + receitas − gastos − custos pagos + aportes − retiradas lançados depois dele.
+ * Caixa hoje       = ponto de partida + receitas − gastos − custos fixos pagos + aportes − retiradas lançados depois dele.
+ *   0.15: o ponto de partida é o último saldo conferido OU, sem saldo conferido, R$ 0 no 1º dia do mês do primeiro
+ *   lançamento. O caixa anda sozinho a cada receita/gasto lançado, editado ou excluído; conferir o saldo só acerta a base.
+ *   Custos fixos (aba Custos) entram no caixa no dia do pagamento de cada mês e aparecem como linhas no mês (costItems).
  * Conversão de moeda: lançamento pela cotação do dia dele; custo pela cotação do último dia do mês (ou de hoje).
  */
 import { q } from '../db.js';
@@ -114,7 +117,20 @@ export interface MonthClose {
   result: number;          // receitas − gastos − custos (aportes e retiradas não entram no resultado)
   margin: number | null;   // resultado ÷ receitas
   entries: EntryOut[];     // lançamentos do mês (mais recentes primeiro)
+  costItems: CostItem[];   // 0.15: cada custo fixo do mês, como uma linha automática do caixa
   companies: { companyId: string; income: number; expenses: number; costs: number; result: number }[];
+}
+
+/** Custo fixo da aba Custos lançado sozinho no mês: valor real da NF (actual) ou do plano; payDate = dia do pagamento. */
+export interface CostItem { costId: string; companyId: string; name: string; category: Category; site: string | null; payDate: string; amount: number; currency: Cur; converted: number; actual: boolean; paid: boolean }
+function costItemsOf(costs: CostRow[], m: string, currency: Cur, conv: (a: number, s: Cur, d: Cur, date: string) => number, rateDay: string, t: string): CostItem[] {
+  const last = monthEnd(m);
+  return costs.filter((k) => appliesIn(k, m)).map((k) => {
+    const d = `${m}-${String(Math.min(k.pay_day, Number(last.slice(8)))).padStart(2, '0')}`;
+    const amount = amountIn(k, m);
+    return { costId: k.id, companyId: k.company_id, name: k.name, category: k.category, site: k.site, payDate: d, amount, currency: k.currency,
+      converted: conv(amount, k.currency, currency, rateDay), actual: k.actuals[m] != null, paid: d <= t };
+  }).sort((a, b) => b.payDate.localeCompare(a.payDate) || a.name.localeCompare(b.name));
 }
 
 /** Fechamento mês a mês das Empresas pedidas (somadas), só com lançamentos manuais + custos. */
@@ -148,6 +164,7 @@ export async function monthlyClose(companyIds: string[], months: string[], curre
       costs: cst, costsByCategory, deposits: sumKind('deposit'), withdrawals: sumKind('withdrawal'),
       result, margin: income > 0 ? (result / income) * 100 : null,
       entries: inMonth.slice().reverse().map((e) => entryOut(e, v(e))),
+      costItems: costItemsOf(costs, m, currency, conv, rateDay, t),
       companies: per,
     };
   });
@@ -155,9 +172,10 @@ export async function monthlyClose(companyIds: string[], months: string[], curre
 
 export interface CashCompany {
   companyId: string; companyName: string;
-  anchor: { date: string; amount: number } | null;   // saldo conferido (na moeda pedida)
-  income: number; expenses: number; costsSince: number; deposits: number; withdrawals: number;   // depois do saldo conferido
-  balance: number | null;                             // caixa hoje (null sem saldo conferido)
+  anchor: { date: string; amount: number } | null;   // saldo conferido (na moeda pedida); null = começa do zero
+  since: string;                                      // 0.15: de quando o caixa conta (dia do saldo conferido ou 1º dia do mês do 1º lançamento)
+  income: number; expenses: number; costsSince: number; deposits: number; withdrawals: number;   // depois do ponto de partida
+  balance: number;                                    // caixa hoje (sempre: sem saldo conferido, parte de 0)
   entries: EntryOut[];                                // últimos 50 lançamentos
 }
 
@@ -172,25 +190,26 @@ export async function cashPosition(companies: { id: string; name: string }[], cu
     const mine = entries.filter((e) => e.company_id === co.id);
     const list = mine.slice().reverse().slice(0, 50).map((e) => entryOut(e, v(e)));
     const ai = mine.map((e) => e.kind).lastIndexOf('balance');
-    if (ai < 0) return { companyId: co.id, companyName: co.name, anchor: null, income: 0, expenses: 0, costsSince: 0, deposits: 0, withdrawals: 0, balance: null, entries: list };
-    const anchor = mine[ai];
+    const anchor = ai >= 0 ? mine[ai] : null;
+    // sem saldo conferido: começa do zero no 1º dia do mês do primeiro lançamento (ou do mês atual)
+    const since = anchor ? anchor.date : `${ym(mine[0]?.date ?? t)}-01`;
     // lançados depois do saldo conferido (mesmo dia e lançado antes dele = já estava no saldo)
-    const after = mine.slice(ai + 1);
+    const after = anchor ? mine.slice(ai + 1) : mine;
     const sum = (k: EntryKind) => after.filter((e) => e.kind === k).reduce((a, e) => a + v(e), 0);
-    // custos da aba Custos com dia de pagamento depois do saldo conferido e até hoje
+    // custos da aba Custos com dia de pagamento depois do ponto de partida e até hoje
     let costsSince = 0;
     for (const k of costs.filter((x) => x.company_id === co.id)) {
-      for (const m of monthsBetween(ym(anchor.date), ym(t))) {
+      for (const m of monthsBetween(ym(since), ym(t))) {
         if (!appliesIn(k, m)) continue;
-        const day = `${m}-${String(k.pay_day).padStart(2, '0')}`;
-        if (day <= anchor.date || day > t) continue;
+        const day = `${m}-${String(Math.min(k.pay_day, Number(monthEnd(m).slice(8)))).padStart(2, '0')}`;
+        if ((anchor ? day <= since : day < since) || day > t) continue;
         costsSince += conv(amountIn(k, m), k.currency, currency, day);
       }
     }
-    const base = v(anchor);
+    const base = anchor ? v(anchor) : 0;
     const income = sum('income'), expenses = sum('expense'), deposits = sum('deposit'), withdrawals = sum('withdrawal');
     return {
-      companyId: co.id, companyName: co.name, anchor: { date: anchor.date, amount: base }, income, expenses, costsSince, deposits, withdrawals,
+      companyId: co.id, companyName: co.name, anchor: anchor ? { date: anchor.date, amount: base } : null, since, income, expenses, costsSince, deposits, withdrawals,
       balance: base + income - expenses - costsSince + deposits - withdrawals, entries: list,
     };
   });

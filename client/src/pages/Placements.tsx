@@ -179,10 +179,10 @@ function EmptyState({ onPick }: { onPick: (d: string) => void }) {
 
 /* ---------------- resultados ---------------- */
 type Mode = 'all' | 'win' | 'loss';
-type CritKey = 'roi' | 'margin' | 'profit' | 'spend' | 'revenue' | 'sessionRpm' | 'sessions';
+type CritKey = 'roi' | 'margin' | 'profit' | 'spend' | 'revenue' | 'ecpm' | 'impressions';
 const CRIT: { k: CritKey; l: string; unit: '%' | '$' | '' }[] = [
   { k: 'roi', l: 'ROI %', unit: '%' }, { k: 'margin', l: 'Margem', unit: '%' }, { k: 'profit', l: 'ROI', unit: '$' }, { k: 'spend', l: 'Despesas', unit: '$' },
-  { k: 'revenue', l: 'Receita', unit: '$' }, { k: 'sessionRpm', l: 'RPM de Sessão', unit: '$' }, { k: 'sessions', l: 'Sessões', unit: '' },
+  { k: 'revenue', l: 'Receita', unit: '$' }, { k: 'ecpm', l: 'eCPM', unit: '$' }, { k: 'impressions', l: 'Impressões', unit: '' },
 ];
 type Sort = { k: MetricKey | 'name'; d: 'asc' | 'desc' };
 const isWin = (m: Metrics) => m.profit > 0;
@@ -336,7 +336,7 @@ function Results({ data, sel }: { data: PlacementsResponse; sel: PlacementSel })
               </Box>
               {o && kidsOf(g).map((c) => (
                 <Box key={c.key} sx={{ p: 1.5, pl: 3.5, bgcolor: p.rowL1, borderBottom: 1, borderColor: 'divider' }}>
-                  <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography sx={{ fontFamily: p.mono, fontSize: 12.5, color: 'text.secondary', overflowWrap: 'anywhere' }}>{c.key}</Typography><RoiChip v={c.metrics.roi} /></Stack>{grid(c)}
+                  <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between', alignItems: 'center' }}><Typography sx={{ fontFamily: p.mono, fontSize: 12.5, color: 'text.secondary', overflowWrap: 'anywhere', flex: 1 }}>{c.key}</Typography>{c.estimated && <Tooltip title="A receita do Ad Manager chegou só no domínio principal. Ela foi dividida entre os subdomínios pela proporção do custo (estimativa). O total do domínio é exato."><Chip size="small" label="receita estimada" sx={{ height: 18, fontSize: 10.5, color: p.warn, bgcolor: alpha(p.warn, 0.14) }} /></Tooltip>}<RoiChip v={c.metrics.roi} /></Stack>{grid(c)}
                 </Box>
               ))}
             </Fragment>
@@ -368,7 +368,7 @@ function Results({ data, sel }: { data: PlacementsResponse; sel: PlacementSel })
                   {o && kidsOf(g).map((c) => (
                     <TableRow key={c.key} sx={{ '& td': { bgcolor: p.rowL1 } }}>
                       <TableCell sx={sticky(p.rowL1, { pl: 6.5, boxShadow: rowShadow(c.metrics) })}>
-                        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Typography sx={{ flex: 1, fontFamily: p.mono, fontSize: 12.5, color: 'text.secondary', overflowWrap: 'anywhere' }}>{c.key}</Typography>{drawerBtn(c.key, c.key, 'host')}</Stack>
+                        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Typography sx={{ flex: 1, fontFamily: p.mono, fontSize: 12.5, color: 'text.secondary', overflowWrap: 'anywhere' }}>{c.key}</Typography>{c.estimated && <Tooltip title="A receita do Ad Manager chegou só no domínio principal. Ela foi dividida entre os subdomínios pela proporção do custo (estimativa). O total do domínio é exato."><Chip size="small" label="receita estimada" sx={{ height: 18, fontSize: 10.5, color: p.warn, bgcolor: alpha(p.warn, 0.14) }} /></Tooltip>}{drawerBtn(c.key, c.key, 'host')}</Stack>
                       </TableCell>
                       {ms.map((k) => <PCell key={k} k={k} r={c} />)}
                     </TableRow>

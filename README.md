@@ -48,7 +48,6 @@ cd client && cp .env.example .env && npm install && npm run dev     # front :517
 - **Placements:** o site precisa mandar o key-value `placement` no GPT (ver `client/docs/INTEGRACAO.md`).
 - **Sessões / RPS:** não vêm de nenhuma das APIs; dependem de um tracking no próprio site.
 
-
 ******
 **VERIFICAR APROVAÇÃO DE ESCOPO PARA GOOGLE ADS API**
 https://console.cloud.google.com/auth/scopes?inv=1&invt=Ab4LDg&project=api-do-ad-manager

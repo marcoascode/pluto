@@ -28,15 +28,29 @@ export interface Metrics {
   cpcAdx: number | null;
   /** RPS = receita ÷ sessões · RPM de Sessão = receita ÷ sessões × 1000. */
   sessionRpm: number | null;
+  /** 0.15 · Retenção: receita (líquida) com utm_source de retenção. Push = pushalert ou terminando em "push";
+   *  WhatsApp = terminando em "wpp" ou "whatsapp"; o resto (email, sms…) entra só no total. */
+  retentionRevenue: number; pushRevenue: number; whatsappRevenue: number;
 }
-interface Sums { spend: number; gs: number; ms: number; iva: number; rev: number; gross: number; un: number; sess: number; ai: number; ar: number; rsv: number; ac: number; vw: number; clk: number; ti: number; mi: number; mlc: number; mres: number; mlead: number; n: number }
+
+/** utm_source de anúncio: não é retenção (vai para Google/Meta). */
+export const AD_SOURCES = 'google|gads|adwords|cpc|ppc|fb|facebook|ig|instagram|an|msg|messenger|meta|th|threads';
+export const RET_SQL = `(m.utm_source IS NOT NULL AND m.utm_source !~ '^(${AD_SOURCES})$')`;
+export const PUSH_SQL = `(m.utm_source ~ '^pushalert|push$')`;
+export const WPP_SQL = `(m.utm_source ~ '(wpp|whatsapp)$')`;
+/** Canal de retenção de um utm_source (mesma regra do SQL). */
+export const retentionChannel = (s: string | null | undefined): 'push' | 'whatsapp' | 'other' | null => {
+  if (!s || new RegExp(`^(${AD_SOURCES})$`).test(s)) return null;
+  return /^pushalert|push$/.test(s) ? 'push' : /(wpp|whatsapp)$/.test(s) ? 'whatsapp' : 'other';
+};
+interface Sums { spend: number; gs: number; ms: number; iva: number; rev: number; gross: number; un: number; rt: number; rp: number; rw: number; sess: number; ai: number; ar: number; rsv: number; ac: number; vw: number; clk: number; ti: number; mi: number; mlc: number; mres: number; mlead: number; n: number }
 
 const n = (v: unknown) => (v == null ? 0 : Number(v));
 const div = (a: number, b: number, k = 1) => (b ? (a / b) * k : null);
 
 /** Mesmas fórmulas do front (docs/API.md). */
 export function toMetrics(r?: Partial<Sums> | null): Metrics {
-  const s: Sums = { spend: n(r?.spend), gs: n(r?.gs), ms: n(r?.ms), iva: n(r?.iva), rev: n(r?.rev), gross: n(r?.gross), un: n(r?.un), sess: n(r?.sess), ai: n(r?.ai), ar: n(r?.ar), rsv: n(r?.rsv), ac: n(r?.ac), vw: n(r?.vw), clk: n(r?.clk), ti: n(r?.ti), mi: n(r?.mi), mlc: n(r?.mlc), mres: n(r?.mres), mlead: n(r?.mlead), n: n(r?.n) };
+  const s: Sums = { spend: n(r?.spend), gs: n(r?.gs), ms: n(r?.ms), iva: n(r?.iva), rev: n(r?.rev), gross: n(r?.gross), un: n(r?.un), rt: n(r?.rt), rp: n(r?.rp), rw: n(r?.rw), sess: n(r?.sess), ai: n(r?.ai), ar: n(r?.ar), rsv: n(r?.rsv), ac: n(r?.ac), vw: n(r?.vw), clk: n(r?.clk), ti: n(r?.ti), mi: n(r?.mi), mlc: n(r?.mlc), mres: n(r?.mres), mlead: n(r?.mlead), n: n(r?.n) };
   const profit = s.rev - s.spend;
   const att = s.rev - s.un;
   return {
@@ -49,6 +63,7 @@ export function toMetrics(r?: Partial<Sums> | null): Metrics {
     trafficClicks: s.clk, trafficImpressions: s.ti, trafficCtr: div(s.clk, s.ti, 100), cpc: div(s.spend, s.clk),
     attributedRevenue: att, unattributedRevenue: s.un, attributionRate: div(att, s.rev, 100),
     metaImpressions: s.mi, metaLinkClicks: s.mlc, cpcLink: div(s.ms, s.mlc), metaResults: s.mres, cpr: div(s.ms, s.mres), metaLeads: s.mlead, cpl: div(s.ms, s.mlead),
+    retentionRevenue: s.rt, pushRevenue: s.rp, whatsappRevenue: s.rw,
   };
 }
 
@@ -85,6 +100,9 @@ export async function aggregate(o: AggOpts): Promise<Map<string, Metrics>> {
       SUM(m.revenue_usd * (1 - rs.share) * r.fr) AS rev,
       SUM(m.revenue_usd * r.fr) AS gross,
       SUM(CASE WHEN m.platform = 'none' THEN m.revenue_usd * (1 - rs.share) * r.fr ELSE 0 END) AS un,
+      SUM(CASE WHEN ${RET_SQL} THEN m.revenue_usd * (1 - rs.share) * r.fr ELSE 0 END) AS rt,
+      SUM(CASE WHEN ${RET_SQL} AND ${PUSH_SQL} THEN m.revenue_usd * (1 - rs.share) * r.fr ELSE 0 END) AS rp,
+      SUM(CASE WHEN ${RET_SQL} AND ${WPP_SQL} AND NOT ${PUSH_SQL} THEN m.revenue_usd * (1 - rs.share) * r.fr ELSE 0 END) AS rw,
       SUM(m.sessions) AS sess, SUM(m.impressions) AS ai, SUM(m.ad_requests) AS ar, SUM(m.responses_served) AS rsv,
       SUM(m.ad_clicks) AS ac, SUM(m.viewable) AS vw, SUM(m.traffic_clicks) AS clk, SUM(m.traffic_impressions) AS ti,
       SUM(CASE WHEN m.platform = 'meta' THEN m.traffic_impressions ELSE 0 END) AS mi,

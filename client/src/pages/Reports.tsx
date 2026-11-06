@@ -144,7 +144,7 @@ export default function ReportsPage() {
       <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
         Receita = Ad Manager já sem a parte da Network (revShare do domínio) · Despesas = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o custo da Meta ·
         ROI = Receita − Despesas · ROI % = ROI ÷ Despesas · Margem = ROI ÷ Receita · RNA = receita não atribuída · CPC-L, CPR e CPL = custo Meta (sem IVA) ÷ cliques no link, conversas iniciadas e leads ·
-        RPS = Receita ÷ Sessões · RPM de Sessão = RPS × 1000 · Drop-off = respostas servidas que não viraram impressão.
+        eCPM = Receita ÷ Impressões × 1000 · Drop-off = respostas servidas que não viraram impressão.
       </Typography>
     </>
   );

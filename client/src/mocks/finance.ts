@@ -5,7 +5,7 @@
  */
 import type * as T from '@/types/api';
 import { ApiError } from '@/lib/api/client';
-import type { Attachment, CashEntry, CashMonth, CashOverview, CostPrice, EntryCategory, EntryKind } from '@/lib/finance';
+import type { Attachment, CashEntry, CashMonth, CashOverview, CostItem, CostPrice, EntryCategory, EntryKind } from '@/lib/finance';
 import { COMPANIES, DAYS, FX, TODAY } from './db';
 import { financeOpsMock, isOpsPath } from './financeOps';
 
@@ -53,7 +53,7 @@ export const FIN_CASH: Entry[] = [
   E('e5', 'c1', day(P, 23), 'income', 3180, 'adsense', 'AdSense (sem site)'),
   E('e6', 'c1', day(P, 28), 'withdrawal', 20000, null, 'distribuição de lucro'),
   // Empresa B
-  E('e10', 'c2', day(P, 1), 'balance', 64800, null, 'extrato do banco', 'BRL', 'Sócio B'),
+  // Empresa B sem saldo conferido: o caixa parte de R$ 0 no mês do primeiro lançamento (0.15)
 ].filter(upToToday);
 
 /* Receitas e gastos POR SITE (0.14): o AdX de um mês cai no começo do mês seguinte (referente ao mês anterior);
@@ -125,27 +125,33 @@ export function financeOverview(u: T.User, q: Record<string, unknown>): T.Financ
     return { month: m, partial: m === NOW, income, incomeByCategory: incByCat, googleAds: sum('expense', 'google_ads'), metaAds: sum('expense', 'meta_ads'), otherExpense: sum('expense', 'other_expense'),
       expenses, costs, costsByCategory: byCat, deposits: sum('deposit'), withdrawals: sum('withdrawal'), result, margin: income > 0 ? (result / income) * 100 : null,
       entries: es.slice().reverse().map(out),
+      costItems: FIN_COSTS.filter((k) => ids.has(k.companyId) && applies(k, m)).map((k): CostItem => {
+        const d = `${m}-${String(Math.min(k.payDay, Number(monthEnd(m).slice(8)))).padStart(2, '0')}`;
+        return { costId: k.id, companyId: k.companyId, name: k.name, category: k.category, site: (k as MockCost).site ?? null, payDate: d, amount: amountIn(k, m), currency: k.currency,
+          converted: conv(amountIn(k, m), k.currency, cur, rate), actual: FIN_ACTUALS[k.id]?.[m] != null, paid: d <= TODAY };
+      }).sort((a, b) => b.payDate.localeCompare(a.payDate)),
       companies: cos.map((c) => { const i = sum('income', undefined, c.id), x = sum('expense', undefined, c.id), k = costsOf(c.id); return { companyId: c.id, income: i, expenses: x, costs: k, result: i - x - k }; }) };
   });
   const cash = cos.map((c) => {
     const mine = entries.filter((e) => e.companyId === c.id);
     const list = mine.slice().reverse().slice(0, 50).map(out);
+    // 0.15: sem saldo conferido o caixa parte de 0 no 1º dia do mês do primeiro lançamento
     const ai = mine.map((e) => e.kind).lastIndexOf('balance');
-    if (ai < 0) return { companyId: c.id, companyName: c.name, anchor: null, income: 0, expenses: 0, costsSince: 0, deposits: 0, withdrawals: 0, balance: null, entries: list };
-    const a = mine[ai]; const after = mine.slice(ai + 1);
+    const a = ai >= 0 ? mine[ai] : null; const after = a ? mine.slice(ai + 1) : mine;
+    const since = a ? a.date : `${(mine[0]?.date ?? TODAY).slice(0, 7)}-01`;
     const s2 = (k: EntryKind) => after.filter((e) => e.kind === k).reduce((acc, e) => acc + v(e), 0);
     let costsSince = 0;
-    for (const k of FIN_COSTS) if (k.companyId === c.id) for (const mm of between(a.date.slice(0, 7), NOW)) {
-      if (!applies(k, mm)) continue; const d = `${mm}-${String(k.payDay).padStart(2, '0')}`; if (d > a.date && d <= TODAY) costsSince += conv(amountIn(k, mm), k.currency, cur, d);
+    for (const k of FIN_COSTS) if (k.companyId === c.id) for (const mm of between(since.slice(0, 7), NOW)) {
+      if (!applies(k, mm)) continue; const d = `${mm}-${String(Math.min(k.payDay, Number(monthEnd(mm).slice(8)))).padStart(2, '0')}`; if ((a ? d > since : d >= since) && d <= TODAY) costsSince += conv(amountIn(k, mm), k.currency, cur, d);
     }
-    const base = v(a), income = s2('income'), expenses = s2('expense'), deposits = s2('deposit'), withdrawals = s2('withdrawal');
-    return { companyId: c.id, companyName: c.name, anchor: { date: a.date, amount: base }, income, expenses, costsSince, deposits, withdrawals, balance: base + income - expenses - costsSince + deposits - withdrawals, entries: list };
+    const base = a ? v(a) : 0, income = s2('income'), expenses = s2('expense'), deposits = s2('deposit'), withdrawals = s2('withdrawal');
+    return { companyId: c.id, companyName: c.name, anchor: a ? { date: a.date, amount: base } : null, since, income, expenses, costsSince, deposits, withdrawals, balance: base + income - expenses - costsSince + deposits - withdrawals, entries: list };
   });
   type K = 'income' | 'googleAds' | 'metaAds' | 'otherExpense' | 'expenses' | 'costs' | 'deposits' | 'withdrawals' | 'result';
   const tot = (k: K) => months.reduce((a, m) => a + m[k], 0);
   const totals = { income: tot('income'), googleAds: tot('googleAds'), metaAds: tot('metaAds'), otherExpense: tot('otherExpense'), expenses: tot('expenses'), costs: tot('costs'), deposits: tot('deposits'), withdrawals: tot('withdrawals'), result: tot('result') };
   const res: CashOverview = { currency: cur, from, to, companies: all, selected: (q.company as string) || null,
-    cash: { total: cash.some((c) => c.balance != null) ? cash.reduce((a, c) => a + (c.balance ?? 0), 0) : null, companies: cash },
+    cash: { total: cash.reduce((a, c) => a + c.balance, 0), companies: cash },
     months, totals: { ...totals, margin: totals.income > 0 ? (totals.result / totals.income) * 100 : null } };
   // o handler genérico ainda tipa a resposta com o formato antigo; a tela usa CashOverview (lib/finance.ts)
   return res as unknown as T.FinanceOverview;
@@ -226,6 +232,15 @@ export function financeMutate(u: T.User, method: string, path: string, b: Record
     (row as MockCost).site = b.site ? String(b.site).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] : null;
     if (id) { const i = FIN_COSTS.findIndex((c) => c.id === id); if (i < 0) throw new ApiError(404, 'not_found', 'Custo não encontrado.'); FIN_COSTS[i] = row; } else FIN_COSTS.push(row);
     return row;
+  }
+  // 0.15: um lançamento dividido por site
+  if (path === '/finance/cash/split' && method === 'POST') {
+    const lines = (b.lines ?? []) as { site: string | null; amount: number; revsharePct?: number | null }[];
+    if (lines.length < 2) throw new ApiError(422, 'invalid_input', 'Informe pelo menos dois sites.');
+    const sites = lines.map((l) => (l.site ?? '').trim().toLowerCase()).filter(Boolean);
+    if (new Set(sites).size !== sites.length) throw new ApiError(422, 'duplicate_site', 'O mesmo site aparece duas vezes no lançamento.');
+    const ids = lines.map((l) => (financeMutate(u, 'POST', '/finance/cash', { ...b, lines: undefined, site: l.site, amount: l.amount, revsharePct: l.revsharePct !== undefined ? l.revsharePct : b.revsharePct ?? null }) as { id: string }).id);
+    return { ids, total: lines.reduce((a, l) => a + l.amount, 0) };
   }
   m = path.match(/^\/finance\/cash(?:\/([^/]+))?$/);
   if (m) {

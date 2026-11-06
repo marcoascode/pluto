@@ -7,6 +7,14 @@ ALTER TABLE daily_metrics ADD COLUMN meta_link_clicks BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE daily_metrics ADD COLUMN meta_results     BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE daily_metrics ADD COLUMN meta_leads       BIGINT NOT NULL DEFAULT 0;
 
+-- 1b) Origem da receita: utm_source que o site manda ao Ad Manager (key-value utm_source). Valores de retenção
+--     colocados à mão na URL (?utm_source=push, ?utm_source=whatsapp…) aparecem como origem própria na tela URLs;
+--     o resto fica como Google Ads / Meta Ads (campanha atribuída) ou "Sem origem". Entra no grão da linha.
+ALTER TABLE daily_metrics ADD COLUMN utm_source TEXT CHECK (utm_source IS NULL OR utm_source ~ '^[a-z0-9_.-]{1,40}$');
+DROP INDEX IF EXISTS daily_metrics_grain_uq;
+CREATE UNIQUE INDEX daily_metrics_grain_uq ON daily_metrics
+  (source, date, domain_id, COALESCE(url_id, 0), platform, COALESCE(campaign_id, 0), COALESCE(ad_group_id, 0), COALESCE(ad_id, 0), country, COALESCE(unattributed_reason, ''), COALESCE(utm_source, ''));
+
 -- 2) Finance · Custos lançados à mão (ferramentas, domínios, hospedagem, equipe…), sempre de uma Empresa.
 --    recurrence 'monthly': vale todo mês de start_month até end_month (aberto = sem fim) · 'once': só em start_month.
 --    pay_day: dia do pagamento no mês (o Caixa desconta o custo nesse dia).

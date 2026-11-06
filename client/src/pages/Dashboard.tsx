@@ -14,7 +14,7 @@ import { compactMoney, ddmm, longDate, money, pct } from '@/lib/format';
 import { addDays, todayISO } from '@/lib/period';
 import type { DailyPoint, Metrics } from '@/types/api';
 
-const DAILY: [keyof Metrics, string][] = [['profit', 'ROI'], ['revenue', 'Receita'], ['sessionRpm', 'RPM de Sessão'], ['ecpm', 'eCPM'], ['roi', 'ROI %'], ['margin', 'Margem'], ['trafficCtr', 'CTR'], ['viewability', 'Viewability'], ['fillRate', 'Fill Rate'], ['dropOffRate', 'Drop-off']];
+const DAILY: [keyof Metrics, string][] = [['profit', 'ROI'], ['revenue', 'Receita'], ['ecpm', 'eCPM'], ['roi', 'ROI %'], ['margin', 'Margem'], ['trafficCtr', 'CTR'], ['viewability', 'Viewability'], ['fillRate', 'Fill Rate'], ['dropOffRate', 'Drop-off']];
 
 /** Desktop: período (mín. 14 dias). Celular: sincronizado com a Data do topo. Hoje (parcial) fica fora. */
 function chartWindow(daily: DailyPoint[], from: string, to: string, mobile: boolean) {

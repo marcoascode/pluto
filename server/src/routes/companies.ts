@@ -60,7 +60,7 @@ companiesReadRouter.get('/companies/:id/overview', async (req, res) => {
   ]);
   const sum = (ms: Metrics[]) => {   // soma dos domínios do Squad (mesmas fórmulas: soma as bases e recalcula)
     const k = (f: keyof Metrics) => ms.reduce((a, m) => a + ((m[f] as number) || 0), 0);
-    return toMetrics({ spend: k('spend'), gs: k('googleSpend'), ms: k('metaSpend'), iva: k('iva'), rev: k('revenue'), gross: k('grossRevenue'), un: k('unattributedRevenue'), sess: k('sessions'), ai: k('impressions'), ar: k('adRequests'), rsv: k('responsesServed'), ac: k('adClicks'),
+    return toMetrics({ spend: k('spend'), gs: k('googleSpend'), ms: k('metaSpend'), iva: k('iva'), rev: k('revenue'), gross: k('grossRevenue'), un: k('unattributedRevenue'), rt: k('retentionRevenue'), rp: k('pushRevenue'), rw: k('whatsappRevenue'), sess: k('sessions'), ai: k('impressions'), ar: k('adRequests'), rsv: k('responsesServed'), ac: k('adClicks'),
       vw: ms.reduce((a, m) => a + (m.viewability ?? 0) * m.impressions / 100, 0), clk: k('trafficClicks'), ti: k('trafficImpressions'), n: ms.length });
   };
   const days: { date: string; partial: boolean; metrics: Metrics }[] = [];

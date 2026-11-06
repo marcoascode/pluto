@@ -1,9 +1,14 @@
 /**
- * Finance 0.14 · resultado por site e comissão dos gestores, tudo a partir do Caixa Empresa.
+ * Finance 0.15 · resultado por site e comissão dos gestores.
  *
- * Resultado do site no mês = receitas do Caixa daquele site − gastos do Caixa daquele site − custos do site (aba Custos).
- *   "Mês" = mês de referência do lançamento (competence) ou, sem ele, o mês da data.
- *   Os valores do Caixa já são o que caiu/saiu do banco: a receita AdX já vem com o revshare descontado (não desconta de novo).
+ * Resultado do site no mês (em R$) = receita líquida do dash − despesas de anúncio do dash − outros gastos do Caixa
+ *   com o site − custos do site (aba Custos).
+ *   Receita e despesa de anúncio são os MESMOS números da Home (daily_metrics: receita do Ad Manager já sem o revshare,
+ *   cotação do dia com deságio; Google + Meta + IVA). Assim a comissão não depende de lançar a receita por site no Caixa
+ *   e não conta a fatura do Google/Meta duas vezes (gastos Google Ads/Meta Ads lançados no Caixa ficam fora daqui).
+ *   "Mês" dos lançamentos do Caixa = mês de referência (competence) ou, sem ele, o mês da data.
+ * Gestor do site = vínculo manual em "Gestores e sites" (com rateio e datas) ou, sem vínculo manual no mês,
+ *   o(s) gestor(es) do Squad do domínio (domain_managers / squad_users), dividindo 100% entre eles.
  * Comissão do gestor (por Empresa e mês fechado) = regra sobre a SOMA do resultado dos sites dele
  *   (× rateio × dias do mês em que foi responsável). Site negativo reduz o lucro e, com isso, a comissão.
  *   Regra padrão Meritocracia: sem lucro sem comissão · até US$ 20K 10% · acima de US$ 20K 12% · a partir de US$ 40K 15%
@@ -13,6 +18,8 @@
 import { q } from '../db.js';
 import { today } from '../lib/dates.js';
 import { amountIn, appliesIn, fxTable, loadCosts, monthEnd } from './finance.js';
+import { normSite } from './financeSources.js';
+import { aggregate } from './metrics.js';
 
 type Cur = 'BRL' | 'USD' | 'EUR';
 /** arredondamento financeiro de 2 casas em cada valor */
@@ -20,37 +27,55 @@ export const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const daysIn = (m: string) => Number(monthEnd(m).slice(8, 10));
 
 /* ---------------- resultado por site ---------------- */
-export interface SiteMonth { companyId: string; site: string; month: string; revenue: number; expenses: number; siteCosts: number; costs: number; result: number; roi: number | null }
+/** revenue = receita líquida do dash · ads = Google + Meta + IVA do dash · otherExpenses = outros gastos do Caixa com o site
+ *  · siteCosts = custos do site (aba Custos) · expenses = ads + otherExpenses · costs = expenses + siteCosts */
+export interface SiteMonth { companyId: string; site: string; month: string; revenue: number; ads: number; otherExpenses: number; expenses: number; siteCosts: number; costs: number; result: number; roi: number | null }
+
+/** Domínios (sites) de cada Empresa pelo Squad. */
+export async function companyDomains(companyIds: string[]) {
+  const rows = await q<{ id: string; hostname: string; company_id: string }>(`
+    SELECT DISTINCT d.id::text, d.hostname, sq.company_id::text FROM domains d
+      JOIN squad_domains sd ON sd.domain_id = d.id JOIN squads sq ON sq.id = sd.squad_id
+     WHERE sq.company_id = ANY($1::bigint[]) AND NOT d.is_technical`, [companyIds]);
+  return rows.map((r) => ({ ...r, site: normSite(r.hostname) })).filter((r): r is typeof r & { site: string } => !!r.site);
+}
 
 export async function siteResults(companyIds: string[], month: string): Promise<SiteMonth[]> {
   if (!companyIds.length) return [];
   const t = today();
   const rateDay = [monthEnd(month), t].sort()[0];
-  const [entries, costs, conv] = await Promise.all([
-    q<{ company_id: string; site: string; kind: 'income' | 'expense'; amount: number; currency: Cur; date: string }>(`
-      SELECT company_id::text, site, kind, amount::float AS amount, currency, date::text FROM finance_cash_entries
-       WHERE company_id = ANY($1::bigint[]) AND site IS NOT NULL AND kind IN ('income', 'expense')
+  const doms = await companyDomains(companyIds);
+  const [entries, costs, conv, dash] = await Promise.all([
+    q<{ company_id: string; site: string; amount: number; currency: Cur; date: string }>(`
+      SELECT company_id::text, site, amount::float AS amount, currency, date::text FROM finance_cash_entries
+       WHERE company_id = ANY($1::bigint[]) AND site IS NOT NULL AND kind = 'expense' AND category NOT IN ('google_ads', 'meta_ads')
          AND coalesce(competence, date_trunc('month', date)::date) = $2::date`, [companyIds, `${month}-01`]),
     loadCosts(companyIds),
     fxTable(`${month}-01`, t),
+    // mês fechado inteiro (ou até hoje, no mês corrente), em R$: mesmos números da Home
+    month > t.slice(0, 7) ? Promise.resolve(new Map()) :
+      aggregate({ from: `${month}-01`, to: rateDay, domainIds: doms.map((d) => d.id), filter: null, currency: 'BRL', groupBy: 'm.domain_id' }),
   ]);
   const map = new Map<string, SiteMonth>();
   const get = (c: string, s: string) => {
     let x = map.get(`${c}|${s}`);
-    if (!x) { x = { companyId: c, site: s, month, revenue: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null }; map.set(`${c}|${s}`, x); }
+    if (!x) { x = { companyId: c, site: s, month, revenue: 0, ads: 0, otherExpenses: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null }; map.set(`${c}|${s}`, x); }
     return x;
   };
-  for (const e of entries) {
-    const v = conv(e.amount, e.currency, 'BRL', e.date);
-    if (e.kind === 'income') get(e.company_id, e.site).revenue += v; else get(e.company_id, e.site).expenses += v;
+  for (const d of doms) {
+    const m = dash.get(d.id);
+    const x = get(d.company_id, d.site);
+    if (m) { x.revenue += m.revenue; x.ads += m.spend; }
   }
+  for (const e of entries) get(e.company_id, e.site).otherExpenses += conv(e.amount, e.currency, 'BRL', e.date);
   for (const c of costs) if (c.site && appliesIn(c, month)) get(c.company_id, c.site).siteCosts += conv(amountIn(c, month), c.currency, 'BRL', rateDay);
   for (const x of map.values()) {
-    x.revenue = r2(x.revenue); x.expenses = r2(x.expenses); x.siteCosts = r2(x.siteCosts);
-    x.costs = r2(x.expenses + x.siteCosts); x.result = r2(x.revenue - x.costs);
+    x.revenue = r2(x.revenue); x.ads = r2(x.ads); x.otherExpenses = r2(x.otherExpenses); x.siteCosts = r2(x.siteCosts);
+    x.expenses = r2(x.ads + x.otherExpenses); x.costs = r2(x.expenses + x.siteCosts); x.result = r2(x.revenue - x.costs);
     x.roi = x.costs > 0 ? r2((x.result / x.costs) * 100) : null;
   }
-  return [...map.values()].sort((a, b) => b.result - a.result);
+  // site sem nenhum movimento no mês não vira card
+  return [...map.values()].filter((x) => x.revenue || x.costs).sort((a, b) => b.result - a.result);
 }
 
 /* ---------------- regra e vínculos ---------------- */
@@ -72,6 +97,37 @@ export async function loadAssignments(companyIds: string[], userId?: string) {
       FROM finance_manager_assignments a JOIN users u ON u.id = a.user_id
      WHERE a.company_id = ANY($1::bigint[]) ${userId ? 'AND a.user_id = $2' : ''} ORDER BY u.name, a.site, a.start_date`, userId ? [companyIds, userId] : [companyIds]);
 }
+/**
+ * Vínculos que valem no mês: os manuais (Gestores e sites) e, para cada site da Empresa sem vínculo manual no mês,
+ * o(s) gestor(es) do Squad do domínio (domain_managers + gestores do Squad), dividindo 100% entre eles.
+ */
+export async function effectiveAssignments(companyIds: string[], month: string, userId?: string): Promise<(Assignment & { auto: boolean })[]> {
+  const [manual, squad] = await Promise.all([
+    loadAssignments(companyIds),
+    q<{ user_id: string; user_name: string; company_id: string; hostname: string }>(`
+      SELECT DISTINCT x.user_id::text, u.name AS user_name, sq.company_id::text, d.hostname
+        FROM (SELECT domain_id, user_id FROM domain_managers
+              UNION SELECT sd.domain_id, su.user_id FROM squad_users su JOIN squad_domains sd ON sd.squad_id = su.squad_id) x
+        JOIN users u ON u.id = x.user_id AND u.role = 'gestor' AND u.status <> 'disabled'
+        JOIN domains d ON d.id = x.domain_id AND NOT d.is_technical
+        JOIN squad_domains sd2 ON sd2.domain_id = d.id JOIN squads sq ON sq.id = sd2.squad_id
+       WHERE sq.company_id = ANY($1::bigint[])`, [companyIds]),
+  ]);
+  const live = manual.filter((a) => coverage(a, month) > 0);
+  const hasManual = new Set(live.map((a) => `${a.company_id}|${a.site}`));
+  const bySite = new Map<string, typeof squad>();
+  for (const r of squad) {
+    const site = normSite(r.hostname);
+    if (!site || hasManual.has(`${r.company_id}|${site}`)) continue;
+    bySite.set(`${r.company_id}|${site}`, [...(bySite.get(`${r.company_id}|${site}`) ?? []), r]);
+  }
+  const auto = [...bySite.entries()].flatMap(([k, rs]) => rs.map((r) => ({
+    id: `squad:${r.user_id}:${k}`, user_id: r.user_id, user_name: r.user_name, company_id: r.company_id, site: k.split('|')[1],
+    start_date: `${month}-01`, end_date: null, share_pct: r2(100 / rs.length), note: 'Squad do domínio', auto: true,
+  })));
+  return [...live.map((a) => ({ ...a, auto: false })), ...auto].filter((a) => !userId || a.user_id === userId);
+}
+
 /** fração do mês em que o vínculo valia (não ganha sobre dias antes do início nem depois do fim) */
 export function coverage(a: Pick<Assignment, 'start_date' | 'end_date'>, m: string) {
   const s = [a.start_date, `${m}-01`].sort()[1], e = [a.end_date ?? '9999-12-31', monthEnd(m)].sort()[0];
@@ -95,7 +151,7 @@ interface PeriodRow { id: string; user_id: string; company_id: string; base: Com
 export async function commissionsFor(companyIds: string[], month: string, opts: { userId?: string } = {}) {
   const t = today();
   const [res, rule, asg, periods, conv] = await Promise.all([
-    siteResults(companyIds, month), loadRule(), loadAssignments(companyIds, opts.userId),
+    siteResults(companyIds, month), loadRule(), effectiveAssignments(companyIds, month, opts.userId),
     q<PeriodRow>(`SELECT p.id::text, p.user_id::text, p.company_id::text, p.base, p.calculated::float AS calculated, p.adjustments::float AS adjustments, p.adjustment_note,
         p.approved_amount::float AS approved_amount, u.name AS approved_by, p.approved_at::text, p.paid_at::text, p.paid_note
         FROM finance_commission_periods p LEFT JOIN users u ON u.id = p.approved_by
@@ -121,7 +177,7 @@ export async function commissionsFor(companyIds: string[], month: string, opts: 
     const tier = tierFor(rule, profitTier);
     const pct = tier?.pct ?? 0;
     const calculated = r2(Math.max(0, profit) * pct / 100);
-    const incomplete = sites.filter((s) => !res.some((x) => x.companyId === companyId && x.site === s.site && x.revenue > 0)).map((s) => `${s.site}: sem receita lançada no Caixa para o mês`);
+    const incomplete = sites.filter((s) => !res.some((x) => x.companyId === companyId && x.site === s.site && x.revenue > 0)).map((s) => `${s.site}: sem receita no dash para o mês`);
     const live: CommissionLine = {
       periodId: null, userId, userName: list[0]?.user_name ?? '', companyId, month, sites, revenue: w((s) => s.revenue), costs: w((s) => s.costs), profit,
       negatives: r2(sites.filter((s) => s.base < 0).reduce((a, s) => a + s.base, 0)), profitTier, tierCurrency: rule.tier_currency, pct, calculated,

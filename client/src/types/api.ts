@@ -52,6 +52,8 @@ export interface Metrics {
   cpc: number | null;
   attributedRevenue: number;
   unattributedRevenue: number;
+  /** 0.15 · receita com utm_source de retenção: total, Push (pushalert / …push) e WhatsApp (…wpp / …whatsapp) */
+  retentionRevenue?: number; pushRevenue?: number; whatsappRevenue?: number;
   attributionRate: number | null;
   cpcAdx: number | null; // Receita / cliques ADX
   // Meta Ads (actions): impressões, cliques no link, conversas iniciadas, leads e custo por ação (custo Meta sem IVA ÷ ação)
@@ -254,6 +256,8 @@ export interface PlacementRow {
   metrics: Metrics;
   roiDays: RoiDays;
   recent: [number, number][]; // [spend, revenue] de hoje, D-1, D-2, D-3 (soma do ROI D-x quando a lista é filtrada)
+  /** 0.15: receita do domínio principal distribuída pelo custo (o Ad Manager não informou o subdomínio) */
+  estimated?: boolean;
 }
 export interface PlacementGroup extends PlacementRow {
   children: PlacementRow[]; // subdomínios agrupados no domínio principal (inclui o próprio domínio)
@@ -270,7 +274,7 @@ export interface PlacementCampaignsResponse {
   placement: string;
   level: 'root' | 'host';
   totals: Metrics;
-  hosts: { key: string; metrics: Metrics }[]; // só no nível root
+  hosts: { key: string; metrics: Metrics; estimated?: boolean }[]; // só no nível root
   campaigns: { id: string; name: string; accountName: string; status: 'ENABLED' | 'PAUSED'; metrics: Metrics }[];
 }
 

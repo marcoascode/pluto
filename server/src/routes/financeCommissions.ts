@@ -24,7 +24,7 @@ import { HttpError, notFound, parse } from '../lib/http.js';
 import { today } from '../lib/dates.js';
 import { isAdminRole } from '../auth/permissions.js';
 import { listSites, normSite } from '../services/financeSources.js';
-import { audit, commissionsFor, loadAssignments, loadRule, r2 } from '../services/financeResults.js';
+import { audit, commissionsFor, effectiveAssignments, loadAssignments, loadRule, r2 } from '../services/financeResults.js';
 
 export const financeCommissionsRouter = Router();
 const YM = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'use YYYY-MM');
@@ -42,7 +42,13 @@ async function viewer(req: Request, allowManager = false): Promise<Viewer> {
   const own = await q<{ id: string; name: string }>('SELECT c.id::text, c.name FROM companies c JOIN company_users cu ON cu.company_id = c.id WHERE cu.user_id = $1 ORDER BY c.name', [u.id]);
   if (own.length) return { userId: u.id, role: 'partner', companies: own };
   if (allowManager) {
-    const m = await q<{ id: string; name: string }>(`SELECT DISTINCT c.id::text, c.name FROM companies c JOIN finance_manager_assignments a ON a.company_id = c.id WHERE a.user_id = $1 ORDER BY c.name`, [u.id]);
+    // gestor com site vinculado à mão OU com domínio no Squad (é o gestor do site para as comissões)
+    const m = await q<{ id: string; name: string }>(`
+      SELECT DISTINCT c.id::text, c.name FROM companies c WHERE c.id IN (
+        SELECT a.company_id FROM finance_manager_assignments a WHERE a.user_id = $1
+        UNION SELECT sq.company_id FROM domain_managers dm JOIN squad_domains sd ON sd.domain_id = dm.domain_id JOIN squads sq ON sq.id = sd.squad_id WHERE dm.user_id = $1
+        UNION SELECT sq.company_id FROM squad_users su JOIN squads sq ON sq.id = su.squad_id WHERE su.user_id = $1)
+       ORDER BY c.name`, [u.id]);
     if (m.length) return { userId: u.id, role: 'manager', companies: m };
   }
   throw new HttpError(403, 'forbidden_finance', 'O Finance é só para Admin, sócios das Empresas e gestores com site vinculado (Comissões).');
@@ -83,12 +89,12 @@ financeCommissionsRouter.get('/commissions', async (req, res) => {
   const who = typeof req.query.user === 'string' && req.query.user ? req.query.user : '';
   const lines = who ? all.filter((l) => l.userId === who) : all;
   // cards dos sites: com quem é responsável; gestor só vê os dele
-  const asg = await loadAssignments(ids, mine);
+  const asg = await effectiveAssignments(ids, month, mine);
   const owners = (companyId: string, site: string) => asg.filter((a) => a.company_id === companyId && a.site === site && all.some((l) => l.userId === a.user_id && l.companyId === companyId && l.sites.some((s) => s.site === site)))
-    .map((a) => ({ userId: a.user_id, userName: a.user_name, sharePct: a.share_pct }));
+    .map((a) => ({ userId: a.user_id, userName: a.user_name, sharePct: a.share_pct, auto: a.auto }));
   let cards = sites.map((s) => ({ ...s, managers: owners(s.companyId, s.site) }));
   for (const l of all) for (const s of l.sites) if (!cards.some((c) => c.companyId === l.companyId && c.site === s.site))
-    cards.push({ companyId: l.companyId, site: s.site, month, revenue: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null, managers: owners(l.companyId, s.site) });
+    cards.push({ companyId: l.companyId, site: s.site, month, revenue: 0, ads: 0, otherExpenses: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null, managers: owners(l.companyId, s.site) });
   if (mine) cards = cards.filter((c) => c.managers.some((m) => m.userId === mine));
   if (who) cards = cards.filter((c) => c.managers.some((m) => m.userId === who));
   const sum = (f: (x: (typeof lines)[number]) => number) => r2(lines.reduce((a, x) => a + f(x), 0));

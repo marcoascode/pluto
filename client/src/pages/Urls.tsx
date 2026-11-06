@@ -13,7 +13,7 @@ import { domainLabel, int, longDate, money, pct0 } from '@/lib/format';
 import { DROP_MIN_RESPONSES, METRIC_DEFS, metricValue, type MetricKey } from '@/lib/metrics';
 import { addDays, todayISO } from '@/lib/period';
 
-const RANK: [MetricKey, string][] = [['roi', 'ROI %'], ['profit', 'ROI'], ['revenue', 'Receita'], ['sessionRpm', 'RPM de Sessão'], ['ecpm', 'eCPM'], ['dropOffRate', 'Drop-off (maior)']];
+const RANK: [MetricKey, string][] = [['roi', 'ROI %'], ['profit', 'ROI'], ['revenue', 'Receita'], ['ecpm', 'eCPM'], ['dropOffRate', 'Drop-off (maior)']];
 const MEDAL = ['#f2c94c', '#cdd6e4', '#d99a5b'];
 
 export default function UrlsPage() {
@@ -34,7 +34,7 @@ export default function UrlsPage() {
     return sort.k === 'path' ? (a.domain + a.path).localeCompare(b.domain + b.path) * dir : ((metricValue(a.metrics, undefined, sort.k) ?? -Infinity) - (metricValue(b.metrics, undefined, sort.k) ?? -Infinity)) * dir;
   }), [data, q, sort]);
   const isDrop = rk === 'dropOffRate';
-  const top = useMemo(() => (data?.urls ?? []).filter((u) => (isDrop ? u.metrics.responsesServed >= DROP_MIN_RESPONSES : u.metrics.sessions >= 100) && (rk !== 'roi' || u.metrics.spend > 0) && metricValue(u.metrics, undefined, rk) != null)
+  const top = useMemo(() => (data?.urls ?? []).filter((u) => (isDrop ? u.metrics.responsesServed >= DROP_MIN_RESPONSES : u.metrics.impressions >= 100) && (rk !== 'roi' || u.metrics.spend > 0) && metricValue(u.metrics, undefined, rk) != null)
     .sort((a, b) => metricValue(b.metrics, undefined, rk)! - metricValue(a.metrics, undefined, rk)!).slice(0, 5), [data, rk, isDrop]);
   /** Painel de drop-off: soma do período + URLs acima de 20% (mín. de respostas servidas) + receita estimada perdida pelo eCPM da própria URL. */
   const drop = useMemo(() => {
@@ -64,7 +64,7 @@ export default function UrlsPage() {
               <Alert severity="info" variant="outlined">
                 <b>{pct0(noPath.share)} da receita está em "(sem URL)".</b> O Ad Manager só entrega a slug da página se o site mandar o caminho no GPT:{' '}
                 <Box component="code" sx={{ fontFamily: 'IBM Plex Mono', fontSize: 12 }}>googletag.pubads().setTargeting('page_path', location.pathname)</Box>{' '}
-                e, no Ad Manager, o key <b>page_path</b> estiver como dimensão personalizada (Inventário → Key-values → "Report on values"). A partir daí cada slug aparece aqui e abre a página ao clicar.
+                e, no Ad Manager, o key <b>page_path</b> estiver com <b>"Incluir valores nos relatórios"</b> (Inventário → Key-values). Não precisa de dimensão personalizada. Depois, sincronize o Ad Manager: a receita de cada slug aparece aqui junto com o custo das campanhas que levam para ela.
               </Alert>
             </Grid>
           )}
@@ -130,7 +130,7 @@ export default function UrlsPage() {
           </Grid>
           <Grid size={{ xs: 12, lg: 4 }}>
             <Card>
-              <CardHeader title={isDrop ? 'Maior drop-off' : 'Top URLs'} subheader={`${dom || 'Todos os domínios'} · ${isDrop ? `mín. ${DROP_MIN_RESPONSES} respostas servidas` : 'mín. 100 sessões'}`} action={<Select size="small" value={rk} onChange={(e) => setRk(e.target.value as MetricKey)}>{RANK.map(([k, l]) => <MenuItem key={k} value={k}>Por {l}</MenuItem>)}</Select>} />
+              <CardHeader title={isDrop ? 'Maior drop-off' : 'Top URLs'} subheader={`${dom || 'Todos os domínios'} · ${isDrop ? `mín. ${DROP_MIN_RESPONSES} respostas servidas` : 'mín. 100 impressões'}`} action={<Select size="small" value={rk} onChange={(e) => setRk(e.target.value as MetricKey)}>{RANK.map(([k, l]) => <MenuItem key={k} value={k}>Por {l}</MenuItem>)}</Select>} />
               <CardContent>
                 {top.map((u, i) => (
                   <Stack key={u.domain + u.path} direction="row" spacing={1.25} sx={{ alignItems: 'center', py: 1.1, borderBottom: i < top.length - 1 ? 1 : 0, borderColor: 'divider' }}>

@@ -13,7 +13,7 @@ import { q } from '../db.js';
 import { HttpError, parse } from '../lib/http.js';
 import { requireCap } from '../auth/session.js';
 import { canSeeCampaign, scope } from '../auth/scope.js';
-import { toMetrics } from '../services/metrics.js';
+import { toMetrics, type Metrics } from '../services/metrics.js';
 import { aggregatePlacements, placementRoiDays } from '../services/placements.js';
 import { placementType } from '../services/sync/placements.js';
 import { d3, period, previous } from './metrics.js';
@@ -53,6 +53,37 @@ placementsRouter.get('/filters', async (req, res) => {
   res.json({ domain: d.host, accounts, campaigns: d.camps.map((c) => ({ id: c.id, name: c.name, accountId: c.account_id, status: c.status === 'PAUSED' ? 'PAUSED' : 'ENABLED' })) });
 });
 
+/**
+ * 0.15 · Subdomínios com -100%: o Google Ads informa o custo por subdomínio (6549.site.com), mas a receita do
+ * Ad Manager pode chegar só no domínio principal (site.com), porque o {placement} da URL não traz o subdomínio.
+ * Aí cada subdomínio aparecia só com custo (-100%) e o principal com a receita toda.
+ * Quando NENHUM subdomínio tem receita e o principal tem, a receita do principal é distribuída entre os
+ * subdomínios pela proporção do custo (dia a dia nos ROIs D-x) e a linha vem marcada como estimated.
+ * O total do domínio não muda. Se algum subdomínio tiver receita própria, nada é estimado.
+ */
+type HostRow = { key: string; metrics: Metrics; roiDays?: { today: number | null; d1: number | null; d2: number | null; d3: number | null }; recent?: [number, number][]; estimated?: boolean };
+export function spreadRootRevenue<T extends HostRow>(root: string, hosts: T[]): T[] {
+  const own = hosts.find((h) => h.key === root);
+  const subs = hosts.filter((h) => h.key !== root);
+  if (!own || !subs.length || own.metrics.revenue <= 0 || subs.some((h) => h.metrics.revenue > 0)) return hosts;
+  const spend = hosts.reduce((a, h) => a + h.metrics.spend, 0);
+  if (spend <= 0) return hosts;
+  const rev = own.metrics.revenue, gross = own.metrics.grossRevenue;
+  const fix = (m: Metrics, r: number, g: number): Metrics => {
+    const profit = r - m.spend;
+    return { ...m, revenue: r, grossRevenue: g, profit, roi: m.spend > 0 ? (profit / m.spend) * 100 : null, margin: r > 0 ? (profit / r) * 100 : null, ecpm: null, cpcAdx: null };
+  };
+  // ROI D-x: mesma divisão, pelo custo de cada dia
+  const dayTot = [0, 1, 2, 3].map((i) => hosts.reduce((a, h) => a + (h.recent?.[i]?.[0] ?? 0), 0));
+  const dayRev = [0, 1, 2, 3].map((i) => own.recent?.[i]?.[1] ?? 0);
+  return hosts.map((h) => {
+    const sh = h.metrics.spend / spend;
+    const recent = h.recent?.map(([sp], i): [number, number] => [sp, dayTot[i] > 0 ? dayRev[i] * (sp / dayTot[i]) : 0]);
+    const roi = (i: number) => (recent && recent[i][0] > 0 ? ((recent[i][1] - recent[i][0]) / recent[i][0]) * 100 : null);
+    return { ...h, metrics: fix(h.metrics, rev * sh, gross * sh), ...(recent ? { recent, roiDays: { today: roi(0), d1: roi(1), d2: roi(2), d3: roi(3) } } : {}), estimated: true };
+  }).filter((h) => h.key !== root || h.metrics.spend > 0);   // o principal sem custo próprio some (a receita dele foi para os subdomínios)
+}
+
 placementsRouter.get('/', async (req, res) => {
   const p = period(req);
   const s = await selection(req);
@@ -74,7 +105,7 @@ placementsRouter.get('/', async (req, res) => {
   const label = (k: string) => labels.get(k) ?? (k.startsWith('mobileapp::') ? k.slice(11) : k);
   const groups = [...byRoot].map(([root, metrics]) => ({
     key: root, label: label(root), type: placementType(root), metrics, roiDays: rootRd(root), recent: rootRd.recent(root),
-    children: keys.filter((x) => x.root === root).map((x) => ({ key: x.host, label: label(x.host), type: placementType(x.host), metrics: byHost.get(x.k)!, roiDays: hostRd(x.host), recent: hostRd.recent(x.host) })),
+    children: spreadRootRevenue(root, keys.filter((x) => x.root === root).map((x) => ({ key: x.host, label: label(x.host), type: placementType(x.host), metrics: byHost.get(x.k)!, roiDays: hostRd(x.host), recent: hostRd.recent(x.host) }))),
   }));
   res.json({
     domain: s.host,
@@ -97,7 +128,7 @@ placementsRouter.get('/campaigns', async (req, res) => {
   ]);
   res.json({
     placement, level, totals,
-    hosts: [...byHost].map(([key, metrics]) => ({ key, metrics })),
+    hosts: level === 'root' ? spreadRootRevenue(placement, [...byHost].map(([key, metrics]) => ({ key, metrics }))) : [...byHost].map(([key, metrics]) => ({ key, metrics })),
     campaigns: s.use.filter((c) => byCamp.has(c.db_id)).map((c) => ({ id: c.id, name: c.name, accountName: c.account_name, status: c.status === 'PAUSED' ? 'PAUSED' : 'ENABLED', metrics: byCamp.get(c.db_id)! })),
   });
 });

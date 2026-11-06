@@ -58,7 +58,7 @@ export const config = {
     gam: (process.env.GAM_API_URL ?? 'https://admanager.googleapis.com').replace(/\/$/, ''),
     googleToken: process.env.GOOGLE_TOKEN_URL ?? 'https://oauth2.googleapis.com/token',
   },
-  /** Key-values que o site manda no GPT (googletag.pubads().setTargeting). Precisam estar como "dimensão personalizada" no Ad Manager. */
+  /** Key-values que o site manda no GPT (googletag.pubads().setTargeting). Basta "Incluir valores nos relatórios" no Ad Manager (veja gamAttribution). */
   gamKeys: {
     campaign: process.env.GAM_KEY_CAMPAIGN ?? 'utm_campaign',
     content: process.env.GAM_KEY_CONTENT ?? 'utm_content',
@@ -68,6 +68,13 @@ export const config = {
   },
   /** Key-value do placement (relatório separado de placements; não entra no relatório principal). */
   gamPlacementKey: process.env.GAM_KEY_PLACEMENT || 'placement',
+  /**
+   * Como ler os key-values do Ad Manager: auto (padrão) | keyvalues | dimension.
+   *  keyvalues: basta o utm_content com "Incluir valores nos relatórios" (sem dimensão personalizada, sem limite de valores).
+   *  dimension: utm_campaign e utm_content como dimensão personalizada.
+   *  auto: dimension se os dois estiverem como dimensão personalizada; senão keyvalues.
+   */
+  gamAttribution: (['keyvalues', 'dimension'].includes(process.env.GAM_ATTRIBUTION ?? '') ? process.env.GAM_ATTRIBUTION : 'auto') as 'auto' | 'keyvalues' | 'dimension',
   sync: {
     /** Primeira importação de uma conta/rede: quantos dias para trás. */
     backfillDays: Number(process.env.SYNC_BACKFILL_DAYS ?? 30),

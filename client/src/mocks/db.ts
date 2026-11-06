@@ -173,15 +173,16 @@ function pushUn(di: number, domain: string, url: string, country: string, rev: n
 }
 
 // retenção: parte da receita sem campanha veio de links manuais com ?utm_source=push / whatsapp / email
-for (const r of ROWS) { if (r.src !== 'unatt' || r.domain === UNKNOWN_DOMAIN) continue; const x = rn(0, 1); r.utm = x < 0.36 ? 'push' : x < 0.58 ? 'whatsapp' : x < 0.66 ? 'email' : undefined; }
+for (const r of ROWS) { if (r.src !== 'unatt' || r.domain === UNKNOWN_DOMAIN) continue; const x = rn(0, 1); r.utm = x < 0.24 ? 'pushalert' : x < 0.36 ? 'site_push' : x < 0.48 ? 'wpp' : x < 0.58 ? 'grupo_whatsapp' : x < 0.66 ? 'email' : undefined; }
 /** Origem da linha (igual ao ORIGIN_SQL do servidor). */
 export const originOf = (r: Row) => (r.utm ? 'utm:' + r.utm : r.src === 'google' || r.src === 'meta' ? r.src : 'none');
 
 /** Mesma agregação que o servidor faz em SQL (SUM + fórmulas). */
 export function agg(rows: Row[], cur: Currency): Metrics {
   // spend = Google + Meta + IVA (13,83% sobre a Meta) · revenue = bruta × (1 − revShare do domínio)
-  const s = { spend: 0, gs: 0, ms: 0, iva: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0, mi: 0, mlc: 0, mres: 0, mlead: 0 };
+  const s = { rt: 0, rp: 0, rw: 0, spend: 0, gs: 0, ms: 0, iva: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0, mi: 0, mlc: 0, mres: 0, mlead: 0 };
   for (const r of rows) { const f = FX[cur][r.di] ?? 1; const fr = cur === 'BRL' ? Math.max(0.0001, f - discountAt(r.di)) : f; const sp = r.spendUSD * f, rv = r.revUSD * fr, iv = r.src === 'meta' ? sp * META_IVA : 0; s.spend += sp + iv; s.iva += iv; if (r.src === 'google') s.gs += sp; else if (r.src === 'meta') s.ms += sp;
+    if (r.utm) { s.rt += rv; if (/^pushalert|push$/.test(r.utm)) s.rp += rv; else if (/(wpp|whatsapp)$/.test(r.utm)) s.rw += rv; }
     s.rev += rv; s.gross += r.grossUSD * fr; s.rsv += r.rsv; if (r.src === 'unatt') s.un += rv; else s.att += rv; s.sess += r.sess; s.ai += r.adImps; s.ar += r.adReq; s.ac += r.adClk; s.vw += r.view; s.clk += r.clk; s.ti += r.tImps;
     if (r.src === 'meta') { s.mi += r.tImps; s.mlc += r.mlc ?? 0; s.mres += r.mres ?? 0; s.mlead += r.mlead ?? 0; } }
   const profit = s.rev - s.spend;
@@ -191,6 +192,7 @@ export function agg(rows: Row[], cur: Currency): Metrics {
     ctr: s.ai ? (s.ac / s.ai) * 100 : null, adClicks: s.ac, viewability: s.ai ? (s.vw / s.ai) * 100 : null, sessions: s.sess, trafficClicks: s.clk, trafficImpressions: s.ti,
     trafficCtr: s.ti ? (s.clk / s.ti) * 100 : null, cpc: s.clk ? s.spend / s.clk : null, attributedRevenue: s.att, unattributedRevenue: s.un, attributionRate: s.rev ? (s.att / s.rev) * 100 : null,
     // custo por ação usa o custo Meta sem IVA (como no Gerenciador de Anúncios)
-    metaImpressions: s.mi, metaLinkClicks: s.mlc, cpcLink: s.mlc ? s.ms / s.mlc : null, metaResults: s.mres, cpr: s.mres ? s.ms / s.mres : null, metaLeads: s.mlead, cpl: s.mlead ? s.ms / s.mlead : null };
+    metaImpressions: s.mi, metaLinkClicks: s.mlc, cpcLink: s.mlc ? s.ms / s.mlc : null, metaResults: s.mres, cpr: s.mres ? s.ms / s.mres : null, metaLeads: s.mlead, cpl: s.mlead ? s.ms / s.mlead : null,
+    retentionRevenue: s.rt, pushRevenue: s.rp, whatsappRevenue: s.rw };
 }
 export const dayIndex = (iso: string) => DATES.indexOf(iso);

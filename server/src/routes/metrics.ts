@@ -9,7 +9,7 @@ import { HttpError, notFound, parse } from '../lib/http.js';
 import { addDays, isIsoDate, lastMonths, monthBounds, today } from '../lib/dates.js';
 import { requireCap } from '../auth/session.js';
 import { allowedDomains, canSeeCampaign, scope, type RowFilter, type Scope } from '../auth/scope.js';
-import { aggregate, roiDays, total, toMetrics, type Currency, type Metrics } from '../services/metrics.js';
+import { AD_SOURCES, aggregate, retentionChannel, roiDays, total, toMetrics, type Currency, type Metrics } from '../services/metrics.js';
 import * as fx from '../services/fx.js';
 
 export const metricsRouter = Router();
@@ -177,12 +177,12 @@ metricsRouter.get('/campaigns/:platform/:id/countries', async (req, res) => {
  * própria; utm_source de anúncio (google, fb, ig…) ou vazio cai na plataforma da campanha atribuída
  * (Google Ads / Meta Ads); o resto é "Sem origem" (direto, orgânico ou sem utm). O custo das campanhas fica em Google/Meta.
  */
-const AD_SOURCES = 'google|gads|adwords|cpc|ppc|fb|facebook|ig|instagram|an|msg|messenger|meta|th|threads';
 export const ORIGIN_SQL = `CASE WHEN m.utm_source IS NOT NULL AND m.utm_source !~ '^(${AD_SOURCES})$' THEN 'utm:' || m.utm_source
   WHEN m.platform IN ('google', 'meta') THEN m.platform ELSE 'none' END`;
 const ORIGIN = z.string().regex(/^(google|meta|none|utm:[a-z0-9_.-]{1,40})$/);
 const RANK = { google: 0, meta: 1, retention: 2, none: 3 } as const;
-const originLabel = (k: string) => (k === 'google' ? 'Google Ads' : k === 'meta' ? 'Meta Ads' : k === 'none' ? 'Sem origem' : k.slice(4));
+const CHANNEL = { push: 'Push', whatsapp: 'WhatsApp', other: 'Retenção' } as const;
+const originLabel = (k: string) => (k === 'google' ? 'Google Ads' : k === 'meta' ? 'Meta Ads' : k === 'none' ? 'Sem origem' : `${CHANNEL[retentionChannel(k.slice(4)) ?? 'other']} · ${k.slice(4)}`);
 
 metricsRouter.get('/urls', requireCap('urls.view'), async (req, res) => {
   const p = period(req);
@@ -246,7 +246,7 @@ metricsRouter.get('/reports/monthly', requireCap('reports.view'), async (req, re
 
 /* ---------- Attribution Health ---------- */
 const ISSUES: Record<string, [string, string, string]> = {
-  missing_campaign_id: ['Missing Campaign ID', 'utm_campaign não contém o Campaign ID.', 'Verificar o tracking template / sufixo do URL final da campanha.'],
+  missing_campaign_id: ['Sem UTM de campanha', 'Receita sem utm_campaign/utm_content: tráfego orgânico, direto, de retenção ou de anúncio sem o sufixo.', 'Se for de anúncio, conferir o sufixo do URL final da campanha e se o site repassa os key-values ao GPT.'],
   missing_adgroup_id: ['Missing Ad Group ID', 'utm_content chegou sem o {adgroupid}.', 'Conferir se utm_content={adgroupid}_{creative} está no template da conta.'],
   missing_creative_id: ['Missing Creative ID', 'utm_content chegou sem a parte {creative}.', 'Conferir o template da conta.'],
   invalid_utm: ['UTM inválida', 'Macro não substituída, por exemplo {campaignid} escrito na URL.', 'Usar o sufixo do URL final em vez de colar a URL pronta.'],
@@ -254,7 +254,7 @@ const ISSUES: Record<string, [string, string, string]> = {
   campaign_not_found: ['Campanha não localizada', 'O Campaign ID não existe nas contas importadas.', 'Importar a conta dona da campanha na MCC.'],
   meta_ad_not_found: ['Meta Ad não localizado', 'O Ad ID não está nas contas Meta conectadas.', 'Reconectar a conta Meta e conferir {{ad.id}}.'],
   gads_creative_not_found: ['Google Ads Creative não localizado', 'O Creative ID (no formato antigo, o utm_campaign={creative}) não tem correspondência nas contas importadas.', 'Conferir se a conta do Google Ads está conectada e rodar o sync de estrutura.'],
-  gam_kv_not_configured: ['Key-values sem dimensão no Ad Manager', 'O Ad Manager não está devolvendo utm_campaign/utm_content no relatório.', 'No Ad Manager: Inventário → Key-values → utm_campaign e utm_content → "Report on values" = Custom dimension.'],
+  gam_kv_not_configured: ['Key-values fora dos relatórios do Ad Manager', 'O Ad Manager não está devolvendo o utm_content no relatório.', 'No Ad Manager: Inventário → Key-values → utm_content (e utm_campaign) → "Incluir valores nos relatórios". Não precisa de dimensão personalizada.'],
 };
 metricsRouter.get('/attribution/health', requireCap('attribution.view'), async (req, res) => {
   const p = period(req);

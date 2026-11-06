@@ -47,7 +47,7 @@ export default function CommissionsPage() {
   return (
     <>
       <PageHead title="Comissões"
-        sub={mgr ? 'Seus sites no mês e a sua comissão.' : 'Resultado de cada site no mês, direto do Caixa Empresa. A comissão é paga por fora: aqui você aprova e marca como paga.'}
+        sub={mgr ? 'Seus sites no mês e a sua comissão.' : 'Resultado de cada site no mês com a receita líquida do dash (a mesma da Home). A comissão é paga por fora: aqui você aprova e marca como paga.'}
         right={admin && <Stack direction="row" spacing={1}>
           <Button size="small" variant="outlined" startIcon={<GroupsOutlinedIcon />} onClick={() => setPeople(true)}>Gestores e sites</Button>
           <Button size="small" variant="outlined" startIcon={<TuneRoundedIcon />} onClick={() => setRule(true)}>Regra</Button>
@@ -87,13 +87,13 @@ export default function CommissionsPage() {
       <SectionTitle title={mgr ? 'Sua comissão' : 'Gestores'} sub={`${monthTitle(month)}${month === NOW ? ' · mês em apuração (aprova depois que fechar)' : ''}`} />
       <Grid container spacing={1.5} sx={{ mb: 3 }}>
         {data.lines.map((l) => <Grid key={l.userId + l.companyId} size={{ xs: 12, md: 6, xl: 4 }}><ManagerCard l={l} company={co.get(l.companyId) ?? ''} showCompany={data.companies.length > 1} admin={admin} /></Grid>)}
-        {!data.lines.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhum gestor com site neste filtro.{admin && ' Vincule em "Gestores e sites".'}</Card></Grid>}
+        {!data.lines.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhum gestor com site neste filtro.{admin && ' O gestor vem do Squad do domínio (Usuários & Squads) ou de um vínculo em "Gestores e sites".'}</Card></Grid>}
       </Grid>
 
-      <SectionTitle title="Sites no mês" sub="Receitas − gastos do Caixa com o site − custos do site. Negativo desconta da comissão do gestor." />
+      <SectionTitle title="Sites no mês" sub="Receita líquida do dash − anúncios (Google + Meta + IVA) − outros gastos do Caixa com o site − custos do site. Negativo desconta da comissão do gestor." />
       <Grid container spacing={1.5}>
         {data.sites.map((s) => <Grid key={s.companyId + s.site} size={{ xs: 12, sm: 6, lg: 4, xl: 3 }}><SiteTile s={s} company={data.companies.length > 1 ? co.get(s.companyId) : undefined} /></Grid>)}
-        {!data.sites.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhuma receita ou gasto com site neste mês. No Caixa Empresa, informe o site e o mês de referência ao lançar.</Card></Grid>}
+        {!data.sites.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhum site com receita ou custo neste mês. Os sites vêm dos domínios do Squad de cada Empresa.</Card></Grid>}
       </Grid>
 
       {people && <PeopleDialog onClose={() => setPeople(false)} />}
@@ -241,7 +241,7 @@ function SiteTile({ s, company }: { s: SiteCard; company?: string }) {
       <Stack direction="row" sx={{ alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
         <Box sx={{ minWidth: 0 }}>
           <Typography sx={{ fontWeight: 600 }} noWrap>{s.site}</Typography>
-          <Typography variant="caption" noWrap component="div">{company ? `${company} · ` : ''}{s.managers.length ? s.managers.map((m) => m.userName + (m.sharePct < 100 ? ` (${pctFmt(m.sharePct, 0)})` : '')).join(', ') : 'sem gestor'}</Typography>
+          <Typography variant="caption" noWrap component="div">{company ? `${company} · ` : ''}{s.managers.length ? s.managers.map((m) => m.userName + (m.sharePct < 100 ? ` (${pctFmt(m.sharePct, 0)})` : '')).join(', ') + (s.managers.every((m) => m.auto) ? ' · Squad' : '') : 'sem gestor'}</Typography>
         </Box>
         {neg && <Chip size="small" label="negativo" sx={{ height: 20, fontSize: 11, fontWeight: 600, color: p.neg, bgcolor: alpha(p.neg, 0.15) }} />}
       </Stack>
@@ -250,6 +250,11 @@ function SiteTile({ s, company }: { s: SiteCard; company?: string }) {
         <Box><Typography variant="caption" component="div">Receita</Typography><Typography sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{brl0(s.revenue)}</Typography></Box>
         <Box sx={{ textAlign: 'right' }}><Typography variant="caption" component="div">Custos</Typography><Typography sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{brl0(s.costs)}</Typography></Box>
       </Stack>
+      {(s.ads != null || s.siteCosts > 0) && (
+        <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
+          anúncios {brl0(s.ads ?? s.expenses)}{s.otherExpenses ? ` · outros gastos ${brl0(s.otherExpenses)}` : ''}{s.siteCosts ? ` · custos do site ${brl0(s.siteCosts)}` : ''}
+        </Typography>
+      )}
       {neg && s.managers.length > 0 && <Typography variant="caption" component="div" sx={{ mt: 1, color: p.neg }}>Desconta {brl0(Math.abs(s.result))} da comissão de {s.managers.map((m) => m.userName).join(' e ')}.</Typography>}
     </Card>
   );

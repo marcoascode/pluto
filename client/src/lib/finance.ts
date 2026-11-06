@@ -69,8 +69,9 @@ export interface CashEntry {
 }
 export interface CashCompany {
   companyId: string; companyName: string;
-  anchor: { date: string; amount: number } | null;
-  income: number; expenses: number; costsSince: number; deposits: number; withdrawals: number;   // depois do saldo conferido
+  anchor: { date: string; amount: number } | null;   // null = sem saldo conferido: o caixa parte de 0
+  since?: string;                                     // 0.15: de quando o caixa conta
+  income: number; expenses: number; costsSince: number; deposits: number; withdrawals: number;   // depois do ponto de partida
   balance: number | null;
   entries: CashEntry[];
 }
@@ -82,8 +83,11 @@ export interface CashMonth {
   deposits: number; withdrawals: number;
   result: number; margin: number | null;
   entries: CashEntry[];
+  costItems?: CostItem[];   // 0.15: custos fixos do mês como linhas automáticas do caixa
   companies: { companyId: string; income: number; expenses: number; costs: number; result: number }[];
 }
+/** Custo fixo da aba Custos lançado sozinho no mês (valor real da NF quando lançado, senão o do plano). */
+export interface CostItem { costId: string; companyId: string; name: string; category: CostCategory; site: string | null; payDate: string; amount: number; currency: Currency; converted: number; actual: boolean; paid: boolean }
 export interface CashOverview {
   currency: Currency; from: string; to: string; companies: { id: string; name: string }[]; selected: string | null;
   cash: { total: number | null; companies: CashCompany[] };
@@ -96,6 +100,8 @@ export const cashApi = {
   overview: (q: { company?: string; from: string; to: string; currency: Currency }) => api.get<CashOverview>('/finance/overview', q),
   save: ({ id, ...b }: CashEntryInput) => (id ? api.put<{ id: string }>(`/finance/cash/${id}`, b) : api.post<{ id: string }>('/finance/cash', b)),
   remove: (id: string) => api.del<void>(`/finance/cash/${id}`),
+  /** 0.15: mesma receita/gasto dividido em vários sites (um lançamento por site, tudo ou nada) */
+  split: ({ lines, ...b }: Omit<CashEntryInput, 'id' | 'amount' | 'site'> & { lines: { site: string | null; amount: number; revsharePct?: number | null }[] }) => api.post<{ ids: string[]; total: number }>('/finance/cash/split', { ...b, lines }),
 };
 
 /* =====================================================================================

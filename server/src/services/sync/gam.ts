@@ -1,7 +1,13 @@
 /**
  * Google Ad Manager (Ad Manager API v1, REST).
- * Relatório HISTORICAL em USD: DATE × SITE × COUNTRY_CODE × key-values (dimensões personalizadas)
+ * Relatório HISTORICAL em USD: DATE × SITE × COUNTRY_CODE × key-values
  *   métricas REVENUE, IMPRESSIONS, AD_REQUESTS, RESPONSES_SERVED, CLICKS, ACTIVE_VIEW_VIEWABLE_IMPRESSIONS.
+ * Dois jeitos de ler os key-values (escolhido por rede, veja attributionMode()):
+ *   keyvalues  — SEM dimensão personalizada: o key utm_content só precisa de "Incluir valores nos relatórios"
+ *                (Report on values = ON, igual à Publeno; sem o limite de valores da dimensão personalizada).
+ *                Usa a dimensão nativa "Key-values" (KEY_VALUES_NAME = "utm_content=<valor>") num 2º relatório;
+ *                a campanha sai só do utm_content. O que sobra do total do site fica "não atribuído".
+ *   dimension  — utm_campaign e utm_content como dimensão personalizada (CUSTOM_DIMENSION_n_VALUE), como antes.
  * Atribuição: o site manda no GPT os key-values utm_campaign ({campaignid} / {{campaign.id}}) e
  * utm_content ({adgroupid}_{creative} / {{adset.id}}_{{ad.id}}). Linha sem key-value válido → receita
  * (também aceita o formato do dash antigo do Google Ads: utm_campaign={creative} e utm_content={creative}_{placement};
@@ -16,6 +22,7 @@ import { config } from '../../config.js';
 import { q } from '../../db.js';
 import { domainResolver, emptyFact, parseUrl, replaceFacts, setAccountStatus, statusFromError, urlCache, type Fact } from './common.js';
 import { requestJson, sleep, SyncError } from './http.js';
+import { retentionChannel } from '../metrics.js';
 import { googleAccessToken } from './tokens.js';
 import type { JobResult } from './index.js';
 
@@ -32,9 +39,10 @@ export function isoDate(v?: Val): string | null {
 export const date = (iso: string) => { const [year, month, day] = iso.split('-').map(Number); return { year, month, day }; };
 export const EMPTY = /^(\(?not set\)?|\(?none\)?|-|n\/a|unknown|\(not applicable\))?$/i;
 
-export interface KeyInfo { role: 'campaign' | 'content' | 'source' | 'path' | 'placement'; adTagName: string; id: string | null; usable: boolean }
+/** reportable: "Report on values" do key no Ad Manager. ON = incluir valores nos relatórios; CUSTOM_DIMENSION = dimensão personalizada. */
+export interface KeyInfo { role: 'campaign' | 'content' | 'source' | 'path' | 'placement'; adTagName: string; id: string | null; usable: boolean; reportable: string | null }
 
-/** Procura os ids dos key-values pelo nome usado na tag (adTagName). Só servem se estiverem como "Custom dimension". */
+/** Procura os ids dos key-values pelo nome usado na tag (adTagName). usable = está como "Custom dimension" (CUSTOM_DIMENSION_n). */
 export async function resolveKeys(network: string, token: string, wanted: [KeyInfo['role'], string][] = Object.entries(config.gamKeys).filter(([, v]) => v) as [KeyInfo['role'], string][]): Promise<KeyInfo[]> {
   const out: KeyInfo[] = [];
   for (const [role, name] of wanted) {
@@ -42,16 +50,18 @@ export async function resolveKeys(network: string, token: string, wanted: [KeyIn
     const j = await requestJson<{ customTargetingKeys?: { customTargetingKeyId?: string; name?: string; adTagName?: string; reportableType?: string }[] }>(u, { headers: { Authorization: `Bearer ${token}` } });
     const k = j.customTargetingKeys?.find((x) => x.adTagName === name) ?? j.customTargetingKeys?.[0];
     const id = k?.customTargetingKeyId ?? k?.name?.split('/').pop() ?? null;
-    out.push({ role, adTagName: name, id, usable: !!id && k?.reportableType === 'CUSTOM_DIMENSION' });
+    out.push({ role, adTagName: name, id, usable: !!id && k?.reportableType === 'CUSTOM_DIMENSION', reportable: id ? k?.reportableType ?? null : null });
   }
   return out;
 }
 
 /** Cria o relatório (oculto), roda, espera e baixa todas as linhas. */
-/** extra: dimensões nativas a mais depois de COUNTRY_CODE (ex.: URL_NAME). As dimensões personalizadas vêm depois delas. */
-export async function runReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label = 'pluto-sync', extra: string[] = []) {
+/** extra: dimensões nativas a mais depois de COUNTRY_CODE (ex.: URL_NAME). As dimensões personalizadas vêm depois delas.
+ *  kvKey: acrescenta por último a dimensão nativa KEY_VALUES_NAME ("key=valor"), filtrada só para esse key
+ *  (funciona com "Incluir valores nos relatórios", sem dimensão personalizada). */
+export async function runReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label = 'pluto-sync', extra: string[] = [], kvKey?: string) {
   const auth = { Authorization: `Bearer ${token}` };
-  const dims = ['DATE', 'SITE', 'COUNTRY_CODE', ...extra, ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`)];
+  const dims = ['DATE', 'SITE', 'COUNTRY_CODE', ...extra, ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`), ...(kvKey ? ['KEY_VALUES_NAME'] : [])];
   const metrics = ['REVENUE', 'IMPRESSIONS', 'AD_REQUESTS', 'RESPONSES_SERVED', 'CLICKS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS'];
   const report = await requestJson<{ name: string }>(`${config.api.gam}/v1/networks/${network}/reports`, {
     method: 'POST', headers: auth,
@@ -62,6 +72,8 @@ export async function runReport(network: string, token: string, from: string, to
         dimensions: dims, metrics, reportType: 'HISTORICAL', currencyCode: 'USD',
         dateRange: { fixed: { startDate: date(from), endDate: date(to) } },
         ...(keys.length ? { customDimensionKeyIds: keys.map((k) => k.id) } : {}),
+        // só as linhas do key pedido; o prefixo exato "key=" é conferido de novo em kvValue()
+        ...(kvKey ? { filters: [{ fieldFilter: { field: { dimension: 'KEY_VALUES_NAME' }, operation: 'CONTAINS', values: [{ stringValue: `${kvKey}=` }] } }] } : {}),
       },
     },
   });
@@ -97,11 +109,16 @@ export async function attributionIndex() {
       FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id WHERE c.platform = 'google'`);
   const seen = new Map<string, number>();
   for (const a of gAds) seen.set(a.ext, (seen.get(a.ext) ?? 0) + 1);
+  // modo keyvalues (só utm_content): {adgroupid} / {{adset.id}} sozinho → grupo e campanha (também só ID único)
+  const campById = new Map(camps.map((c) => [c.id, c]));
+  const gSeen = new Map<string, number>();
+  for (const g of groups) gSeen.set(g.ext, (gSeen.get(g.ext) ?? 0) + 1);
   return {
     camp: new Map(camps.map((c) => [c.ext, c])),
     group: new Map(groups.map((g) => [`${g.cid}|${g.ext}`, g.id])),
     ad: new Map(ads.map((a) => [`${a.gid}|${a.ext}`, a.id])),
     creative: new Map(gAds.filter((a) => seen.get(a.ext) === 1).map((a) => [a.ext, a])),
+    groupExt: new Map(groups.filter((g) => gSeen.get(g.ext) === 1 && campById.has(g.cid)).map((g) => [g.ext, { id: g.id, cid: g.cid, platform: campById.get(g.cid)!.platform }])),
   };
 }
 
@@ -134,12 +151,55 @@ export function attribute(idx: Index, campVal: string, content: string, source: 
   return { reason: source && /^(fb|facebook|ig|instagram|an|msg|meta)$/.test(source) ? 'meta_ad_not_found' : 'campaign_not_found' };
 }
 
+/**
+ * Atribuição só pelo utm_content (modo keyvalues: um key por linha do relatório, sem o utm_campaign junto).
+ *   formato do dash antigo  {creative}_{placement}      → o {creative} é o anúncio do Google Ads → grupo → campanha
+ *   padrão do dash          {adgroupid}_{creative}       → grupo → campanha (anúncio pelo 2º pedaço)
+ *   Meta                    {{adset.id}}_{{ad.id}}       → conjunto → campanha
+ * Valor cortado pelo Ad Manager continua funcionando: só o 1º pedaço (antes do "_") é usado para achar a campanha.
+ */
+export function attributeContent(idx: Index, content: string):
+  { platform: 'google' | 'meta'; campaignId: string; adGroupId: string | null; adId: string | null; placement: string } | { reason: string } {
+  const i = content.indexOf('_');
+  const head = (i < 0 ? content : content.slice(0, i)).trim();
+  const tail = i < 0 ? '' : content.slice(i + 1).trim();
+  if (!head || EMPTY.test(head)) return { reason: 'missing_campaign_id' };
+  const cr = idx.creative.get(head);
+  if (cr) return { platform: 'google', campaignId: cr.cid, adGroupId: cr.gid, adId: cr.id, placement: tail };
+  const g = idx.groupExt.get(head);
+  if (g) return { platform: g.platform, campaignId: g.cid, adGroupId: g.id, adId: tail && !EMPTY.test(tail) ? idx.ad.get(`${g.id}|${tail}`) ?? null : null, placement: '' };
+  return { reason: 'gads_creative_not_found' };
+}
+
+/** "utm_content=123_site.com" → "123_site.com" (só se o key bater; o filtro CONTAINS do relatório pode trazer outro key parecido). */
+export function kvValue(raw: string, key: string): string | null {
+  const s = raw.trim();
+  return s.toLowerCase().startsWith(`${key.toLowerCase()}=`) ? s.slice(key.length + 1).trim() : null;
+}
+
+/**
+ * Como ler os key-values nesta rede (GAM_ATTRIBUTION = auto | keyvalues | dimension; padrão auto):
+ *   auto: utm_campaign e utm_content como dimensão personalizada → dimension; senão, utm_content com
+ *         "Incluir valores nos relatórios" (ou dimensão) → keyvalues; senão → dimension (vira gam_kv_not_configured).
+ */
+export function attributionMode(all: KeyInfo[]): 'dimension' | 'keyvalues' {
+  const camp = all.find((k) => k.role === 'campaign'), cont = all.find((k) => k.role === 'content');
+  if (config.gamAttribution === 'dimension') return 'dimension';
+  if (config.gamAttribution === 'keyvalues') return cont?.id ? 'keyvalues' : 'dimension';
+  if (camp?.usable && cont?.usable) return 'dimension';
+  return cont?.reportable === 'ON' || cont?.reportable === 'CUSTOM_DIMENSION' ? 'keyvalues' : 'dimension';
+}
+
 /** Uma rede do Ad Manager: relatório → fatos → grava só os domínios desta rede. */
 async function runNetwork(net: { id: string; external_id: string; name: string }, token: string, w: { from: string; to: string }, isFinal: boolean,
   dom: Resolver, idx: Index, url: ReturnType<typeof urlCache>) {
   const all = await resolveKeys(net.external_id, token);
-  const keys = all.filter((k) => k.usable);
-  const missing = all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));   // source e path são opcionais
+  const mode = attributionMode(all);
+  const contentKey = all.find((k) => k.role === 'content')!;
+  // modo keyvalues: o relatório-base não leva utm_campaign/utm_content/utm_source (senão o total do site sairia picado
+  // por eles); só o caminho da página, se ele estiver como dimensão personalizada.
+  const keys = all.filter((k) => k.usable && (mode === 'dimension' || k.role === 'path'));
+  const missing = mode === 'keyvalues' ? [] : all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));   // source e path são opcionais
   /*
    * URL da página (slug) para a tela URLs, nesta ordem:
    *  1. key-value do caminho (GAM_KEY_PATH, padrão page_path) como dimensão personalizada: o caminho exato;
@@ -148,76 +208,205 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
    *  3. sem nenhum dos dois, a receita fica em "(sem URL)" e a rede mostra o aviso de como configurar.
    */
   const pathKey = keys.find((k) => k.role === 'path');
-  const tryUrlDim = !pathKey && !URL_DIM_UNSUPPORTED.has(net.external_id);
-  let rows: Awaited<ReturnType<typeof runReport>>['rows'];
+  // 0.15 (modo keyvalues): page_path e utm_source também sem dimensão personalizada, cada um num relatório de Key-values
+  const reportsValues = (k?: KeyInfo) => !!k?.id && (k.reportable === 'ON' || k.reportable === 'CUSTOM_DIMENSION');
+  const pathAll = all.find((k) => k.role === 'path'), srcAll = all.find((k) => k.role === 'source');
+  const pathKv = mode === 'keyvalues' && !pathKey && reportsValues(pathAll) ? pathAll! : null;
+  const srcKv = mode === 'keyvalues' && reportsValues(srcAll) ? srcAll! : null;
+  const tryUrlDim = !pathKey && !pathKv && !URL_DIM_UNSUPPORTED.has(net.external_id);
+  type Rows = Awaited<ReturnType<typeof runReport>>['rows'];
+  const both = async (extra: string[]) => {
+    const run = (label: string, kv?: string) => runReport(net.external_id, token, w.from, w.to, keys, label, extra, kv).then((r) => r.rows);
+    const base = await run('pluto-sync');
+    const kv = mode === 'keyvalues' ? await run('pluto-sync-kv', contentKey.adTagName) : [];
+    const path = pathKv ? await run('pluto-sync-path', pathKv.adTagName) : [];
+    const src = srcKv ? await run('pluto-sync-source', srcKv.adTagName) : [];
+    return { base, kv, path, src };
+  };
+  let rows: Rows, kvRows: Rows, pathRows: Rows, srcRows: Rows;
   let urlDim = false;
   try {
-    rows = (await runReport(net.external_id, token, w.from, w.to, keys, 'pluto-sync', tryUrlDim ? ['URL_NAME'] : [])).rows;
+    ({ base: rows, kv: kvRows, path: pathRows, src: srcRows } = await both(tryUrlDim ? ['URL_NAME'] : []));
     urlDim = tryUrlDim;
   } catch (e) {
     if (!tryUrlDim || !(e instanceof SyncError) || !/URL_NAME|INVALID_ARGUMENT|invalid|not (supported|available)/i.test(e.message)) throw e;
     URL_DIM_UNSUPPORTED.add(net.external_id);
-    rows = (await runReport(net.external_id, token, w.from, w.to, keys)).rows;
+    ({ base: rows, kv: kvRows, path: pathRows, src: srcRows } = await both([]));
   }
   const base = 3 + (urlDim ? 1 : 0);
   const ki = (role: KeyInfo['role']) => { const i = keys.findIndex((k) => k.role === role); return i < 0 ? -1 : base + i; };
   const iCamp = ki('campaign'), iContent = ki('content'), iSource = ki('source'), iPath = ki('path'), iUrl = urlDim ? 3 : -1;
+  const iKv = base + keys.length;   // KEY_VALUES_NAME, a última dimensão do relatório de key-values
   const facts: Fact[] = [];
   // descartes, agrupados para o aviso final da rede (setAccountStatus): linhas e receita (USD) de cada caso
   const noSite = { rows: 0, revenue: 0 };                                       // SITE vazio/inválido na API
   const unlinked = new Map<string, { rows: number; revenue: number }>();        // domínio sem rede do Ad Manager (gam_account_id nulo)
   const otherNet = new Map<string, { rows: number; revenue: number }>();        // domínio ligado a OUTRA rede
   const bump = (m: Map<string, { rows: number; revenue: number }>, host: string, rev: number) => { const x = m.get(host) ?? { rows: 0, revenue: 0 }; x.rows++; x.revenue += rev; m.set(host, x); };
-  for (const r of rows) {
+  /** Data, domínio (só desta rede), país, caminho e métricas de uma linha; null = descartada (count = entra no aviso). */
+  const read = async (r: Rows[number], count: boolean) => {
     const d = r.dimensionValues;
     const day = isoDate(d[0]);
     const site = str(d[1]);
     const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
-    const revenue = num(m[0]);
-    if (!day || (!revenue && !num(m[1]) && !num(m[2]))) continue;
+    const v = { revenueUsd: num(m[0]), impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]) };
+    if (!day || (!v.revenueUsd && !v.impressions && !v.adRequests)) return null;
     // Linha sem SITE (ou valor inválido): impossível atribuir a um domínio → ignora, mas conta para o aviso
     const domain = site && !EMPTY.test(site) ? await dom.ensure(site) : null;
-    if (!domain) { noSite.rows++; noSite.revenue += revenue; continue; }
+    if (!domain) { if (count) { noSite.rows++; noSite.revenue += v.revenueUsd; } return null; }
     // VALIDAÇÃO ESTRITA da rede (fim do claimGam): o domínio só recebe receita da rede ligada a ele manualmente
     // em Domínios (domains.gam_account_id). Nada de UPDATE automático aqui.
-    if (domain.gam !== net.id) { bump(domain.gam ? otherNet : unlinked, domain.hostname, revenue); continue; }
-    const campVal = iCamp >= 0 ? str(d[iCamp]) : '';
-    const content = iContent >= 0 ? str(d[iContent]) : '';
-    const source = iSource >= 0 ? str(d[iSource]).toLowerCase() : '';
-    // ---- atribuição ----
-    let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
-    let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
-    if (iCamp < 0) reason = 'gam_kv_not_configured';
-    else if (domain.pending) reason = 'unknown_domain';
-    else if (EMPTY.test(campVal)) reason = 'missing_campaign_id';
-    else if (/[{}]/.test(campVal) || /[{}]/.test(content)) reason = 'invalid_utm';
-    else {
-      const a = attribute(idx, campVal, content, source);
-      if ('reason' in a) reason = a.reason;
-      else ({ platform, campaignId, adGroupId, adId } = a);
-    }
+    if (domain.gam !== net.id) { if (count) bump(domain.gam ? otherNet : unlinked, domain.hostname, v.revenueUsd); return null; }
     const path = iPath >= 0 ? str(d[iPath]) : iUrl >= 0 ? urlPath(str(d[iUrl])) : '';
-    facts.push(emptyFact({
-      date: day, domainId: domain.id, urlId: path && !EMPTY.test(path) ? await url(domain.id, path) : null,
-      platform, campaignId, adGroupId, adId, country: str(d[2]).toUpperCase() || 'ZZ', reason, utmSource: normSource(source),
-      revenueUsd: revenue, impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]),
-    }));
+    const country = str(d[2]).toUpperCase() || 'ZZ';
+    return { d, day, domain, path, country, v, bucket: `${day}|${domain.id}|${country}|${path}` };
+  };
+  const urlOf = async (domainId: string, path: string) => (path && !EMPTY.test(path) ? await url(domainId, path) : null);
+
+  if (mode === 'dimension') {
+    for (const r of rows) {
+      const x = await read(r, true);
+      if (!x) continue;
+      const { d, domain } = x;
+      const campVal = iCamp >= 0 ? str(d[iCamp]) : '';
+      const content = iContent >= 0 ? str(d[iContent]) : '';
+      const source = iSource >= 0 ? str(d[iSource]).toLowerCase() : '';
+      // ---- atribuição ----
+      let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
+      let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
+      if (iCamp < 0) reason = 'gam_kv_not_configured';
+      else if (domain.pending) reason = 'unknown_domain';
+      else if (EMPTY.test(campVal)) reason = 'missing_campaign_id';
+      else if (/[{}]/.test(campVal) || /[{}]/.test(content)) reason = 'invalid_utm';
+      else {
+        const a = attribute(idx, campVal, content, source);
+        if ('reason' in a) reason = a.reason;
+        else ({ platform, campaignId, adGroupId, adId } = a);
+      }
+      facts.push(emptyFact({
+        date: x.day, domainId: domain.id, urlId: await urlOf(domain.id, x.path),
+        platform, campaignId, adGroupId, adId, country: x.country, reason, utmSource: normSource(source), ...x.v,
+      }));
+    }
+  } else {
+    /*
+     * Modo keyvalues: o Ad Manager devolve UM key por linha (dimensão "Key-values"), então cada informação vem num
+     * relatório e é casada pelo balde dia × site × país:
+     *   1) utm_content → campanha (exato)                         2) total do site − (1) = tráfego sem campanha
+     *   3) utm_source de retenção (push, whatsapp…) sai de (2)     4) o que sobra = sem origem
+     *   5) page_path: cada linha acima é dividida entre as páginas do balde na proporção da receita/impressões de cada
+     *      página (o total por URL e o total por campanha ficam exatos; só o cruzamento campanha × página é proporcional).
+     */
+    type Pre = { x: NonNullable<Awaited<ReturnType<typeof read>>>; v: typeof zeroM; platform: 'google' | 'meta' | 'none'; campaignId: string | null; adGroupId: string | null; adId: string | null; reason: string | null; utmSource: string | null };
+    const pre: Pre[] = [];
+    const used = new Map<string, typeof zeroM>();
+    for (const r of kvRows) {
+      const x = await read(r, false);
+      if (!x) continue;
+      const content = kvValue(str(x.d[iKv]), contentKey.adTagName);
+      if (content == null) continue;
+      const u = used.get(x.bucket) ?? { ...zeroM };
+      for (const k of M_KEYS) u[k] += x.v[k];
+      used.set(x.bucket, u);
+      let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
+      let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
+      if (x.domain.pending) reason = 'unknown_domain';
+      else if (EMPTY.test(content)) reason = 'missing_campaign_id';
+      else if (/[{}]/.test(content)) reason = 'invalid_utm';
+      else {
+        const a = attributeContent(idx, content);
+        if ('reason' in a) reason = a.reason;
+        else ({ platform, campaignId, adGroupId, adId } = a);
+      }
+      pre.push({ x, v: x.v, platform, campaignId, adGroupId, adId, reason, utmSource: null });
+    }
+    // utm_source de retenção por balde (os de anúncio — google, fb… — já estão nas campanhas)
+    const srcBy = new Map<string, { s: string; v: typeof zeroM }[]>();
+    for (const r of srcRows) {
+      const x = await read(r, false);
+      if (!x || !srcKv) continue;
+      const src = normSource(kvValue(str(x.d[iKv]), srcKv.adTagName) ?? '');
+      if (!src || !retentionChannel(src)) continue;
+      srcBy.set(x.bucket, [...(srcBy.get(x.bucket) ?? []), { s: src, v: x.v }]);
+    }
+    const baseBy = new Map<string, typeof zeroM>();
+    for (const r of rows) {
+      const x = await read(r, true);
+      if (!x) continue;
+      baseBy.set(x.bucket, x.v);
+      const u = used.get(x.bucket);
+      const rest = { ...x.v };
+      if (u) for (const k of M_KEYS) rest[k] = Math.max(0, rest[k] - u[k]);
+      const reason = x.domain.pending ? 'unknown_domain' : 'missing_campaign_id';
+      for (const sv of (srcBy.get(x.bucket) ?? []).sort((a, z) => z.v.revenueUsd - a.v.revenueUsd)) {
+        const take = { ...zeroM };
+        for (const k of M_KEYS) { take[k] = Math.min(sv.v[k], rest[k]); rest[k] -= take[k]; }
+        if (take.revenueUsd > 0.00005 || take.impressions >= 1 || take.adRequests >= 1)
+          pre.push({ x, v: take, platform: 'none', campaignId: null, adGroupId: null, adId: null, reason, utmSource: sv.s });
+      }
+      if (rest.revenueUsd < 0.00005 && rest.impressions < 1 && rest.adRequests < 1) continue;
+      pre.push({ x, v: rest, platform: 'none', campaignId: null, adGroupId: null, adId: null, reason, utmSource: null });
+    }
+    // páginas por balde (até 100 por balde; o resto fica sem URL)
+    const pathBy = new Map<string, { path: string; v: typeof zeroM }[]>();
+    for (const r of pathRows) {
+      const x = await read(r, false);
+      if (!x || !pathKv) continue;
+      const path = kvPath(kvValue(str(x.d[iKv]), pathKv.adTagName) ?? '');
+      if (!path) continue;
+      const list = pathBy.get(x.bucket) ?? [];
+      const hit = list.find((p) => p.path === path);
+      if (hit) for (const k of M_KEYS) hit.v[k] += x.v[k]; else list.push({ path, v: { ...x.v } });
+      pathBy.set(x.bucket, list);
+    }
+    for (const [b, list] of pathBy) pathBy.set(b, list.sort((a, z) => z.v.revenueUsd - a.v.revenueUsd).slice(0, 100));
+    for (const f of pre) {
+      const pages = pathBy.get(f.x.bucket);
+      const tot = baseBy.get(f.x.bucket);
+      const push = async (path: string, v: typeof zeroM) => {
+        if (v.revenueUsd < 0.0000005 && v.impressions < 0.0005 && v.adRequests < 0.0005) return;
+        facts.push(emptyFact({ date: f.x.day, domainId: f.x.domain.id, urlId: await urlOf(f.x.domain.id, path), platform: f.platform, campaignId: f.campaignId, adGroupId: f.adGroupId, adId: f.adId,
+          country: f.x.country, reason: f.reason, utmSource: f.utmSource, ...v }));
+      };
+      if (!pages?.length || !tot) { await push(f.x.path, f.v); continue; }
+      const left = { ...f.v };
+      for (const pg of pages) {
+        const part = { ...zeroM };
+        for (const k of M_KEYS) {
+          const sum = pages.reduce((a, q2) => a + q2.v[k], 0);
+          const den = Math.max(tot[k], sum);
+          part[k] = den > 0 ? f.v[k] * (pg.v[k] / den) : 0;
+          left[k] -= part[k];
+        }
+        await push(pg.path, part);
+      }
+      for (const k of M_KEYS) left[k] = Math.max(0, left[k]);
+      await push(f.x.path, left);
+    }
   }
   const mine = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);
   const n = await replaceFacts('gam', w.from, w.to, { domains: mine }, facts, isFinal);
+  const noKv = mode === 'keyvalues' && !kvRows.length && rows.length
+    ? `nenhuma linha com o key-value "${contentKey.adTagName}" no relatório: confira no Ad Manager (Inventário → Key-values → ${contentKey.adTagName}) se "Incluir valores nos relatórios" está ligado e se o site manda o key no GPT`
+    : '';
   const warn = [
-    missing.length ? `key-values sem dimensão personalizada no Ad Manager: ${missing.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension)` : '',
-    noSite.rows ? `${noSite.rows} linhas sem site ignoradas (${usd(noSite.revenue)}): confira se utm_campaign e utm_content estão como dimensão personalizada nesta rede` : '',
+    missing.length ? `key-values fora dos relatórios no Ad Manager: ${missing.map((k) => k.adTagName).join(', ')} (Inventário → Key-values → ${contentKey.adTagName} → "Incluir valores nos relatórios")` : '',
+    noKv,
+    noSite.rows ? `${noSite.rows} linhas sem site ignoradas (${usd(noSite.revenue)})` : '',
     unlinked.size ? `${sum(unlinked)} linhas de sites sem rede ligada ignoradas (${usd(rev(unlinked))}): ${sites(unlinked)}. Ligue cada site a esta rede em Domínios` : '',
     otherNet.size ? `${sum(otherNet)} linhas de sites ligados a outra rede ignoradas (${usd(rev(otherNet))}): ${sites(otherNet)}. Se o site é desta rede, troque a rede em Domínios` : '',
   ].filter(Boolean).join(' · ');
   // URL é informativo (não deixa a rede amarela): sem caminho, a tela URLs mostra "(sem URL)"
-  const urlNote = !pathKey && !urlDim && config.gamKeys.path
-    ? `URLs: sem o key-value "${config.gamKeys.path}" como dimensão personalizada a receita fica em "(sem URL)". O site manda googletag.pubads().setTargeting('${config.gamKeys.path}', location.pathname)`
+  const urlNote = !pathKey && !pathKv && !urlDim && config.gamKeys.path
+    ? `URLs: sem o key-value "${config.gamKeys.path}" nos relatórios a receita fica em "(sem URL)". O site manda googletag.pubads().setTargeting('${config.gamKeys.path}', location.pathname) e o key fica com "Incluir valores nos relatórios"`
     : '';
-  await setAccountStatus(net.id, warn ? 'warn' : 'ok', [warn, urlNote].filter(Boolean).join(' · ') || null);
-  return { rows: rows.length, n, warn };
+  const modeNote = mode === 'keyvalues' ? `atribuição pelo key-value ${contentKey.adTagName}${pathKv ? ` · URLs por ${pathKv.adTagName}` : ''}${srcKv ? ` · retenção por ${srcKv.adTagName}` : ''} (sem dimensão personalizada)` : '';
+  await setAccountStatus(net.id, warn ? 'warn' : 'ok', [warn, modeNote, urlNote].filter(Boolean).join(' · ') || null);
+  return { rows: rows.length + kvRows.length + pathRows.length + srcRows.length, n, warn };
 }
+
+const zeroM = { revenueUsd: 0, impressions: 0, adRequests: 0, responsesServed: 0, adClicks: 0, viewable: 0 };
+const M_KEYS = Object.keys(zeroM) as (keyof typeof zeroM)[];
 
 /** Todas as redes importadas, uma de cada vez. Erro numa rede não interrompe as outras. */
 export async function runGam(w: { from: string; to: string }, isFinal = false): Promise<JobResult> {
@@ -261,6 +450,13 @@ export function urlPath(v: string): string {
   if (!v || EMPTY.test(v)) return '';
   const u = parseUrl(/^https?:\/\//i.test(v) ? v : 'https://' + v.replace(/^\/+/, ''));
   return u ? u.pathname : '';
+}
+
+/** Valor do key page_path → caminho ("/artigo/"), sem query; aceita também URL completa. */
+export function kvPath(v: string): string {
+  const s = v.trim();
+  if (!s || EMPTY.test(s) || /[{}]/.test(s)) return '';
+  return s.startsWith('/') ? s.split(/[?#]/)[0] : urlPath(s);
 }
 
 /** utm_source gravado na linha (origem da receita na tela URLs): minúsculo, só [a-z0-9_.-], até 40. Vazio/macro → null. */

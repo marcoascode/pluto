@@ -3,6 +3,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import { Money, Profit, RoiChip, RoiText, useRoiColors } from '@/components/ui/Values';
 import { domainLabel, pct, pct0 } from '@/lib/format';
 import { roiClass } from '@/lib/metrics';
+import { RetentionLine } from '@/components/ui/Retention';
 import type { DomainSummary } from '@/types/api';
 
 const hue = (d: string) => { let h = 7; for (const c of d) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
@@ -27,13 +28,14 @@ export function DomainCard({ d, rank, rankLabel }: { d: DomainSummary; rank?: nu
         </Stack>
         <Grid container spacing={1.25} sx={{ mt: 1.25 }}>
           {stat('Receita', <Money v={m.revenue} />)}{stat('Despesas', <Money v={m.spend} />)}{stat('ROI', <Profit v={m.profit} />)}
-          {stat('ROI %', <RoiText v={m.roi} />)}{stat('Margem', pct(m.margin))}{stat('RPM Sessão', <Money v={m.sessionRpm} />)}
+          {stat('ROI %', <RoiText v={m.roi} />)}{stat('Margem', pct(m.margin))}{stat('eCPM', <Money v={m.ecpm} />)}
         </Grid>
         <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mt: 1.5 }}>
           <Typography variant="caption" sx={{ width: 56 }}>ROI</Typography>
           <LinearProgress variant="determinate" value={w} sx={{ flex: 1, '& .MuiLinearProgress-bar': { bgcolor: col.text === p.fg ? p.na : col.text } }} />
           <Typography sx={{ fontWeight: 600, fontSize: 12.5, minWidth: 44, textAlign: 'right' }}>{pct0(m.roi)}</Typography>
         </Stack>
+        <RetentionLine m={m} />
       </CardActionArea>
     </Card>
   );

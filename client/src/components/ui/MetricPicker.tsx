@@ -2,13 +2,13 @@ import { Box, Button, Checkbox, Divider, ListItemButton, ListSubheader, Popover,
 import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
 import { Fragment, useState } from 'react';
 import { usePrefs } from '@/context/PrefsContext';
-import { BLOCKS, METRIC_DEFS, PICKERS, orderFor, type MetricKey } from '@/lib/metrics';
+import { BLOCKS, METRIC_DEFS, PICKERS, orderFor, type MetricKey, noSessions } from '@/lib/metrics';
 
 export function usePicked(screen: keyof typeof PICKERS): MetricKey[] {
   const { prefs } = usePrefs();
   const all = PICKERS[screen].all;
   // ordem dos blocos; nas telas de campanha o ROI e o ROI do dia ficam na ponta direita (mesmo em escolhas antigas)
-  return orderFor(screen, ((prefs.metrics?.[screen] as MetricKey[] | undefined) ?? PICKERS[screen].def).filter((k) => all.includes(k)));
+  return orderFor(screen, noSessions((prefs.metrics?.[screen] as MetricKey[] | undefined) ?? PICKERS[screen].def).filter((k) => all.includes(k)));
 }
 
 /**

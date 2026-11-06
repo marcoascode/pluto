@@ -35,7 +35,8 @@ export interface CommissionLine {
   status: CommissionStatus; frozen: boolean; liveDiff: number | null; incomplete: string[];
   approvedBy: string | null; approvedAt: string | null; paidAt: string | null; paidNote: string | null;
 }
-export interface SiteCard { companyId: string; site: string; month: string; revenue: number; expenses: number; siteCosts: number; costs: number; result: number; roi: number | null; managers: { userId: string; userName: string; sharePct: number }[] }
+/** 0.15: revenue = receita líquida do dash · ads = anúncios do dash · otherExpenses = outros gastos do Caixa com o site */
+export interface SiteCard { companyId: string; site: string; month: string; revenue: number; ads?: number; otherExpenses?: number; expenses: number; siteCosts: number; costs: number; result: number; roi: number | null; managers: { userId: string; userName: string; sharePct: number; auto?: boolean }[] }
 export interface CommissionsResponse {
   viewer: { role: ViewerRole; userId: string }; month: string; months: string[]; companies: Company[]; managers: { id: string; name: string }[];
   rule: { name: string; tiers: Tier[]; tierCurrency: 'BRL' | 'USD' | 'EUR' };

@@ -9,6 +9,8 @@
  *                         que precisa estar como "Custom dimension" no Ad Manager.
  *                         Formato do dash antigo (utm_campaign={creative}, utm_content={creative}_{placement}): sem o
  *                         key-value "placement", o placement sai do utm_content e a campanha sai do {creative}.
+ *                         Sem dimensão personalizada (modo keyvalues, igual à Publeno): basta o utm_content com "Incluir
+ *                         valores nos relatórios"; o relatório usa a dimensão nativa Key-values e lê {creative}_{placement}.
  *
  * Os dois lados usam a mesma chave normalizada (normPlacement): host sem "www.", "youtube.com" para vídeos/canais
  * e "mobileapp::…" para apps. placement_root agrupa subdomínios no domínio principal (lp.site.com → site.com).
@@ -17,7 +19,7 @@
 import { config } from '../../config.js';
 import { q, tx } from '../../db.js';
 import { domainResolver, fxToUsd, setAccountStatus, statusFromError } from './common.js';
-import { attributionIndex, EMPTY, isLegacyUtm, isoDate, num, resolveKeys, runReport, str } from './gam.js';
+import { attributeContent, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runReport, str } from './gam.js';
 import { ctx, gaql } from './googleAds.js';
 import { SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
@@ -176,10 +178,40 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
       const all = await resolveKeys(net.external_id, token, [['campaign', config.gamKeys.campaign], ['placement', config.gamPlacementKey], ['content', config.gamKeys.content]]);
       const keys = all.filter((k) => k.usable);
       const has = (r: string) => keys.some((k) => k.role === r);
+      const contentKey = all.find((k) => k.role === 'content')!;
+      // sem dimensão personalizada: lê o utm_content pela dimensão nativa Key-values ({creative}_{placement})
+      if (attributionMode(all) === 'keyvalues' && !(has('campaign') && has('placement'))) {
+        const { rows } = await runReport(net.external_id, token, w.from, w.to, [], 'pluto-placements-kv', [], contentKey.adTagName);
+        const facts: PFact[] = [];
+        let noPl = 0;
+        for (const r of rows) {
+          const d = r.dimensionValues; const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
+          const day = isoDate(d[0]); const site = str(d[1]);
+          if (!day || !site || EMPTY.test(site)) continue;
+          const content = kvValue(str(d[3]), contentKey.adTagName);
+          if (!content) continue;
+          const a = attributeContent(idx, content);
+          // placement só existe no formato do dash antigo; se o {creative} não foi achado, usa o resto do valor do mesmo jeito
+          const i = content.indexOf('_');
+          const plRaw = 'reason' in a ? (i > 0 ? content.slice(i + 1) : '') : a.placement;
+          const p = normPlacement(plRaw);
+          if (!p) { noPl++; continue; }
+          const domain = await dom.ensure(site);
+          if (!domain || domain.pending || domain.gam !== net.id) continue;
+          if (!('reason' in a) && a.platform !== 'google') continue;   // placements aqui são só do Google Ads
+          facts.push({ ...zero, date: day, domainId: domain.id, campaignId: 'reason' in a ? null : a.campaignId, placement: p.key,
+            revenueUsd: num(m[0]), impressions: num(m[1]), adRequests: num(m[2]), responsesServed: num(m[3]), adClicks: num(m[4]), viewable: num(m[5]) });
+        }
+        const mine = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);
+        saved += await replacePlacements('gam', w.from, w.to, { domains: mine }, facts, isFinal);
+        rowsTotal += rows.length; ok++;
+        if (noPl) notes.push(`${net.name}: ${noPl} linhas sem placement`);
+        continue;
+      }
       // precisa da campanha e de onde tirar o placement: o key-value "placement" ou o utm_content do formato antigo ({creative}_{placement})
       if (!has('campaign') || (!has('placement') && !has('content'))) {
         const bad = all.filter((k) => !k.usable && (k.role === 'campaign' || !has('placement') && !has('content')));
-        skippedNets++; notes.push(`${net.name}: key-values sem dimensão personalizada no Ad Manager: ${bad.map((k) => k.adTagName).join(', ')} (Admin → Key-values → "Report on values": Custom dimension). O site precisa enviar "${config.gamPlacementKey}" com o {placement} da URL, ou o utm_content={creative}_{placement}.`); continue;
+        skippedNets++; notes.push(`${net.name}: key-values fora dos relatórios no Ad Manager: ${bad.map((k) => k.adTagName).join(', ')} (Inventário → Key-values → "Incluir valores nos relatórios"). O site precisa enviar "${config.gamPlacementKey}" com o {placement} da URL, ou o utm_content={creative}_{placement}.`); continue;
       }
       const { rows } = await runReport(net.external_id, token, w.from, w.to, keys, 'pluto-placements');
       const at = (r: string) => { const i = keys.findIndex((k) => k.role === r); return i < 0 ? -1 : 3 + i; };
