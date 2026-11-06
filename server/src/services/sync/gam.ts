@@ -46,8 +46,20 @@ export interface KeyInfo { role: 'campaign' | 'content' | 'source' | 'path' | 'p
 export async function resolveKeys(network: string, token: string, wanted: [KeyInfo['role'], string][] = Object.entries(config.gamKeys).filter(([, v]) => v) as [KeyInfo['role'], string][]): Promise<KeyInfo[]> {
   const out: KeyInfo[] = [];
   for (const [role, name] of wanted) {
+    type KeysResp = { customTargetingKeys?: { customTargetingKeyId?: string; name?: string; adTagName?: string; reportableType?: string }[] };
     const u = `${config.api.gam}/v1/networks/${network}/customTargetingKeys?${new URLSearchParams({ filter: `adTagName = "${name}"`, pageSize: '5' })}`;
-    const j = await requestJson<{ customTargetingKeys?: { customTargetingKeyId?: string; name?: string; adTagName?: string; reportableType?: string }[] }>(u, { headers: { Authorization: `Bearer ${token}` } });
+    let j: KeysResp;
+    try { j = await requestJson<KeysResp>(u, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) {
+      if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
+      // 0.15.2: a busca filtrada falhou ("An error has occurred."): lista os keys sem filtro e procura aqui
+      logGam({ network, step: 'customTargetingKeys', key: name, message: (e as Error).message, body: e instanceof SyncError ? e.body ?? null : null });
+      try {
+        j = await requestJson<KeysResp>(`${config.api.gam}/v1/networks/${network}/customTargetingKeys?pageSize=1000`, { headers: { Authorization: `Bearer ${token}` } });
+        j = { customTargetingKeys: (j.customTargetingKeys ?? []).filter((x) => x.adTagName === name) };
+      } catch (e2) {
+        throw new SyncError(e2 instanceof SyncError ? e2.code : 'api', `Ad Manager (lista de key-values, ${name}): ${(e2 as Error).message}`, e2 instanceof SyncError ? e2.http : undefined, e2 instanceof SyncError ? e2.body : undefined);
+      }
+    }
     const k = j.customTargetingKeys?.find((x) => x.adTagName === name) ?? j.customTargetingKeys?.[0];
     const id = k?.customTargetingKeyId ?? k?.name?.split('/').pop() ?? null;
     out.push({ role, adTagName: name, id, usable: !!id && k?.reportableType === 'CUSTOM_DIMENSION', reportable: id ? k?.reportableType ?? null : null });
@@ -59,11 +71,56 @@ export async function resolveKeys(network: string, token: string, wanted: [KeyIn
 /** extra: dimensões nativas a mais depois de COUNTRY_CODE (ex.: URL_NAME). As dimensões personalizadas vêm depois delas.
  *  kvKey: acrescenta por último a dimensão nativa KEY_VALUES_NAME ("key=valor"), filtrada só para esse key
  *  (funciona com "Incluir valores nos relatórios", sem dimensão personalizada). */
-export async function runReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label = 'pluto-sync', extra: string[] = [], kvKey?: string) {
+/** Log da api (docker compose logs api): uma linha JSON por falha de relatório do Ad Manager, com a resposta da API. */
+function logGam(ev: Record<string, unknown>) {
+  console.error(`[gam] ${JSON.stringify({ at: new Date().toISOString(), ...ev })}`);
+}
+const addDays = (d: string, n: number) => { const t = new Date(`${d}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+const spanDays = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 864e5) + 1;
+type ReportRows = { dimensionValues: Val[]; metricValueGroups: { primaryValues: Val[] }[] }[];
+
+/**
+ * Relatório do Ad Manager com tolerância a falha (0.15.2). O Ad Manager às vezes devolve só "An error has occurred."
+ * (HTTP 500 INTERNAL) para relatórios grandes (30 dias × site × país × URL/key-values). Então:
+ *   1. tenta o período inteiro;
+ *   2. se falhar (erro da API, não de login/permissão), divide o período ao meio e tenta cada metade, até 1 dia;
+ *   3. cada falha vai para o log da api com a rede, o relatório, a etapa e a resposta da API.
+ * A mensagem final diz em que etapa e em que dia falhou, para a tela de Integrações.
+ */
+export async function runReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label = 'pluto-sync', extra: string[] = [], kvKey?: string): Promise<{ rows: ReportRows; dims: string[] }> {
+  try {
+    return await runReportOnce(network, token, from, to, keys, label, extra, kvKey);
+  } catch (e) {
+    const se = e instanceof SyncError ? e : null;
+    logGam({ network, report: label, from, to, kvKey: kvKey ?? null, extra, customKeys: keys.map((k) => k.adTagName), code: se?.code ?? 'erro', http: se?.http ?? null, message: (e as Error).message, body: se?.body ?? null });
+    if (se && (se.code === 'token' || se.code === 'permission' || se.code === 'not_connected')) throw e;
+    const days = spanDays(from, to);
+    if (days <= 1) throw e;
+    // falha do relatório inteiro: se nem 1 dia funciona, o problema não é tamanho (repetir em pedaços só atrasaria)
+    try { await runReportOnce(network, token, to, to, keys, label, extra, kvKey); } catch (e2) {
+      logGam({ network, report: label, from: to, to, probe: true, message: (e2 as Error).message, body: e2 instanceof SyncError ? e2.body ?? null : null });
+      throw e;
+    }
+    const half = Math.floor(days / 2);
+    const mid = addDays(from, half - 1);
+    const a = await runReport(network, token, from, mid, keys, label, extra, kvKey);
+    const b = await runReport(network, token, addDays(mid, 1), to, keys, label, extra, kvKey);
+    return { rows: [...a.rows, ...b.rows], dims: a.dims };
+  }
+}
+
+async function runReportOnce(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey?: string) {
   const auth = { Authorization: `Bearer ${token}` };
   const dims = ['DATE', 'SITE', 'COUNTRY_CODE', ...extra, ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`), ...(kvKey ? ['KEY_VALUES_NAME'] : [])];
   const metrics = ['REVENUE', 'IMPRESSIONS', 'AD_REQUESTS', 'RESPONSES_SERVED', 'CLICKS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS'];
-  const report = await requestJson<{ name: string }>(`${config.api.gam}/v1/networks/${network}/reports`, {
+  // etapa em que falhou vai na mensagem: "criar relatório", "rodar relatório", "aguardar relatório", "baixar linhas"
+  const step = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+    try { return await fn(); } catch (e) {
+      const se = e instanceof SyncError ? e : null;
+      throw new SyncError(se?.code ?? 'api', `Ad Manager (${label}, ${name}, ${from === to ? from : `${from} a ${to}`}): ${(e as Error).message}`, se?.http, se?.body);
+    }
+  };
+  const report = await step('criar relatório', () => requestJson<{ name: string }>(`${config.api.gam}/v1/networks/${network}/reports`, {
     method: 'POST', headers: auth,
     body: {
       displayName: `${label} ${from}..${to} ${new Date().toISOString()}`,
@@ -76,21 +133,29 @@ export async function runReport(network: string, token: string, from: string, to
         ...(kvKey ? { filters: [{ fieldFilter: { field: { dimension: 'KEY_VALUES_NAME' }, operation: 'CONTAINS', values: [{ stringValue: `${kvKey}=` }] } }] } : {}),
       },
     },
-  });
-  const op = await requestJson<{ name: string }>(`${config.api.gam}/v1/${report.name}:run`, { method: 'POST', headers: auth, body: {} });
+  }));
+  const op = await step('rodar relatório', () => requestJson<{ name: string }>(`${config.api.gam}/v1/${report.name}:run`, { method: 'POST', headers: auth, body: {} }));
   // espera: 5 s e vai aumentando (máx. ~10 min)
   let result: string | null = null;
   for (let i = 0, wait = 5_000; i < 40; i++, wait = Math.min(wait * 1.5, 30_000)) {
-    const o = await requestJson<{ done?: boolean; error?: { message?: string }; response?: { reportResult?: string } }>(`${config.api.gam}/v1/${op.name}`, { headers: auth });
-    if (o.error) throw new SyncError('api', `Relatório do Ad Manager falhou: ${o.error.message}`);
+    const o = await step('aguardar relatório', () => requestJson<{ done?: boolean; error?: { message?: string; code?: number }; response?: { reportResult?: string } }>(`${config.api.gam}/v1/${op.name}`, { headers: auth }));
+    if (o.error) throw new SyncError('api', `Ad Manager (${label}, relatório recusado, ${from} a ${to}): ${o.error.message ?? 'sem mensagem'}${o.error.code != null ? ` (código ${o.error.code})` : ''}`, undefined, JSON.stringify(o.error).slice(0, 1500));
     if (o.done) { result = o.response?.reportResult ?? null; break; }
     await sleep(wait);
   }
-  if (!result) throw new SyncError('api', 'O relatório do Ad Manager demorou demais. Nova tentativa no próximo ciclo.');
-  const rows: { dimensionValues: Val[]; metricValueGroups: { primaryValues: Val[] }[] }[] = [];
+  if (!result) throw new SyncError('api', `Ad Manager (${label}): o relatório demorou demais. Nova tentativa no próximo ciclo.`);
+  const rows: ReportRows = [];
   let pageToken: string | undefined;
+  let pageSize = 10000;
   do {
-    const j = await requestJson<{ rows?: typeof rows; nextPageToken?: string }>(`${config.api.gam}/v1/${result}:fetchRows?${new URLSearchParams({ pageSize: '10000', ...(pageToken ? { pageToken } : {}) })}`, { headers: auth, timeoutMs: 120_000 });
+    let j: { rows?: ReportRows; nextPageToken?: string };
+    try {
+      j = await step('baixar linhas', () => requestJson<{ rows?: ReportRows; nextPageToken?: string }>(`${config.api.gam}/v1/${result}:fetchRows?${new URLSearchParams({ pageSize: String(pageSize), ...(pageToken ? { pageToken } : {}) })}`, { headers: auth, timeoutMs: 120_000 }));
+    } catch (e) {
+      if (pageSize <= 1000) throw e;
+      pageSize = 1000;   // página grande demais: tenta de novo a mesma página, menor
+      continue;
+    }
     rows.push(...(j.rows ?? []));
     pageToken = j.nextPageToken || undefined;
   } while (pageToken);
@@ -198,7 +263,7 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const contentKey = all.find((k) => k.role === 'content')!;
   // modo keyvalues: o relatório-base não leva utm_campaign/utm_content/utm_source (senão o total do site sairia picado
   // por eles); só o caminho da página, se ele estiver como dimensão personalizada.
-  const keys = all.filter((k) => k.usable && (mode === 'dimension' || k.role === 'path'));
+  let keys = all.filter((k) => k.usable && (mode === 'dimension' || k.role === 'path'));
   const missing = mode === 'keyvalues' ? [] : all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));   // source e path são opcionais
   /*
    * URL da página (slug) para a tela URLs, nesta ordem:
@@ -216,16 +281,36 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const pathKv = !pathKey && reportsValues(pathAll) ? pathAll! : null;
   const srcKv = reportsValues(srcAll) && !keys.some((k) => k.role === 'source') ? srcAll! : null;
   // relatórios de Key-values: só o caminho como dimensão personalizada (se houver), para casar com o balde do total
-  const auxKeys = keys.filter((k) => k.role === 'path');
+  let auxKeys = keys.filter((k) => k.role === 'path');
   const tryUrlDim = !pathKey && !pathKv && !URL_DIM_UNSUPPORTED.has(net.external_id);
   type Rows = Awaited<ReturnType<typeof runReport>>['rows'];
+  const auxFail: string[] = [];
   const both = async (extra: string[]) => {
     const run = (label: string, kv?: string) => runReport(net.external_id, token, w.from, w.to, kv ? auxKeys : keys, label, extra, kv).then((r) => r.rows);
-    const base = await run('pluto-sync');
-    const kv = mode === 'keyvalues' ? await run('pluto-sync-kv', contentKey.adTagName) : [];
-    const path = pathKv ? await run('pluto-sync-path', pathKv.adTagName) : [];
-    const src = srcKv ? await run('pluto-sync-source', srcKv.adTagName) : [];
-    return { base, kv, path, src };
+    // 0.15.2: se o relatório-base falhar com as dimensões personalizadas, tenta só com utm_campaign/utm_content e,
+    // por fim, sem nenhuma (o total do site entra; a atribuição cai para o relatório de Key-values ou fica "sem campanha")
+    let base: Rows | null = null;
+    const tries = [keys, keys.filter((k) => k.role === 'campaign' || k.role === 'content'), []].filter((ks, i, arr) => i === 0 || ks.length < arr[i - 1].length);
+    for (let i = 0; i < tries.length && !base; i++) {
+      try { keys = tries[i]; base = await run('pluto-sync'); } catch (e) {
+        if (i === tries.length - 1 || (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code))) throw e;
+        auxFail.push(`relatório com ${tries[i].map((k) => k.adTagName).join(', ')} como dimensão falhou; usando ${tries[i + 1].map((k) => k.adTagName).join(', ') || 'só o total do site'}`);
+      }
+    }
+    auxKeys = keys.filter((k) => k.role === 'path');
+    // 0.15.2: relatório de Key-values que falhar não derruba a rede: o total do site entra igual e a parte dele fica
+    // "sem campanha / sem URL / sem retenção" neste sync, com aviso na tela e o erro no log da api
+    const aux = async (label: string, key: string, what: string) => {
+      try { return await run(label, key); } catch (e) {
+        if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
+        auxFail.push(`${what} (${key}) indisponível neste sync: ${(e as Error).message.slice(0, 160)}`);
+        return [];
+      }
+    };
+    const kv = mode === 'keyvalues' ? await aux('pluto-sync-kv', contentKey.adTagName, 'campanhas') : [];
+    const path = pathKv ? await aux('pluto-sync-path', pathKv.adTagName, 'URLs') : [];
+    const src = srcKv ? await aux('pluto-sync-source', srcKv.adTagName, 'retenção') : [];
+    return { base: base!, kv, path, src };
   };
   let rows: Rows, kvRows: Rows, pathRows: Rows, srcRows: Rows;
   let urlDim = false;
@@ -233,8 +318,11 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     ({ base: rows, kv: kvRows, path: pathRows, src: srcRows } = await both(tryUrlDim ? ['URL_NAME'] : []));
     urlDim = tryUrlDim;
   } catch (e) {
-    if (!tryUrlDim || !(e instanceof SyncError) || !/URL_NAME|INVALID_ARGUMENT|invalid|not (supported|available)/i.test(e.message)) throw e;
+    // 0.15.2: sem a URL, tenta de novo com QUALQUER erro de API (o Ad Manager às vezes recusa URL_NAME só com "An error has occurred.")
+    if (!tryUrlDim || !(e instanceof SyncError) || ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
     URL_DIM_UNSUPPORTED.add(net.external_id);
+    auxFail.length = 0;
+    keys = all.filter((k) => k.usable && (mode === 'dimension' || k.role === 'path'));
     ({ base: rows, kv: kvRows, path: pathRows, src: srcRows } = await both([]));
   }
   const base = 3 + (urlDim ? 1 : 0);
@@ -406,6 +494,7 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     ? `nenhuma linha com o key-value "${contentKey.adTagName}" no relatório: confira no Ad Manager (Inventário → Key-values → ${contentKey.adTagName}) se "Incluir valores nos relatórios" está ligado e se o site manda o key no GPT`
     : '';
   const warn = [
+    ...auxFail,
     missing.length ? `key-values fora dos relatórios no Ad Manager: ${missing.map((k) => k.adTagName).join(', ')} (Inventário → Key-values → ${contentKey.adTagName} → "Incluir valores nos relatórios")` : '',
     noKv,
     noSite.rows ? `${noSite.rows} linhas sem site ignoradas (${usd(noSite.revenue)})` : '',
@@ -451,7 +540,8 @@ export async function runGam(w: { from: string; to: string }, isFinal = false): 
       if (r.warn) notes.push(`${net.name}: ${r.warn}`);
     } catch (e) {
       notes.push(`${net.name}: ${(e as Error).message}`);
-      await setAccountStatus(net.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => {});
+      logGam({ network: net.external_id, name: net.name, fatal: true, code: e instanceof SyncError ? e.code : 'erro', http: e instanceof SyncError ? e.http ?? null : null, message: (e as Error).message, body: e instanceof SyncError ? e.body ?? null : null, stack: (e as Error).stack?.split('\n').slice(0, 6).join(' | ') });
+      await setAccountStatus(net.id, statusFromError(e), (e as Error).message.slice(0, 500)).catch(() => {});
     }
   }
   if (!ok) return { status: 'failed', message: notes.join(' · ').slice(0, 500) };

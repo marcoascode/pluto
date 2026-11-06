@@ -1,8 +1,9 @@
 /** HTTP com retry/backoff para as APIs externas (429, 5xx, timeouts). */
 
 export class SyncError extends Error {
-  /** code: not_connected | not_configured | token | permission | rate_limit | too_much_data | api | fx_missing | config */
-  constructor(public code: string, message: string) { super(message); }
+  /** code: not_connected | not_configured | token | permission | rate_limit | too_much_data | api | fx_missing | config
+   *  http/body: status HTTP e começo da resposta da API (vão para o log da api, não para a tela) */
+  constructor(public code: string, message: string, public http?: number, public body?: string) { super(message); }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -25,13 +26,17 @@ export async function requestJson<T = any>(url: string, o: ReqOpts = {}): Promis
       let j: any = null;
       try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text.slice(0, 300) }; }
       if (r.ok) return j as T;
-      const msg = errorMessage(j) ?? `HTTP ${r.status}`;
+      const base = errorMessage(j) ?? `HTTP ${r.status}`;
+      // status do Google (INTERNAL, INVALID_ARGUMENT…) junto, porque a mensagem sozinha às vezes é só "An error has occurred."
+      const gstatus = typeof j?.error?.status === 'string' ? j.error.status : '';
+      const msg = `${base} (HTTP ${r.status}${gstatus ? ` ${gstatus}` : ''})`;
+      const body = text.slice(0, 1500);
       // Meta "Please reduce the amount of data…" (código 1, HTTP 500): repetir igual não adianta, quem chamou precisa pedir menos
-      if (TOO_MUCH_DATA.test(msg)) throw new SyncError('too_much_data', msg);
-      if ([429, 500, 502, 503, 504].includes(r.status) && i < retries) { await sleep(retryAfter(r) ?? 1000 * 2 ** i); last = new SyncError('rate_limit', msg); continue; }
-      if (r.status === 401) throw new SyncError('token', msg);
-      if (r.status === 403) throw new SyncError('permission', msg);
-      throw new SyncError('api', msg);
+      if (TOO_MUCH_DATA.test(msg)) throw new SyncError('too_much_data', msg, r.status, body);
+      if ([429, 500, 502, 503, 504].includes(r.status) && i < retries) { await sleep(retryAfter(r) ?? 1000 * 2 ** i); last = new SyncError(r.status === 429 ? 'rate_limit' : 'api', msg, r.status, body); continue; }
+      if (r.status === 401) throw new SyncError('token', msg, r.status, body);
+      if (r.status === 403) throw new SyncError('permission', msg, r.status, body);
+      throw new SyncError('api', msg, r.status, body);
     } catch (e) {
       if (e instanceof SyncError) throw e;
       last = e;

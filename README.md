@@ -65,4 +65,5 @@ sudo docker builder prune -a -f
 sudo docker image prune -a -f
 
 ## REINICIAR CONTAINER
+cd /var/www/pluto
 docker compose up -d --force-recreate api
