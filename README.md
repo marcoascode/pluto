@@ -69,3 +69,4 @@ cd /var/www/pluto
 docker compose up -d --force-recreate api
 
 sudo docker logs -f pluto-api-1
+docker compose logs api --since 1h | grep "\[gam\]"

@@ -119,33 +119,54 @@ export async function runReport(network: string, token: string, from: string, to
  * Sem site ou sem país, cada valor é distribuído entre os sites/países do relatório-base do mesmo dia pela proporção
  * de cada um (estimativa; o total do dia é exato). Linhas sempre voltam no formato DATE, SITE, COUNTRY_CODE, …
  */
-export interface Layout { site: boolean; country: boolean; core: boolean; filter: boolean }
+/** metrics: full = as 6 de sempre · core = receita/impressões/cliques totais · adx = as mesmas só do Ad Exchange */
+export interface Layout { site: boolean; country: boolean; core: boolean; filter: boolean; adx?: boolean }
 const FULL: Layout = { site: true, country: true, core: false, filter: true };
+// 0.15.4: nas 5 redes do log de 06/11 TODOS os formatos com as métricas totais foram recusados; entram os de Ad Exchange
 export const KV_LAYOUTS: Layout[] = [
   FULL,
   { site: true, country: true, core: true, filter: true },
-  { site: true, country: false, core: false, filter: true },
-  { site: true, country: false, core: true, filter: true },
+  { site: true, country: true, core: true, filter: true, adx: true },
+  { site: true, country: false, core: true, filter: true, adx: true },
   { site: false, country: true, core: true, filter: true },
-  { site: false, country: false, core: true, filter: true },
-  { site: false, country: false, core: true, filter: false },
+  { site: false, country: true, core: true, filter: true, adx: true },
+  { site: false, country: false, core: true, filter: false, adx: true },
 ];
 const KV_LAYOUT_OK = new Map<string, number>();   // rede|key → formato aceito (até reiniciar a api)
+/** rede|key → quando todos os formatos foram recusados. Não tenta de novo por 12 h (evita ~30 chamadas e linhas de log por sync). */
+const KV_REFUSED = new Map<string, number>();
+const KV_RETRY_MS = 12 * 3600_000;
+/** Erro de "esta rede não aceita relatório por Key-values": a solução é configuração no Ad Manager, não código. */
+export class KvUnsupported extends SyncError {
+  constructor(public key: string, until: number) {
+    super('kv_unsupported', `o Ad Manager desta rede recusa relatório pelo key "${key}" com "Incluir valores nos relatórios" (REPORT_ERROR_CONSTRAINTS_INCOMPATIBILITY em todos os formatos). Para ler esse key, deixe-o como dimensão personalizada nesta rede (Inventário → Key-values → ${key} → Report on values: Custom dimension). Nova tentativa ${new Date(until).toISOString().slice(11, 16)} UTC`);
+  }
+}
 export const ALL = '__ALL__';
 const isConstraint = (e: unknown) => e instanceof SyncError && e.http === 400 && /CONSTRAINTS_INCOMPATIBILITY|INVALID_ARGUMENT|invalid as specified/i.test(`${e.body ?? ''} ${e.message}`);
 
 /** Relatório de Key-values com o primeiro formato que o Ad Manager aceitar nesta rede. */
 export async function runKvReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey: string) {
   const ck = `${network}|${kvKey}|${extra.join(',')}|${keys.length}`;
-  let last: unknown;
+  const refused = KV_REFUSED.get(`${network}|${kvKey}`);
+  if (refused && Date.now() - refused < KV_RETRY_MS) throw new KvUnsupported(kvKey, refused + KV_RETRY_MS);
   for (let i = KV_LAYOUT_OK.get(ck) ?? 0; i < KV_LAYOUTS.length; i++) {
     try {
-      const r = await runReport(network, token, from, to, keys, label, extra, kvKey, KV_LAYOUTS[i]);
+      const r = await runReportOnce(network, token, from, to, keys, label, extra, kvKey, KV_LAYOUTS[i]).catch(async (e) => {
+        if (isConstraint(e)) throw e;
+        return runReport(network, token, from, to, keys, label, extra, kvKey, KV_LAYOUTS[i]);   // erro de outro tipo: com as tentativas normais
+      });
       if (KV_LAYOUT_OK.get(ck) !== i) { KV_LAYOUT_OK.set(ck, i); if (i) logGam({ network, report: label, kvKey, accepted: KV_LAYOUTS[i] }); }
+      KV_REFUSED.delete(`${network}|${kvKey}`);
       return { rows: r.rows, layout: KV_LAYOUTS[i] };
-    } catch (e) { if (!isConstraint(e)) throw e; last = e; }
+    } catch (e) { if (!isConstraint(e)) throw e; }
   }
-  throw last;
+  // todos recusados: uma linha de log (não uma por formato) e pausa de 12 h para este key nesta rede
+  const now = Date.now();
+  KV_REFUSED.set(`${network}|${kvKey}`, now);
+  KV_LAYOUT_OK.delete(ck);
+  logGam({ network, report: label, kvKey, refusedAllFormats: KV_LAYOUTS.length, nextTry: new Date(now + KV_RETRY_MS).toISOString(), fix: `deixar ${kvKey} como dimensão personalizada nesta rede` });
+  throw new KvUnsupported(kvKey, now + KV_RETRY_MS);
 }
 
 /**
@@ -184,7 +205,8 @@ export function spreadByBase(rows: ReportRows, base: ReportRows): ReportRows {
 async function runReportOnce(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey?: string, layout: Layout = FULL) {
   const auth = { Authorization: `Bearer ${token}` };
   const dims = ['DATE', ...(layout.site ? ['SITE'] : []), ...(layout.country ? ['COUNTRY_CODE'] : []), ...extra, ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`), ...(kvKey ? ['KEY_VALUES_NAME'] : [])];
-  const metrics = layout.core ? ['REVENUE', 'IMPRESSIONS', 'CLICKS'] : ['REVENUE', 'IMPRESSIONS', 'AD_REQUESTS', 'RESPONSES_SERVED', 'CLICKS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS'];
+  const metrics = layout.adx ? ['AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_CLICKS']
+    : layout.core ? ['REVENUE', 'IMPRESSIONS', 'CLICKS'] : ['REVENUE', 'IMPRESSIONS', 'AD_REQUESTS', 'RESPONSES_SERVED', 'CLICKS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS'];
   // etapa em que falhou vai na mensagem: "criar relatório", "rodar relatório", "aguardar relatório", "baixar linhas"
   const step = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     try { return await fn(); } catch (e) {
@@ -363,7 +385,8 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const srcKv = reportsValues(srcAll) && !keys.some((k) => k.role === 'source') ? srcAll! : null;
   // relatórios de Key-values: só o caminho como dimensão personalizada (se houver), para casar com o balde do total
   let auxKeys = keys.filter((k) => k.role === 'path');
-  const tryUrlDim = !pathKey && !pathKv && !URL_DIM_UNSUPPORTED.has(net.external_id);
+  // URL_NAME: a API REST recusou em todas as redes ("Invalid value … URL_NAME"); só tenta com GAM_URL_DIM=on
+  const tryUrlDim = process.env.GAM_URL_DIM === 'on' && !pathKey && !pathKv && !URL_DIM_UNSUPPORTED.has(net.external_id);
   type Rows = Awaited<ReturnType<typeof runReport>>['rows'];
   const auxFail: string[] = [];
   const auxEst = new Set<string>();   // relatórios de Key-values aceitos só sem site/país (distribuídos pelo total)
@@ -401,7 +424,9 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     const aux = async (label: string, key: string, what: string) => {
       try { return await run(label, key); } catch (e) {
         if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
-        auxFail.push(`${what} (${key}) indisponível neste sync: ${(e as Error).message.slice(0, 160)}`);
+        auxFail.push(e instanceof KvUnsupported
+          ? `${what}: esta rede não aceita relatório pelo key ${key} com "Incluir valores nos relatórios" — no Ad Manager desta rede, deixe ${key} como dimensão personalizada (como nas outras redes)`
+          : `${what} (${key}) indisponível neste sync: ${(e as Error).message.slice(0, 160)}`);
         return [];
       }
     };
