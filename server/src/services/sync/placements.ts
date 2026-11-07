@@ -19,7 +19,7 @@
 import { config } from '../../config.js';
 import { q, tx } from '../../db.js';
 import { domainResolver, fxToUsd, setAccountStatus, statusFromError } from './common.js';
-import { attributeContent, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runReport, str } from './gam.js';
+import { ALL, attributeContent, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runKvReport, runReport, str } from './gam.js';
 import { ctx, gaql } from './googleAds.js';
 import { SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
@@ -181,7 +181,11 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
       const contentKey = all.find((k) => k.role === 'content')!;
       // sem dimensão personalizada: lê o utm_content pela dimensão nativa Key-values ({creative}_{placement})
       if (attributionMode(all) === 'keyvalues' && !(has('campaign') && has('placement'))) {
-        const { rows } = await runReport(net.external_id, token, w.from, w.to, [], 'pluto-placements-kv', [], contentKey.adTagName);
+        // 0.15.3: formato que a rede aceitar; sem SITE no relatório, só dá para usar quando a rede tem um site só
+        const { rows: raw, layout } = await runKvReport(net.external_id, token, w.from, w.to, [], 'pluto-placements-kv', [], contentKey.adTagName);
+        const netSites = layout.site ? [] : (await q<{ hostname: string }>('SELECT hostname FROM domains WHERE gam_account_id = $1 AND NOT is_technical', [net.id])).map((x) => x.hostname);
+        if (!layout.site && netSites.length !== 1) { notes.push(`${net.name}: o Ad Manager só aceitou o relatório de placements sem site e a rede tem ${netSites.length} sites; placements desta rede ficam sem receita`); continue; }
+        const rows = layout.site ? raw : raw.map((r) => ({ ...r, dimensionValues: r.dimensionValues.map((v, i) => (i === 1 && str(v) === ALL ? { stringValue: netSites[0] } : v)) }));
         const facts: PFact[] = [];
         let noPl = 0;
         for (const r of rows) {

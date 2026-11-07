@@ -87,32 +87,104 @@ type ReportRows = { dimensionValues: Val[]; metricValueGroups: { primaryValues: 
  *   3. cada falha vai para o log da api com a rede, o relatório, a etapa e a resposta da API.
  * A mensagem final diz em que etapa e em que dia falhou, para a tela de Integrações.
  */
-export async function runReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label = 'pluto-sync', extra: string[] = [], kvKey?: string): Promise<{ rows: ReportRows; dims: string[] }> {
+export async function runReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label = 'pluto-sync', extra: string[] = [], kvKey?: string, layout: Layout = FULL): Promise<{ rows: ReportRows; dims: string[] }> {
   try {
-    return await runReportOnce(network, token, from, to, keys, label, extra, kvKey);
+    return await runReportOnce(network, token, from, to, keys, label, extra, kvKey, layout);
   } catch (e) {
     const se = e instanceof SyncError ? e : null;
-    logGam({ network, report: label, from, to, kvKey: kvKey ?? null, extra, customKeys: keys.map((k) => k.adTagName), code: se?.code ?? 'erro', http: se?.http ?? null, message: (e as Error).message, body: se?.body ?? null });
+    logGam({ network, report: label, from, to, kvKey: kvKey ?? null, extra, customKeys: keys.map((k) => k.adTagName), layout: layout === FULL ? undefined : layout, code: se?.code ?? 'erro', http: se?.http ?? null, message: (e as Error).message, body: se?.body ?? null });
     if (se && (se.code === 'token' || se.code === 'permission' || se.code === 'not_connected')) throw e;
+    // 4xx (INVALID_ARGUMENT…) é o pedido que está errado: repetir em pedaços não muda nada
+    if (se?.http && se.http >= 400 && se.http < 500) throw e;
     const days = spanDays(from, to);
     if (days <= 1) throw e;
     // falha do relatório inteiro: se nem 1 dia funciona, o problema não é tamanho (repetir em pedaços só atrasaria)
-    try { await runReportOnce(network, token, to, to, keys, label, extra, kvKey); } catch (e2) {
+    try { await runReportOnce(network, token, to, to, keys, label, extra, kvKey, layout); } catch (e2) {
       logGam({ network, report: label, from: to, to, probe: true, message: (e2 as Error).message, body: e2 instanceof SyncError ? e2.body ?? null : null });
       throw e;
     }
     const half = Math.floor(days / 2);
     const mid = addDays(from, half - 1);
-    const a = await runReport(network, token, from, mid, keys, label, extra, kvKey);
-    const b = await runReport(network, token, addDays(mid, 1), to, keys, label, extra, kvKey);
+    const a = await runReport(network, token, from, mid, keys, label, extra, kvKey, layout);
+    const b = await runReport(network, token, addDays(mid, 1), to, keys, label, extra, kvKey, layout);
     return { rows: [...a.rows, ...b.rows], dims: a.dims };
   }
 }
 
-async function runReportOnce(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey?: string) {
+/**
+ * 0.15.3 · Formato do relatório. O Ad Manager recusa algumas combinações com a dimensão Key-values
+ * (REPORT_ERROR_CONSTRAINTS_INCOMPATIBILITY, "An error has occurred.") e a regra muda por rede. Então o relatório de
+ * Key-values tenta, nesta ordem, até um ser aceito (e a rede guarda o que funcionou):
+ *   site + país + 6 métricas → site + país + receita/impressões/cliques → site + 6 → site + 3 → país + 3 → só 3 → sem filtro.
+ * Sem site ou sem país, cada valor é distribuído entre os sites/países do relatório-base do mesmo dia pela proporção
+ * de cada um (estimativa; o total do dia é exato). Linhas sempre voltam no formato DATE, SITE, COUNTRY_CODE, …
+ */
+export interface Layout { site: boolean; country: boolean; core: boolean; filter: boolean }
+const FULL: Layout = { site: true, country: true, core: false, filter: true };
+export const KV_LAYOUTS: Layout[] = [
+  FULL,
+  { site: true, country: true, core: true, filter: true },
+  { site: true, country: false, core: false, filter: true },
+  { site: true, country: false, core: true, filter: true },
+  { site: false, country: true, core: true, filter: true },
+  { site: false, country: false, core: true, filter: true },
+  { site: false, country: false, core: true, filter: false },
+];
+const KV_LAYOUT_OK = new Map<string, number>();   // rede|key → formato aceito (até reiniciar a api)
+export const ALL = '__ALL__';
+const isConstraint = (e: unknown) => e instanceof SyncError && e.http === 400 && /CONSTRAINTS_INCOMPATIBILITY|INVALID_ARGUMENT|invalid as specified/i.test(`${e.body ?? ''} ${e.message}`);
+
+/** Relatório de Key-values com o primeiro formato que o Ad Manager aceitar nesta rede. */
+export async function runKvReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey: string) {
+  const ck = `${network}|${kvKey}|${extra.join(',')}|${keys.length}`;
+  let last: unknown;
+  for (let i = KV_LAYOUT_OK.get(ck) ?? 0; i < KV_LAYOUTS.length; i++) {
+    try {
+      const r = await runReport(network, token, from, to, keys, label, extra, kvKey, KV_LAYOUTS[i]);
+      if (KV_LAYOUT_OK.get(ck) !== i) { KV_LAYOUT_OK.set(ck, i); if (i) logGam({ network, report: label, kvKey, accepted: KV_LAYOUTS[i] }); }
+      return { rows: r.rows, layout: KV_LAYOUTS[i] };
+    } catch (e) { if (!isConstraint(e)) throw e; last = e; }
+  }
+  throw last;
+}
+
+/**
+ * Linhas de um relatório sem site e/ou sem país → linhas por site e país, repartindo cada métrica pela proporção
+ * do relatório-base (mesmo dia; e mesmo site/país quando o relatório os tem). Sem base no dia, a linha é descartada.
+ */
+export function spreadByBase(rows: ReportRows, base: ReportRows): ReportRows {
+  const agg = new Map<string, { site: Val; country: Val; m: number[] }>();
+  const byDay = new Map<string, string[]>();
+  for (const r of base) {
+    const d = r.dimensionValues;
+    const k = `${str(d[0])}|${str(d[1])}|${str(d[2])}`;
+    let x = agg.get(k);
+    if (!x) { x = { site: d[1], country: d[2], m: [0, 0, 0, 0, 0, 0] }; agg.set(k, x); byDay.set(str(d[0]), [...(byDay.get(str(d[0])) ?? []), k]); }
+    const mv = r.metricValueGroups?.[0]?.primaryValues ?? [];
+    for (let i = 0; i < 6; i++) x.m[i] += num(mv[i]);
+  }
+  const out: ReportRows = [];
+  for (const r of rows) {
+    const d = r.dimensionValues;
+    const site = str(d[1]), country = str(d[2]);
+    if (site !== ALL && country !== ALL) { out.push(r); continue; }
+    const keys = (byDay.get(str(d[0])) ?? []).filter((k) => { const [, s2, c2] = k.split('|'); return (site === ALL || s2 === site) && (country === ALL || c2 === country); });
+    if (!keys.length) continue;
+    const mv = (r.metricValueGroups?.[0]?.primaryValues ?? []).map(num);
+    const tot = [0, 1, 2, 3, 4, 5].map((i) => keys.reduce((a, k) => a + agg.get(k)!.m[i], 0));
+    for (const k of keys) {
+      const b = agg.get(k)!;
+      const share = (i: number) => (tot[i] > 0 ? b.m[i] / tot[i] : tot[0] > 0 ? b.m[0] / tot[0] : 1 / keys.length);
+      out.push({ dimensionValues: [d[0], b.site, b.country, ...d.slice(3)], metricValueGroups: [{ primaryValues: mv.map((v, i) => ({ doubleValue: v * share(i) }) as Val) }] });
+    }
+  }
+  return out;
+}
+
+async function runReportOnce(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey?: string, layout: Layout = FULL) {
   const auth = { Authorization: `Bearer ${token}` };
-  const dims = ['DATE', 'SITE', 'COUNTRY_CODE', ...extra, ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`), ...(kvKey ? ['KEY_VALUES_NAME'] : [])];
-  const metrics = ['REVENUE', 'IMPRESSIONS', 'AD_REQUESTS', 'RESPONSES_SERVED', 'CLICKS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS'];
+  const dims = ['DATE', ...(layout.site ? ['SITE'] : []), ...(layout.country ? ['COUNTRY_CODE'] : []), ...extra, ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`), ...(kvKey ? ['KEY_VALUES_NAME'] : [])];
+  const metrics = layout.core ? ['REVENUE', 'IMPRESSIONS', 'CLICKS'] : ['REVENUE', 'IMPRESSIONS', 'AD_REQUESTS', 'RESPONSES_SERVED', 'CLICKS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS'];
   // etapa em que falhou vai na mensagem: "criar relatório", "rodar relatório", "aguardar relatório", "baixar linhas"
   const step = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     try { return await fn(); } catch (e) {
@@ -130,7 +202,7 @@ async function runReportOnce(network: string, token: string, from: string, to: s
         dateRange: { fixed: { startDate: date(from), endDate: date(to) } },
         ...(keys.length ? { customDimensionKeyIds: keys.map((k) => k.id) } : {}),
         // só as linhas do key pedido; o prefixo exato "key=" é conferido de novo em kvValue()
-        ...(kvKey ? { filters: [{ fieldFilter: { field: { dimension: 'KEY_VALUES_NAME' }, operation: 'CONTAINS', values: [{ stringValue: `${kvKey}=` }] } }] } : {}),
+        ...(kvKey && layout.filter ? { filters: [{ fieldFilter: { field: { dimension: 'KEY_VALUES_NAME' }, operation: 'CONTAINS', values: [{ stringValue: `${kvKey}=` }] } }] } : {}),
       },
     },
   }));
@@ -159,6 +231,15 @@ async function runReportOnce(network: string, token: string, from: string, to: s
     rows.push(...(j.rows ?? []));
     pageToken = j.nextPageToken || undefined;
   } while (pageToken);
+  // formato reduzido → volta ao padrão DATE, SITE, COUNTRY_CODE, … e 6 métricas (as que faltam = 0)
+  if (layout !== FULL) {
+    for (const r of rows) {
+      const d = r.dimensionValues;
+      const rest = d.slice(1 + (layout.site ? 1 : 0) + (layout.country ? 1 : 0));
+      r.dimensionValues = [d[0], layout.site ? d[1] : { stringValue: ALL }, layout.country ? d[layout.site ? 2 : 1] : { stringValue: ALL }, ...rest];
+      if (layout.core) { const m = r.metricValueGroups?.[0]?.primaryValues ?? []; r.metricValueGroups = [{ primaryValues: [m[0], m[1], { intValue: '0' }, { intValue: '0' }, m[2], { intValue: '0' }] as Val[] }]; }
+    }
+  }
   return { rows, dims };
 }
 
@@ -285,8 +366,25 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const tryUrlDim = !pathKey && !pathKv && !URL_DIM_UNSUPPORTED.has(net.external_id);
   type Rows = Awaited<ReturnType<typeof runReport>>['rows'];
   const auxFail: string[] = [];
+  const auxEst = new Set<string>();   // relatórios de Key-values aceitos só sem site/país (distribuídos pelo total)
   const both = async (extra: string[]) => {
-    const run = (label: string, kv?: string) => runReport(net.external_id, token, w.from, w.to, kv ? auxKeys : keys, label, extra, kv).then((r) => r.rows);
+    const run = (label: string, kv?: string) => kv
+      ? runKvReport(net.external_id, token, w.from, w.to, auxKeys, label, extra, kv).then(async (r) => {
+        if (r.layout.site && r.layout.country) return r.rows;
+        auxEst.add(label);
+        // utm_content sem SITE: a campanha já diz o site (domínio da campanha) → só o país é estimado
+        if (!r.layout.site && kv === contentKey.adTagName) {
+          const campHost = new Map((await q<{ id: string; host: string }>('SELECT c.id::text, d.hostname AS host FROM campaigns c JOIN domains d ON d.id = c.domain_id WHERE d.gam_account_id = $1', [net.id])).map((x) => [x.id, x.host]));
+          for (const row of r.rows) {
+            const content = kvValue(str(row.dimensionValues[row.dimensionValues.length - 1]), kv);
+            const a = content ? attributeContent(idx, content) : null;
+            const host = a && !('reason' in a) ? campHost.get(a.campaignId) : undefined;
+            if (host) row.dimensionValues[1] = { stringValue: host };
+          }
+        }
+        return spreadByBase(r.rows, base ?? []);
+      })
+      : runReport(net.external_id, token, w.from, w.to, keys, label, extra).then((r) => r.rows);
     // 0.15.2: se o relatório-base falhar com as dimensões personalizadas, tenta só com utm_campaign/utm_content e,
     // por fim, sem nenhuma (o total do site entra; a atribuição cai para o relatório de Key-values ou fica "sem campanha")
     let base: Rows | null = null;
@@ -495,6 +593,7 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     : '';
   const warn = [
     ...auxFail,
+    auxEst.size ? `o Ad Manager só aceitou ${[...auxEst].map((l) => l.replace('pluto-sync-', '').replace('kv', 'utm_content').replace('source', 'utm_source').replace('path', 'page_path')).join(', ')} sem site/país: valores distribuídos pela receita de cada site e país do dia (estimativa)` : '',
     missing.length ? `key-values fora dos relatórios no Ad Manager: ${missing.map((k) => k.adTagName).join(', ')} (Inventário → Key-values → ${contentKey.adTagName} → "Incluir valores nos relatórios")` : '',
     noKv,
     noSite.rows ? `${noSite.rows} linhas sem site ignoradas (${usd(noSite.revenue)})` : '',
