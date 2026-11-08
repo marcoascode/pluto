@@ -40,7 +40,9 @@ export const date = (iso: string) => { const [year, month, day] = iso.split('-')
 export const EMPTY = /^(\(?not set\)?|\(?none\)?|-|n\/a|unknown|\(not applicable\))?$/i;
 
 /** reportable: "Report on values" do key no Ad Manager. ON = incluir valores nos relatórios; CUSTOM_DIMENSION = dimensão personalizada. */
-export interface KeyInfo { role: 'campaign' | 'content' | 'source' | 'path' | 'placement'; adTagName: string; id: string | null; usable: boolean; reportable: string | null }
+export interface KeyInfo { role: 'campaign' | 'content' | 'source' | 'path' | 'placement'; adTagName: string; id: string | null; usable: boolean; reportable: string | null;
+  /** 0.16: pedir como dimensão de Key-values aprimorada (EKV_DIMENSION_n_VALUE) em vez de dimensão personalizada */
+  ekv?: boolean }
 
 /** Procura os ids dos key-values pelo nome usado na tag (adTagName). usable = está como "Custom dimension" (CUSTOM_DIMENSION_n). */
 export async function resolveKeys(network: string, token: string, wanted: [KeyInfo['role'], string][] = Object.entries(config.gamKeys).filter(([, v]) => v) as [KeyInfo['role'], string][]): Promise<KeyInfo[]> {
@@ -136,10 +138,14 @@ const KV_LAYOUT_OK = new Map<string, number>();   // rede|key → formato aceito
 /** rede|key → quando todos os formatos foram recusados. Não tenta de novo por 12 h (evita ~30 chamadas e linhas de log por sync). */
 const KV_REFUSED = new Map<string, number>();
 const KV_RETRY_MS = 12 * 3600_000;
+/** rede → quando o relatório com Key-values aprimorados (EKV) foi recusado (key não marcado como EKV) */
+const EKV_REFUSED = new Map<string, number>();
+export const ekvRefused = (net: string) => EKV_REFUSED_UNTIL(net) > 0;
+const EKV_REFUSED_UNTIL = (net: string) => { const t = EKV_REFUSED.get(net); return t && Date.now() - t < KV_RETRY_MS ? t + KV_RETRY_MS : 0; };
 /** Erro de "esta rede não aceita relatório por Key-values": a solução é configuração no Ad Manager, não código. */
 export class KvUnsupported extends SyncError {
   constructor(public key: string, until: number) {
-    super('kv_unsupported', `o Ad Manager desta rede recusa relatório pelo key "${key}" com "Incluir valores nos relatórios" (REPORT_ERROR_CONSTRAINTS_INCOMPATIBILITY em todos os formatos). Para ler esse key, deixe-o como dimensão personalizada nesta rede (Inventário → Key-values → ${key} → Report on values: Custom dimension). Nova tentativa ${new Date(until).toISOString().slice(11, 16)} UTC`);
+    super('kv_unsupported', `o Ad Manager desta rede recusa relatório pelo key "${key}" só com "Incluir valores nos relatórios" (REPORT_ERROR_CONSTRAINTS_INCOMPATIBILITY em todos os formatos). Marque o key como "Key-values aprimorados" (Enhanced key-values: até 100.000 valores) nesta rede. Nova tentativa ${new Date(until).toISOString().slice(11, 16)} UTC`);
   }
 }
 export const ALL = '__ALL__';
@@ -165,7 +171,7 @@ export async function runKvReport(network: string, token: string, from: string, 
   const now = Date.now();
   KV_REFUSED.set(`${network}|${kvKey}`, now);
   KV_LAYOUT_OK.delete(ck);
-  logGam({ network, report: label, kvKey, refusedAllFormats: KV_LAYOUTS.length, nextTry: new Date(now + KV_RETRY_MS).toISOString(), fix: `deixar ${kvKey} como dimensão personalizada nesta rede` });
+  logGam({ network, report: label, kvKey, refusedAllFormats: KV_LAYOUTS.length, nextTry: new Date(now + KV_RETRY_MS).toISOString(), fix: `marcar ${kvKey} como Key-values aprimorados (EKV) nesta rede` });
   throw new KvUnsupported(kvKey, now + KV_RETRY_MS);
 }
 
@@ -204,7 +210,11 @@ export function spreadByBase(rows: ReportRows, base: ReportRows): ReportRows {
 
 async function runReportOnce(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey?: string, layout: Layout = FULL) {
   const auth = { Authorization: `Bearer ${token}` };
-  const dims = ['DATE', ...(layout.site ? ['SITE'] : []), ...(layout.country ? ['COUNTRY_CODE'] : []), ...extra, ...keys.map((_, i) => `CUSTOM_DIMENSION_${i}_VALUE`), ...(kvKey ? ['KEY_VALUES_NAME'] : [])];
+  // dimensão personalizada (CUSTOM_DIMENSION_n) ou Key-values aprimorada (EKV_DIMENSION_n), na ordem de keys
+  let ci = 0, ei = 0;
+  const keyDims = keys.map((k) => (k.ekv ? `EKV_DIMENSION_${ei++}_VALUE` : `CUSTOM_DIMENSION_${ci++}_VALUE`));
+  const cdIds = keys.filter((k) => !k.ekv).map((k) => k.id), ekvIds = keys.filter((k) => k.ekv).map((k) => k.id);
+  const dims = ['DATE', ...(layout.site ? ['SITE'] : []), ...(layout.country ? ['COUNTRY_CODE'] : []), ...extra, ...keyDims, ...(kvKey ? ['KEY_VALUES_NAME'] : [])];
   const metrics = layout.adx ? ['AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_CLICKS']
     : layout.core ? ['REVENUE', 'IMPRESSIONS', 'CLICKS'] : ['REVENUE', 'IMPRESSIONS', 'AD_REQUESTS', 'RESPONSES_SERVED', 'CLICKS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS'];
   // etapa em que falhou vai na mensagem: "criar relatório", "rodar relatório", "aguardar relatório", "baixar linhas"
@@ -222,7 +232,8 @@ async function runReportOnce(network: string, token: string, from: string, to: s
       reportDefinition: {
         dimensions: dims, metrics, reportType: 'HISTORICAL', currencyCode: 'USD',
         dateRange: { fixed: { startDate: date(from), endDate: date(to) } },
-        ...(keys.length ? { customDimensionKeyIds: keys.map((k) => k.id) } : {}),
+        ...(cdIds.length ? { customDimensionKeyIds: cdIds } : {}),
+        ...(ekvIds.length ? { ekvDimensionKeyIds: ekvIds } : {}),
         // só as linhas do key pedido; o prefixo exato "key=" é conferido de novo em kvValue()
         ...(kvKey && layout.filter ? { filters: [{ fieldFilter: { field: { dimension: 'KEY_VALUES_NAME' }, operation: 'CONTAINS', values: [{ stringValue: `${kvKey}=` }] } }] } : {}),
       },
@@ -362,12 +373,12 @@ export function attributionMode(all: KeyInfo[]): 'dimension' | 'keyvalues' {
 async function runNetwork(net: { id: string; external_id: string; name: string }, token: string, w: { from: string; to: string }, isFinal: boolean,
   dom: Resolver, idx: Index, url: ReturnType<typeof urlCache>) {
   const all = await resolveKeys(net.external_id, token);
-  const mode = attributionMode(all);
+  let mode = attributionMode(all);
   const contentKey = all.find((k) => k.role === 'content')!;
   // modo keyvalues: o relatório-base não leva utm_campaign/utm_content/utm_source (senão o total do site sairia picado
   // por eles); só o caminho da página, se ele estiver como dimensão personalizada.
   let keys = all.filter((k) => k.usable && (mode === 'dimension' || k.role === 'path'));
-  const missing = mode === 'keyvalues' ? [] : all.filter((k) => !k.usable && (k.role === 'campaign' || k.role === 'content'));   // source e path são opcionais
+  const missingOf = () => (mode === 'keyvalues' ? [] : all.filter((k) => !k.usable && !ekvUsed.some((e) => e.role === k.role) && (k.role === 'campaign' || k.role === 'content')));   // source e path são opcionais
   /*
    * URL da página (slug) para a tela URLs, nesta ordem:
    *  1. key-value do caminho (GAM_KEY_PATH, padrão page_path) como dimensão personalizada: o caminho exato;
@@ -381,8 +392,17 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   // personalizada o utm_source era ignorado e a retenção nunca aparecia).
   const reportsValues = (k?: KeyInfo) => !!k?.id && (k.reportable === 'ON' || k.reportable === 'CUSTOM_DIMENSION');
   const pathAll = all.find((k) => k.role === 'path'), srcAll = all.find((k) => k.role === 'source');
-  const pathKv = !pathKey && reportsValues(pathAll) ? pathAll! : null;
-  const srcKv = reportsValues(srcAll) && !keys.some((k) => k.role === 'source') ? srcAll! : null;
+  let pathKv = !pathKey && reportsValues(pathAll) ? pathAll! : null;
+  let srcKv = reportsValues(srcAll) && !keys.some((k) => k.role === 'source') ? srcAll! : null;
+  /*
+   * 0.16 · Key-values aprimorados (Enhanced key-values, EKV): até 200 keys e 100.000 valores por key (a dimensão
+   * personalizada para em 5.000) e entram no mesmo relatório do total, como dimensão → valores exatos por site,
+   * país e campanha, sem a dimensão "Key-values" (recusada pela API nessas redes). No Ad Manager: key → "Adicionar
+   * key como dimensão de Key-values aprimorados". A API não diz quais keys estão marcados; então tentamos: se o
+   * Ad Manager recusar, a rede fica 12 h sem tentar EKV e segue como antes.
+   */
+  const ekvKeys = EKV_REFUSED_UNTIL(net.external_id) ? [] : all.filter((k) => k.id && !k.usable && ['campaign', 'content', 'source', 'path'].includes(k.role)).map((k) => ({ ...k, ekv: true }));
+  let ekvUsed: KeyInfo[] = [];
   // relatórios de Key-values: só o caminho como dimensão personalizada (se houver), para casar com o balde do total
   let auxKeys = keys.filter((k) => k.role === 'path');
   // URL_NAME: a API REST recusou em todas as redes ("Invalid value … URL_NAME"); só tenta com GAM_URL_DIM=on
@@ -411,7 +431,25 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     // 0.15.2: se o relatório-base falhar com as dimensões personalizadas, tenta só com utm_campaign/utm_content e,
     // por fim, sem nenhuma (o total do site entra; a atribuição cai para o relatório de Key-values ou fica "sem campanha")
     let base: Rows | null = null;
-    const tries = [keys, keys.filter((k) => k.role === 'campaign' || k.role === 'content'), []].filter((ks, i, arr) => i === 0 || ks.length < arr[i - 1].length);
+    if (ekvKeys.length) {
+      const withEkv = [...keys.filter((k) => !(mode === 'keyvalues' && k.role !== 'path')), ...ekvKeys];
+      try {
+        const saved = keys; keys = withEkv;
+        base = await run('pluto-sync').catch((e) => { keys = saved; throw e; });
+        ekvUsed = ekvKeys;
+        // com utm_campaign/utm_content no relatório-base, o processamento é o de dimensão (exato); os relatórios
+        // de Key-values desses keys não são mais necessários
+        if (ekvKeys.some((k) => k.role === 'campaign') || ekvKeys.some((k) => k.role === 'content')) mode = 'dimension';
+        if (ekvKeys.some((k) => k.role === 'source')) srcKv = null;
+        if (ekvKeys.some((k) => k.role === 'path')) pathKv = null;
+        logGam({ network: net.external_id, report: 'pluto-sync', ekvAccepted: ekvKeys.map((k) => k.adTagName) });
+      } catch (e) {
+        if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
+        EKV_REFUSED.set(net.external_id, Date.now());
+        logGam({ network: net.external_id, report: 'pluto-sync', ekvRefused: ekvKeys.map((k) => k.adTagName), message: (e as Error).message.slice(0, 300), nextTry: new Date(Date.now() + KV_RETRY_MS).toISOString() });
+      }
+    }
+    const tries = base ? [] : [keys, keys.filter((k) => k.role === 'campaign' || k.role === 'content'), []].filter((ks, i, arr) => i === 0 || ks.length < arr[i - 1].length);
     for (let i = 0; i < tries.length && !base; i++) {
       try { keys = tries[i]; base = await run('pluto-sync'); } catch (e) {
         if (i === tries.length - 1 || (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code))) throw e;
@@ -425,7 +463,7 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
       try { return await run(label, key); } catch (e) {
         if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
         auxFail.push(e instanceof KvUnsupported
-          ? `${what}: esta rede não aceita relatório pelo key ${key} com "Incluir valores nos relatórios" — no Ad Manager desta rede, deixe ${key} como dimensão personalizada (como nas outras redes)`
+          ? `${what}: esta rede não aceita relatório pelo key ${key} só com "Incluir valores nos relatórios". No Ad Manager desta rede, marque ${key} como "Key-values aprimorados" (até 100.000 valores; sem o limite de 5.000 da dimensão personalizada)`
           : `${what} (${key}) indisponível neste sync: ${(e as Error).message.slice(0, 160)}`);
         return [];
       }
@@ -502,7 +540,11 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
       const source = iSource >= 0 ? str(d[iSource]).toLowerCase() : '';
       let platform: 'google' | 'meta' | 'none' = 'none', reason: string | null = null;
       let campaignId: string | null = null, adGroupId: string | null = null, adId: string | null = null;
-      if (iCamp < 0) reason = 'gam_kv_not_configured';
+      if (iCamp < 0 && iContent >= 0 && !domain.pending && !EMPTY.test(content) && !/[{}]/.test(content)) {
+        // só utm_content no relatório (ex.: só ele marcado como EKV): a campanha sai do próprio utm_content
+        const a = attributeContent(idx, content);
+        if ('reason' in a) reason = a.reason; else ({ platform, campaignId, adGroupId, adId } = a);
+      } else if (iCamp < 0) reason = 'gam_kv_not_configured';
       else if (domain.pending) reason = 'unknown_domain';
       else if (EMPTY.test(campVal)) reason = 'missing_campaign_id';
       else if (/[{}]/.test(campVal) || /[{}]/.test(content)) reason = 'invalid_utm';
@@ -619,21 +661,22 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   const warn = [
     ...auxFail,
     auxEst.size ? `o Ad Manager só aceitou ${[...auxEst].map((l) => l.replace('pluto-sync-', '').replace('kv', 'utm_content').replace('source', 'utm_source').replace('path', 'page_path')).join(', ')} sem site/país: valores distribuídos pela receita de cada site e país do dia (estimativa)` : '',
-    missing.length ? `key-values fora dos relatórios no Ad Manager: ${missing.map((k) => k.adTagName).join(', ')} (Inventário → Key-values → ${contentKey.adTagName} → "Incluir valores nos relatórios")` : '',
+    missingOf().length ? `key-values fora dos relatórios no Ad Manager: ${missingOf().map((k) => k.adTagName).join(', ')} (Inventário → Key-values → ${contentKey.adTagName} → "Incluir valores nos relatórios")` : '',
     noKv,
     noSite.rows ? `${noSite.rows} linhas sem site ignoradas (${usd(noSite.revenue)})` : '',
     unlinked.size ? `${sum(unlinked)} linhas de sites sem rede ligada ignoradas (${usd(rev(unlinked))}): ${sites(unlinked)}. Ligue cada site a esta rede em Domínios` : '',
     otherNet.size ? `${sum(otherNet)} linhas de sites ligados a outra rede ignoradas (${usd(rev(otherNet))}): ${sites(otherNet)}. Se o site é desta rede, troque a rede em Domínios` : '',
   ].filter(Boolean).join(' · ');
   // URL é informativo (não deixa a rede amarela): sem caminho, a tela URLs mostra "(sem URL)"
-  const urlNote = !pathKey && !pathKv && !urlDim && config.gamKeys.path
-    ? `URLs: sem o key-value "${config.gamKeys.path}" nos relatórios a receita fica em "(sem URL)". O site manda googletag.pubads().setTargeting('${config.gamKeys.path}', location.pathname) e o key fica com "Incluir valores nos relatórios"`
+  const urlNote = !keys.some((k) => k.role === 'path') && !pathKv && !urlDim && config.gamKeys.path
+    ? `URLs: sem o key-value "${config.gamKeys.path}" nos relatórios a receita fica em "(sem URL)". O site manda googletag.pubads().setTargeting('${config.gamKeys.path}', location.pathname) e o key fica marcado como Key-values aprimorados`
     : '';
   const modeNote = [
-    mode === 'keyvalues' ? `atribuição pelo key-value ${contentKey.adTagName} (sem dimensão personalizada)` : 'atribuição por dimensão personalizada',
+    ekvUsed.length ? `Key-values aprimorados (EKV): ${ekvUsed.map((k) => k.adTagName).join(', ')}`
+      : mode === 'keyvalues' ? `atribuição pelo key-value ${contentKey.adTagName} (sem dimensão personalizada)` : 'atribuição por dimensão personalizada',
     pathKv ? `URLs por ${pathKv.adTagName}` : '',
     srcKv ? `retenção por ${srcKv.adTagName} (${retentionRows} linhas de push/whatsapp/outros)`
-      : keys.some((k) => k.role === 'source') ? `retenção por ${config.gamKeys.source} (dimensão)`
+      : keys.some((k) => k.role === 'source') ? `retenção por ${config.gamKeys.source} (${ekvUsed.some((k) => k.role === 'source') ? 'EKV' : 'dimensão'})`
       : config.gamKeys.source ? `retenção: key "${config.gamKeys.source}" não encontrado nos relatórios do Ad Manager` : '',
   ].filter(Boolean).join(' · ');
   await setAccountStatus(net.id, warn ? 'warn' : 'ok', [warn, modeNote, urlNote].filter(Boolean).join(' · ') || null);

@@ -19,7 +19,7 @@
 import { config } from '../../config.js';
 import { q, tx } from '../../db.js';
 import { domainResolver, fxToUsd, setAccountStatus, statusFromError } from './common.js';
-import { ALL, attributeContent, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runKvReport, runReport, str } from './gam.js';
+import { ALL, attributeContent, ekvRefused, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runKvReport, runReport, str } from './gam.js';
 import { ctx, gaql } from './googleAds.js';
 import { SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
@@ -181,8 +181,15 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
       const contentKey = all.find((k) => k.role === 'content')!;
       // sem dimensão personalizada: lê o utm_content pela dimensão nativa Key-values ({creative}_{placement})
       if (attributionMode(all) === 'keyvalues' && !(has('campaign') && has('placement'))) {
-        // 0.15.3: formato que a rede aceitar; sem SITE no relatório, só dá para usar quando a rede tem um site só
-        const { rows: raw, layout } = await runKvReport(net.external_id, token, w.from, w.to, [], 'pluto-placements-kv', [], contentKey.adTagName);
+        // 0.16: primeiro como Key-values aprimorados (EKV: exato, até 100.000 valores); se a rede recusar,
+        // 0.15.3: dimensão Key-values no formato que a rede aceitar (sem SITE, só com um site na rede)
+        let ekv = false;
+        let got: { rows: Awaited<ReturnType<typeof runKvReport>>['rows']; layout: Awaited<ReturnType<typeof runKvReport>>['layout'] } | null = null;
+        if (contentKey.id && !ekvRefused(net.external_id)) {
+          try { got = { rows: (await runReport(net.external_id, token, w.from, w.to, [{ ...contentKey, ekv: true }], 'pluto-placements-ekv')).rows, layout: { site: true, country: true, core: false, filter: false } }; ekv = true; }
+          catch (e) { if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e; }
+        }
+        const { rows: raw, layout } = got ?? await runKvReport(net.external_id, token, w.from, w.to, [], 'pluto-placements-kv', [], contentKey.adTagName);
         const netSites = layout.site ? [] : (await q<{ hostname: string }>('SELECT hostname FROM domains WHERE gam_account_id = $1 AND NOT is_technical', [net.id])).map((x) => x.hostname);
         if (!layout.site && netSites.length !== 1) { notes.push(`${net.name}: o Ad Manager só aceitou o relatório de placements sem site e a rede tem ${netSites.length} sites; placements desta rede ficam sem receita`); continue; }
         const rows = layout.site ? raw : raw.map((r) => ({ ...r, dimensionValues: r.dimensionValues.map((v, i) => (i === 1 && str(v) === ALL ? { stringValue: netSites[0] } : v)) }));
@@ -192,7 +199,7 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
           const d = r.dimensionValues; const m = r.metricValueGroups?.[0]?.primaryValues ?? [];
           const day = isoDate(d[0]); const site = str(d[1]);
           if (!day || !site || EMPTY.test(site)) continue;
-          const content = kvValue(str(d[3]), contentKey.adTagName);
+          const content = ekv ? str(d[3]).trim() : kvValue(str(d[3]), contentKey.adTagName);
           if (!content) continue;
           const a = attributeContent(idx, content);
           // placement só existe no formato do dash antigo; se o {creative} não foi achado, usa o resto do valor do mesmo jeito

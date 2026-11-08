@@ -64,7 +64,7 @@ export default function UrlsPage() {
               <Alert severity="info" variant="outlined">
                 <b>{pct0(noPath.share)} da receita está em "(sem URL)".</b> O Ad Manager só entrega a slug da página se o site mandar o caminho no GPT:{' '}
                 <Box component="code" sx={{ fontFamily: 'IBM Plex Mono', fontSize: 12 }}>googletag.pubads().setTargeting('page_path', location.pathname)</Box>{' '}
-                e, no Ad Manager, o key <b>page_path</b> estiver com <b>"Incluir valores nos relatórios"</b> (Inventário → Key-values). Não precisa de dimensão personalizada. Depois, sincronize o Ad Manager: a receita de cada slug aparece aqui junto com o custo das campanhas que levam para ela.
+                e, no Ad Manager, o key <b>page_path</b> estiver marcado como <b>Key-values aprimorados</b> (Inventário → Key-values). Não precisa de dimensão personalizada. Depois, sincronize o Ad Manager: a receita de cada slug aparece aqui junto com o custo das campanhas que levam para ela.
               </Alert>
             </Grid>
           )}

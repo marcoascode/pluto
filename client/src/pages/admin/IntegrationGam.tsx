@@ -39,12 +39,12 @@ export default function IntegrationGamPage() {
       </Card>
       <AccountsCard provider="gam" title="Redes do Ad Manager" />
       <Alert severity="info" variant="outlined" sx={{ mt: 1.75 }}>
-        Para a receita entrar por campanha, o site manda no GPT os key-values <b>utm_campaign</b> e <b>utm_content</b> (os mesmos da URL do anúncio).
-        No Ad Manager basta deixar esses keys com <b>“Incluir valores nos relatórios”</b> (Inventário → Key-values → Report on values), como na Publeno:
-        <b>não precisa de dimensão personalizada</b> e não há limite de valores. O dash lê o <b>utm_content</b> pela dimensão “Key-values” e acha a campanha
-        pelo {'{creative}'} (formato <b>{'{creative}_{placement}'}</b>) ou pelo grupo ({'{adgroupid}_{creative}'}). O placement do utm_content vai para a tela <b>Placements</b>.
-        Com <b>page_path</b> (caminho da página) a receita vai para cada URL; com <b>utm_source</b> a receita de retenção aparece separada (Push = pushalert ou …push · WhatsApp = …wpp ou …whatsapp).
-        Os dois também só precisam de “Incluir valores nos relatórios”. Receita sem esses key-values (orgânico, direto) fica como “não atribuída” no site.
+        Para a receita entrar por campanha, o site manda no GPT os key-values <b>utm_campaign</b>, <b>utm_content</b>, <b>utm_source</b> e <b>page_path</b>.
+        No Ad Manager (Inventário → Key-values), marque cada um como <b>“Key-values aprimorados”</b> (Enhanced key-values): até <b>100.000 valores por key</b>,
+        sem o limite de 5.000 da dimensão personalizada. O dash pede esses keys no mesmo relatório da receita, então campanha, retenção (Push = pushalert ou …push ·
+        WhatsApp = …wpp ou …whatsapp) e URL saem exatos por site e país. A campanha é achada pelo {'{creative}'} (formato <b>{'{creative}_{placement}'}</b>) ou pelo grupo;
+        o placement do utm_content vai para a tela <b>Placements</b>. Keys como dimensão personalizada continuam funcionando.
+        Receita sem esses key-values (orgânico, direto) fica como “não atribuída” no site.
       </Alert>
       <SyncPanel provider="gam" />{snack}
     </>
