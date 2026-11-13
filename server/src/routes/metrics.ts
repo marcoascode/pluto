@@ -253,7 +253,7 @@ const ISSUES: Record<string, [string, string, string]> = {
   unknown_domain: ['Domínio não identificado', 'Receita de um site que não está cadastrado.', 'Cadastrar o domínio em Configurações → Domínios.'],
   campaign_not_found: ['Campanha não localizada', 'O Campaign ID não existe nas contas importadas.', 'Importar a conta dona da campanha na MCC.'],
   meta_ad_not_found: ['Meta Ad não localizado', 'O Ad ID não está nas contas Meta conectadas.', 'Reconectar a conta Meta e conferir {{ad.id}}.'],
-  gads_creative_not_found: ['Google Ads Creative não localizado', 'O Creative ID (no formato antigo, o utm_campaign={creative}) não tem correspondência nas contas importadas.', 'Conferir se a conta do Google Ads está conectada e rodar o sync de estrutura.'],
+  gads_creative_not_found: ['Anúncio não localizado', 'O ID do anúncio (no formato antigo, utm_campaign={creative} no Google ou {{ad.id}} na Meta) não tem correspondência nas contas importadas.', 'Conferir se a conta do Google Ads está conectada e rodar o sync de estrutura.'],
   gam_kv_not_configured: ['Key-values fora dos relatórios do Ad Manager', 'O Ad Manager não está devolvendo o utm_content no relatório.', 'No Ad Manager: Inventário → Key-values → utm_content (e utm_campaign) → "Incluir valores nos relatórios". Não precisa de dimensão personalizada.'],
 };
 metricsRouter.get('/attribution/health', requireCap('attribution.view'), async (req, res) => {
@@ -317,18 +317,23 @@ metricsRouter.post('/utm/debug', requireCap('utm.debug'), async (req, res) => {
   checks.push(dom ? { level: dom.active ? 'ok' : 'warn', message: dom.active ? `Domínio cadastrado: ${dom.hostname}` : `Domínio ${dom.hostname} está inativo` } : { level: 'error', message: `Domínio não identificado: ${host}` });
   Object.entries(qs).filter(([, v]) => /[{}]/.test(v)).forEach(([k, v]) => checks.push({ level: 'error', message: `Macro não substituída em ${k}`, detail: `Valor "${v}".` }));
   const [p1, p2] = (qs.utm_content ?? '').split('_');
-  // formato do dash antigo (Google Ads): utm_campaign={creative} e utm_content={creative}_{placement}
-  const legacy = !isMeta && !!qs.utm_campaign && okv(qs.utm_campaign) && ((qs.utm_content ?? '') === qs.utm_campaign || (qs.utm_content ?? '').startsWith(`${qs.utm_campaign}_`));
-  let fields: Record<string, string | null> = isMeta
+  // formato do dash antigo: utm_campaign={creative} e utm_content={creative}_{placement} (Meta: {{ad.id}} e {{ad.id}}_{{placement}})
+  const legacy = !!qs.utm_campaign && okv(qs.utm_campaign) && ((qs.utm_content ?? '') === qs.utm_campaign || (qs.utm_content ?? '').startsWith(`${qs.utm_campaign}_`));
+  let fields: Record<string, string | null> = isMeta && legacy ? {} : isMeta
     ? { campaignId: qs.utm_campaign ?? null, adSetId: p1 || null, adId: p2 || null, placement: qs.utm_term ?? null }
     : { campaignId: qs.utm_campaign ?? null, adGroupId: p1 || null, creative: p2 || null, keyword: qs.utm_term ?? null, placement: qs.placement ?? null, network: qs.network ?? null, device: qs.device ?? null };
-  if (legacy) {
+  if (legacy && isMeta) {
+    const ad = await one<{ cid: string; gid: string }>(`SELECT c.external_id AS cid, g.external_id AS gid FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id
+      WHERE a.external_id = $1 AND c.platform = 'meta' LIMIT 1`, [qs.utm_campaign]);
+    fields = { campaignId: ad?.cid ?? null, adSetId: ad?.gid ?? null, adId: qs.utm_campaign, placement: (qs.utm_content ?? '').slice(qs.utm_campaign.length + 1) || null };
+    checks.push({ level: 'ok', message: 'Formato do dash antigo (Meta): utm_campaign={{ad.id}} e utm_content={{ad.id}}_{{placement}}', detail: ad ? 'Campanha e conjunto encontrados pelo ID do anúncio.' : 'O ID do anúncio não está nas contas importadas (rode o sync da Meta).' });
+  } else if (legacy) {
     const ad = await one<{ cid: string; gid: string }>(`SELECT c.external_id AS cid, g.external_id AS gid FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id
       WHERE a.external_id = $1 AND c.platform = 'google' LIMIT 1`, [qs.utm_campaign]);
     fields = { campaignId: ad?.cid ?? null, adGroupId: ad?.gid ?? null, creative: qs.utm_campaign, keyword: qs.utm_term ?? null, placement: (qs.utm_content ?? '').slice(qs.utm_campaign.length + 1) || qs.placement || null, network: qs.network ?? null, device: qs.device ?? null };
     checks.push({ level: 'ok', message: 'Formato do dash antigo: utm_campaign={creative} e utm_content={creative}_{placement}', detail: ad ? 'Campanha e grupo encontrados pelo ID do criativo.' : 'O ID do criativo não está nas contas importadas (rode o sync do Google Ads).' });
   }
-  const need = isMeta ? [['campaignId', 'campaign.id'], ['adSetId', 'adset.id'], ['adId', 'ad.id']] : legacy ? [['creative', 'creative'], ['campaignId', 'campanha (pelo creative)']] : [['campaignId', 'campaignid'], ['adGroupId', 'adgroupid']];
+  const need = isMeta && legacy ? [['adId', 'ad.id'], ['campaignId', 'campanha (pelo ad.id)']] : isMeta ? [['campaignId', 'campaign.id'], ['adSetId', 'adset.id'], ['adId', 'ad.id']] : legacy ? [['creative', 'creative'], ['campaignId', 'campanha (pelo creative)']] : [['campaignId', 'campaignid'], ['adGroupId', 'adgroupid']];
   need.forEach(([k, l]) => checks.push(okv(fields[k]) ? { level: 'ok', message: `${l} detectado` } : { level: 'error', message: `${l} ausente` }));
   if (!isMeta && !legacy) checks.push(okv(fields.creative) ? { level: 'ok', message: 'creative detectado' } : { level: 'warn', message: 'creative vazio' });
   checks.push(okv(fields.placement) ? { level: 'ok', message: 'placement detectado' } : { level: 'warn', message: 'placement vazio', detail: 'A análise por placement fica sem essa sessão.' });

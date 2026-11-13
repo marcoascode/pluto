@@ -235,7 +235,7 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
         const day = isoDate(d[0]); const site = str(d[1]);
         if (!day || !site || EMPTY.test(site)) continue;
         const cv = str(d[iCamp]);
-        if (metaIds.has(cv)) continue;
+        if (metaIds.has(cv) || idx.creative.get(cv)?.platform === 'meta') continue;   // placements aqui são só do Google Ads
         const content = iContent >= 0 ? str(d[iContent]) : '';
         // placement: key-value próprio; sem ele, a parte depois de "{creative}_" no utm_content (formato do dash antigo)
         const legacy = isLegacyUtm(cv, content);

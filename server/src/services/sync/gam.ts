@@ -281,11 +281,12 @@ export async function attributionIndex() {
   const camps = await q<{ id: string; ext: string; platform: 'google' | 'meta'; domain_id: string | null }>('SELECT id::text, external_id AS ext, platform, domain_id::text FROM campaigns');
   const groups = await q<{ id: string; ext: string; cid: string }>('SELECT id::text, external_id AS ext, campaign_id::text AS cid FROM ad_groups');
   const ads = await q<{ id: string; ext: string; gid: string }>('SELECT id::text, external_id AS ext, ad_group_id::text AS gid FROM ads');
-  // formato do dash antigo: o {creative} (ID do anúncio do Google Ads) sozinho → anúncio, grupo e campanha.
+  // formato do dash antigo: o ID do anúncio sozinho → anúncio, grupo e campanha.
+  //   Google Ads: utm_campaign={creative}   · 0.16.1 Meta: utm_campaign={{ad.id}} (utm_content={{ad.id}}_{{placement}})
   // Só entra ID que aparece uma vez (se o mesmo ID existir em dois lugares, não adivinha).
-  const gAds = await q<{ id: string; ext: string; gid: string; cid: string }>(`
-    SELECT a.id::text, a.external_id AS ext, a.ad_group_id::text AS gid, g.campaign_id::text AS cid
-      FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id WHERE c.platform = 'google'`);
+  const gAds = await q<{ id: string; ext: string; gid: string; cid: string; platform: 'google' | 'meta' }>(`
+    SELECT a.id::text, a.external_id AS ext, a.ad_group_id::text AS gid, g.campaign_id::text AS cid, c.platform
+      FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id`);
   const seen = new Map<string, number>();
   for (const a of gAds) seen.set(a.ext, (seen.get(a.ext) ?? 0) + 1);
   // modo keyvalues (só utm_content): {adgroupid} / {{adset.id}} sozinho → grupo e campanha (também só ID único)
@@ -310,7 +311,7 @@ export const isLegacyUtm = (campVal: string, content: string) => !!campVal && (c
 /**
  * Campanha, grupo e anúncio de uma linha do Ad Manager, nos dois formatos de UTM:
  *   padrão do dash ........ utm_campaign={campaignid}   utm_content={adgroupid}_{creative}   (Meta: {{campaign.id}} / {{adset.id}}_{{ad.id}})
- *   formato do dash antigo  utm_campaign={creative}     utm_content={creative}_{placement}   (só Google Ads)
+ *   formato do dash antigo  utm_campaign={creative}     utm_content={creative}_{placement}   (Meta: {{ad.id}} / {{ad.id}}_{{placement}})
  * O formato antigo é reconhecido quando utm_content começa com o próprio utm_campaign + "_"; se o ID do utm_campaign não for
  * de nenhuma campanha, também tenta como {creative}. Assim os dois dashes funcionam com o mesmo sufixo nas campanhas.
  */
@@ -325,8 +326,8 @@ export function attribute(idx: Index, campVal: string, content: string, source: 
     return { platform: c.platform, campaignId: c.id, adGroupId, adId };
   }
   const cr = idx.creative.get(campVal);
-  if (cr) return { platform: 'google', campaignId: cr.cid, adGroupId: cr.gid, adId: cr.id };
-  if (legacy) return { reason: 'gads_creative_not_found' };
+  if (cr) return { platform: cr.platform, campaignId: cr.cid, adGroupId: cr.gid, adId: cr.id };
+  if (legacy) return { reason: source && /^(fb|facebook|ig|instagram|an|msg|meta)$/.test(source) ? 'meta_ad_not_found' : 'gads_creative_not_found' };
   return { reason: source && /^(fb|facebook|ig|instagram|an|msg|meta)$/.test(source) ? 'meta_ad_not_found' : 'campaign_not_found' };
 }
 
@@ -344,7 +345,7 @@ export function attributeContent(idx: Index, content: string):
   const tail = i < 0 ? '' : content.slice(i + 1).trim();
   if (!head || EMPTY.test(head)) return { reason: 'missing_campaign_id' };
   const cr = idx.creative.get(head);
-  if (cr) return { platform: 'google', campaignId: cr.cid, adGroupId: cr.gid, adId: cr.id, placement: tail };
+  if (cr) return { platform: cr.platform, campaignId: cr.cid, adGroupId: cr.gid, adId: cr.id, placement: tail };
   const g = idx.groupExt.get(head);
   if (g) return { platform: g.platform, campaignId: g.cid, adGroupId: g.id, adId: tail && !EMPTY.test(tail) ? idx.ad.get(`${g.id}|${tail}`) ?? null : null, placement: '' };
   return { reason: 'gads_creative_not_found' };
