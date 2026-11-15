@@ -14,6 +14,7 @@ const DomainDetail = lazy(() => import('@/pages/DomainDetail'));
 const Urls = lazy(() => import('@/pages/Urls'));
 const Campaigns = lazy(() => import('@/components/campaigns/CampaignsView').then((m) => ({ default: m.CampaignsView })));
 const AdManager = lazy(() => import('@/pages/AdManager'));
+const Links = lazy(() => import('@/pages/Links'));
 const Placements = lazy(() => import('@/pages/Placements'));
 const CompanyOverview = lazy(() => import('@/pages/CompanyOverview'));
 const AttributionHealth = lazy(() => import('@/pages/AttributionHealth'));
@@ -60,6 +61,8 @@ export default function App() {
         <Route path="dominios" element={S(<Domains />)} />
         <Route path="dominios/:domain" element={S(<DomainDetail />)} />
         <Route path="urls" element={C('urls.view', <Urls />)} />
+        {/* 0.17: Contas × Sites — Gestor (só o que é dele), Gerente, Admin, SuperAdmin; o servidor filtra */}
+        <Route path="vinculos" element={S(<Links />)} />
         <Route path="google-ads" element={C('campaigns.google.view', <Campaigns key="google" platform="google" />)} />
         <Route path="meta-ads" element={C('campaigns.meta.view', <Campaigns key="meta" platform="meta" />)} />
         <Route path="empresas/:id" element={S(<CompanyOverview />)} />

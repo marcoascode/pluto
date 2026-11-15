@@ -21,6 +21,7 @@ import { conflict, notFound, parse } from '../../lib/http.js';
 import { addDays, today } from '../../lib/dates.js';
 import { GRAIN_CONFLICT, METRIC_SUMS } from '../../services/sync/common.js';
 import { requestRun } from '../../services/sync/index.js';
+import { loadTimeline, siteForDay, type Timeline } from '../../services/accountLinks.js';
 
 export const campaignsAdminRouter = Router();
 
@@ -55,6 +56,13 @@ const patchBody = z.object({
   resync: z.boolean().default(true),
 }).refine((b) => b.domain !== undefined || b.domainId !== undefined, { message: 'informe domain (hostname) ou domainId' });
 
+/** Períodos [de, até) em que o vínculo com data da conta manda a despesa para outro site que não `target`. */
+function lockedRanges(tl: Timeline, accountId: string, target: string): [string, string | null][] {
+  const list = tl.get(accountId) ?? [];
+  return list.map((p, i): [string, string | null, boolean] => [p.from, list[i + 1]?.from ?? null, siteForDay(tl, accountId, p.from, target) !== target])
+    .filter((x) => x[2]).map(([a, z]) => [a, z]);
+}
+
 campaignsAdminRouter.patch('/campaigns/:id', async (req, res) => {
   const ext = parse(z.string().trim().min(1).max(40), req.params.id);
   const b = parse(patchBody, req.body);
@@ -77,9 +85,13 @@ campaignsAdminRouter.patch('/campaigns/:id', async (req, res) => {
     // Reprocessamento do passado: move as linhas dessa campanha (desta origem) que estão em outro domínio.
     // url_id zera (a URL era do domínio antigo). Linhas que caem no mesmo grão são somadas.
     const sums = METRIC_SUMS.map((x) => `SUM(${x})`).join(', ');
+    // 0.17: dias em que a conta estava vinculada a OUTRO site (vínculo com data) não mudam: aquela despesa é do site
+    // daquela época (ex.: site penalizado, conta trocada de site em uma data)
+    const keep = lockedRanges(await loadTimeline([camp.account_id], c), camp.account_id, target.id);
+    const notIn = keep.map(([a, z]) => `AND NOT (date >= '${a}'::date${z ? ` AND date < '${z}'::date` : ''})`).join(' ');
     const r = await c.query(`
       WITH moved AS (
-        DELETE FROM daily_metrics WHERE campaign_id = $1 AND source = $2 AND domain_id <> $3 RETURNING *)
+        DELETE FROM daily_metrics WHERE campaign_id = $1 AND source = $2 AND domain_id <> $3 ${notIn} RETURNING *)
       INSERT INTO daily_metrics (source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source, ${METRIC_SUMS.join(', ')}, sessions, is_final, updated_at)
       SELECT source, date, $3::bigint, NULL::bigint, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source, ${sums}, SUM(sessions)::int, bool_and(is_final), now()
         FROM moved GROUP BY source, date, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source

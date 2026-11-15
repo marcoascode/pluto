@@ -107,6 +107,8 @@ export const adminApi = {
   setCampaignDomain: (a: { id: string; platform: T.Platform; domain: string | null }) => api.patch<T.SetCampaignDomainResponse>(`/admin/campaigns/${encodeURIComponent(a.id)}`, { platform: a.platform, domain: a.domain }),
   createDomain: (hostname: string) => api.post<T.Domain>('/admin/domains', { hostname }),
   updateDomain: (hostname: string, patch: T.DomainInput) => api.patch<T.Domain>(`/admin/domains/${encodeURIComponent(hostname)}`, patch),
+  /** 0.17: mostra a senha do WordPress (cada leitura fica registrada no servidor) */
+  revealWpPassword: (hostname: string) => api.post<{ user: string | null; password: string }>(`/admin/domains/${encodeURIComponent(hostname)}/wp-password`, {}),
   deleteDomain: (hostname: string) => api.del<void>(`/admin/domains/${encodeURIComponent(hostname)}`),
   squads: () => api.get<{ squads: T.Squad[] }>('/admin/squads'),
   saveSquad: (s: { id?: string; name: string; domains: string[]; companyId?: string | null }) => (s.id ? api.put<T.Squad>(`/admin/squads/${s.id}`, s) : api.post<T.Squad>('/admin/squads', s)),

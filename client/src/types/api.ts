@@ -424,6 +424,12 @@ export interface DomainInput {
   squadId?: string | null;
   googleAccounts?: string[]; // ids de IntegrationAccount
   metaAccounts?: string[];
+  /** 0.17: data a partir da qual a mudança de contas vale (a despesa de antes fica no site antigo). Padrão: hoje. */
+  accountsFrom?: string;
+  /** 0.17: registro do domínio */
+  registrar?: string | null; expiresOn?: string | null; hosting?: string | null; wpUser?: string | null;
+  /** texto = troca a senha · null = apaga · ausente = mantém (a senha nunca volta na lista) */
+  wpPassword?: string | null;
 }
 export interface Domain {
   hostname: string;
@@ -440,6 +446,8 @@ export interface Domain {
   /** Gestores do domínio e as contas de cada um (editado em Usuários). */
   managers: { userId: string; name: string; googleAccounts: string[]; metaAccounts: string[] }[];
   lastDataAt: string | null;
+  /** 0.17: registro do domínio (a senha WP só por adminApi.revealWpPassword) */
+  registrar?: string | null; expiresOn?: string | null; hosting?: string | null; wpUser?: string | null; hasWpPassword?: boolean;
 }
 export interface Squad {
   id: string;

@@ -7,6 +7,7 @@
  */
 import { config } from '../../config.js';
 import { one, q } from '../../db.js';
+import { loadTimeline, siteForDay } from '../accountLinks.js';
 import { accountDomains, domainResolver, emptyFact, fxToUsd, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
 import { requestJson, SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
@@ -78,6 +79,8 @@ export async function runGoogleAds(kind: 'structure' | 'metrics', w: { from: str
   if (!accs.length) return { status: kind === 'structure' ? 'success' : 'skipped', message: 'nenhuma conta Google Ads ativa marcada para importar' };
   const dom = await domainResolver();
   const toUsd = kind === 'metrics' ? await fxToUsd(w.from, w.to) : null;
+  // 0.17: site da conta em cada dia (vínculo com data). A despesa de um dia vai para o site que a conta pagava nele.
+  const tl = await loadTimeline(accs.map((a) => a.id));
   const url = urlCache();
   const notes: string[] = [];
   let ok = 0, total = 0;
@@ -126,26 +129,28 @@ export async function runGoogleAds(kind: 'structure' | 'metrics', w: { from: str
       const facts: Fact[] = [];
       const used = new Map<string, { cost: number; clicks: number; imp: number }>();
       let noDomain = 0;
-      const push = (date: string, cp: { id: string; domainId: string | null }, ext: string, gid: string | null, adId: string | null, urlId: string | null, costCur: number, clicks: number, imp: number) => {
+      const push = (date: string, domainId: string, cp: { id: string }, ext: string, gid: string | null, adId: string | null, urlId: string | null, costCur: number, clicks: number, imp: number) => {
         const usd = toUsd!(costCur, acc.currency, date);
-        for (const [country, s] of split(date, ext)) facts.push(emptyFact({ date, domainId: cp.domainId!, urlId, platform: 'google', campaignId: cp.id, adGroupId: gid, adId, country, spendUsd: usd * s, trafficClicks: clicks * s, trafficImpressions: imp * s }));
+        for (const [country, s] of split(date, ext)) facts.push(emptyFact({ date, domainId, urlId, platform: 'google', campaignId: cp.id, adGroupId: gid, adId, country, spendUsd: usd * s, trafficClicks: clicks * s, trafficImpressions: imp * s }));
       };
       for (const r of adRows) {
         const date = r.segments!.date, cp = await camp(r.campaign);
         const k = `${date}|${r.campaign.id}`, u = used.get(k) ?? { cost: 0, clicks: 0, imp: 0 };
         const cost = micros(r.metrics?.costMicros), clicks = n(r.metrics?.clicks), imp = n(r.metrics?.impressions);
         u.cost += cost; u.clicks += clicks; u.imp += imp; used.set(k, u);
-        if (!cp.domainId) { noDomain++; continue; }
+        const site = siteForDay(tl, acc.id, date, cp.domainId);
+        if (!site) { noDomain++; continue; }
         const ad = ads.get(r.adGroupAd.ad.id)!;
-        push(date, cp, r.campaign.id, groups.get(r.adGroup.id)!, ad.id, await url(cp.domainId, ad.path), cost, clicks, imp);
+        push(date, site, cp, r.campaign.id, groups.get(r.adGroup.id)!, ad.id, await url(site, ad.path), cost, clicks, imp);
       }
       // o que a campanha gastou fora dos anúncios (Performance Max, Demand Gen…) fica no nível da campanha
       for (const r of campRows) {
         const date = r.segments.date, cp = await camp(r.campaign), u = used.get(`${date}|${r.campaign.id}`) ?? { cost: 0, clicks: 0, imp: 0 };
         const cost = micros(r.metrics.costMicros) - u.cost, clicks = n(r.metrics.clicks) - u.clicks, imp = n(r.metrics.impressions) - u.imp;
         if (cost <= 0.000001 && clicks <= 0 && imp <= 0) continue;
-        if (!cp.domainId) { noDomain++; continue; }
-        push(date, cp, r.campaign.id, null, null, null, Math.max(0, cost), Math.max(0, clicks), Math.max(0, imp));
+        const site = siteForDay(tl, acc.id, date, cp.domainId);
+        if (!site) { noDomain++; continue; }
+        push(date, site, cp, r.campaign.id, null, null, null, Math.max(0, cost), Math.max(0, clicks), Math.max(0, imp));
       }
       const scope = (await q<{ id: string }>('SELECT id::text FROM campaigns WHERE account_id = $1', [acc.id])).map((x) => x.id);
       total += await replaceFacts('google-ads', w.from, w.to, scope, facts);

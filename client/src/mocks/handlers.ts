@@ -8,6 +8,7 @@ import { addDays, lastMonths } from '@/lib/period';
 import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, originOf, TECH, type Row } from './db';
 import { PL_LABEL, placementRows, typeOf, type PRow } from './placements';
 import { financeCosts, financeMutate, financeOverview } from './finance';
+import { linksMock, setWpPassword, wpPasswordOf } from './links';
 
 /** Guarda sessão/preferências do mock. Se o navegador bloquear o storage (prévia com sandbox, aba anônima), fica em memória. */
 const MEM = new Map<string, string>();
@@ -158,6 +159,8 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path === '/auth/change-password') { u.password = b.newPassword; u.mustChangePassword = false; u.status = 'active'; return out(undefined); }
   if (path === '/me/preferences') { const k = 'pluto_mock_prefs_' + u.id; if (method === 'PUT') LS.set(k, b); return out(LS.get(k) ?? {}); }
 
+  /* ---- 0.17 Contas × Sites ---- */
+  if (path === '/links' || path.startsWith('/links/')) return out(linksMock(u, allowed(u), method, path, b));
   /* ---- Finance ---- */
   if (path === '/finance/overview') return out<T.FinanceOverview>(financeOverview(u, q));
   if (path === '/finance/costs' && method === 'GET') return out<T.FinanceCostsResponse>(financeCosts(u, q));
@@ -360,6 +363,8 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     return out<T.SetCampaignDomainResponse>({ campaign: { id: c.id, platform: c.platform, name: c.name, domain: d.hostname, domainManual: true }, movedRows: moved, resync: 'started' });
   }
   if (path === '/admin/domains' && method === 'POST') { const d: T.Domain = { hostname: String(b.hostname), revShare: Number(b.revShare ?? 0), revShareFrom: null, active: true, squadId: null, googleAccounts: [], metaAccounts: [], gamAccountId: null, managers: [], lastDataAt: null }; DOMAINS.push(d); return out(d); }
+  m = path.match(/^\/admin\/domains\/(.+)\/wp-password$/);
+  if (m && method === 'POST') { const h = decodeURIComponent(m[1]); const pw = wpPasswordOf(h); if (!pw) throw new ApiError(404, 'no_password', 'Nenhuma senha salva para este domínio.'); return out({ user: DOMAINS.find((x) => x.hostname === h)?.wpUser ?? null, password: pw }); }
   m = path.match(/^\/admin\/domains\/(.+)$/);
   if (m) {
     const d = DOMAINS.find((x) => x.hostname === decodeURIComponent(m![1])); if (!d) throw new ApiError(404, 'not_found', 'Domínio não encontrado.');
@@ -367,7 +372,8 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     if (method === 'DELETE') { if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'domain_has_data', 'Este domínio tem dados históricos. Desative em vez de excluir.'); DOMAINS.splice(DOMAINS.indexOf(d), 1); SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); return out(undefined); }
     if (b.hostname && b.hostname !== d.hostname) { if (DOMAINS.find((x) => x.hostname === b.hostname)) throw new ApiError(409, 'domain_exists', 'Já existe um domínio com esse nome.'); if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'rename_mock', 'No modo mock não dá para renomear domínios com dados.'); SQUADS.forEach((s) => (s.domains = s.domains.map((x) => (x === d.hostname ? b.hostname : x)))); d.hostname = b.hostname; }
     if (b.squadId !== undefined) { SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); const s = SQUADS.find((x) => x.id === b.squadId); if (s) s.domains.push(d.hostname); d.squadId = s?.id ?? null; }
-    for (const k of ['active', 'googleAccounts', 'metaAccounts', 'gamAccountId'] as const) if (b[k] !== undefined) (d as any)[k] = b[k];
+    for (const k of ['active', 'googleAccounts', 'metaAccounts', 'gamAccountId', 'registrar', 'expiresOn', 'hosting', 'wpUser'] as const) if (b[k] !== undefined) (d as any)[k] = b[k] === '' ? null : b[k];
+    if (b.wpPassword !== undefined) setWpPassword(d.hostname, b.wpPassword || null);
     if (b.revShare !== undefined) { const v = Number(b.revShare); if (!(v >= 0 && v < 100)) throw new ApiError(422, 'invalid_input', 'revShare entre 0 e 99,999%.'); d.revShare = v; d.revShareFrom = b.revShareFrom ?? TODAY; }
     return out(domOut(d));
   }
@@ -422,7 +428,7 @@ function fxLatest(source: string, agoMin: number): T.FxLatest {
   const d = discountAt(0); const fr = FXD.filter((x) => x.validFrom <= TODAY).sort((a, b) => b.validFrom.localeCompare(a.validFrom))[0];
   return { base: 'USD', rates: { USD: 1, BRL: FX.BRL[0], EUR: FX.EUR[0] }, fetchedAt: new Date(Date.now() - agoMin * 60000).toISOString(), source, brlDiscount: d, brlDiscountFrom: fr?.validFrom ?? null, brlRevenueRate: Math.max(0.0001, FX.BRL[0] - d) };
 }
-const domOut = (d: T.Domain): T.Domain => ({ ...d, squadId: SQUADS.find((s) => s.domains.includes(d.hostname))?.id ?? null,
+const domOut = (d: T.Domain): T.Domain => ({ ...d, hasWpPassword: !!wpPasswordOf(d.hostname), squadId: SQUADS.find((s) => s.domains.includes(d.hostname))?.id ?? null,
   managers: USERS.filter((x) => x.role === 'gestor' && x.domains.some((l) => l.domain === d.hostname)).map((x) => { const l = x.domains.find((y) => y.domain === d.hostname)!; return { userId: x.id, name: x.name, googleAccounts: l.googleAccounts, metaAccounts: l.metaAccounts }; }) });
 const sqOut = (s: T.Squad): T.Squad => ({ ...s, userIds: USERS.filter((x) => x.role === 'gerente' && x.squadIds.includes(s.id)).map((x) => x.id) });
 /** Mesmas regras de vínculo do servidor (routes/admin/users.ts → saveLinks). */

@@ -1,6 +1,8 @@
 import argon2 from 'argon2';
 import { Router } from 'express';
 import { z } from 'zod';
+import { today } from '../../lib/dates.js';
+import { snapshotAccount } from '../../services/accountLinks.js';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { tempPassword } from '../../lib/crypto.js';
@@ -67,7 +69,9 @@ async function saveLinks(c: C, uid: string, newRole: string, b: { squadIds?: str
         if (ok.length !== acc.length) throw conflict('unknown_account', 'Alguma conta da lista não existe.');
         for (const a of acc) {
           await c.query('INSERT INTO domain_manager_accounts (domain_id, user_id, account_id) VALUES ($1, $2, $3)', [d.id, uid, a]);
-          await c.query('INSERT INTO domain_accounts (domain_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [d.id, a]);
+          await c.query('INSERT INTO manager_accounts (user_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [uid, a]);   // 0.17
+          const r = await c.query('INSERT INTO domain_accounts (domain_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [d.id, a]);
+          if (r.rowCount) await snapshotAccount(c, a, today(), null);   // 0.17: vínculo novo vale a partir de hoje
         }
       }
     }

@@ -1,4 +1,7 @@
-import { Alert, Button, Card, CardHeader, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, Grid, IconButton, ListItemText, MenuItem, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Button, Card, CardHeader, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel, Grid, IconButton, InputAdornment, ListItemText, MenuItem, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
+import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined';
+import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { useState } from 'react';
@@ -14,7 +17,15 @@ import type { Domain, DomainInput } from '@/types/api';
 
 const HOST_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 const clean = (v: string) => v.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
-const INV = [qk.adminDomains, qk.myDomainsAll, qk.squads, qk.accounts('google-ads'), qk.accounts('meta')];
+const INV = [qk.adminDomains, qk.myDomainsAll, qk.squads, qk.accounts('google-ads'), qk.accounts('meta'), ['links']];
+const br = (iso?: string | null) => (iso ? iso.split('-').reverse().join('/') : '');
+/** dias até o vencimento do registro (negativo = vencido) */
+const daysTo = (iso: string) => Math.round((Date.parse(`${iso}T12:00:00`) - Date.parse(`${todayISO()}T12:00:00`)) / 864e5);
+export function ExpiryTag({ iso }: { iso?: string | null }) {
+  if (!iso) return <Typography variant="caption">—</Typography>;
+  const n = daysTo(iso);
+  return n < 0 ? <Tag tone="neg">Vencido em {br(iso)}</Tag> : n <= 30 ? <Tag tone="warn">{br(iso)} · {n} dia{n === 1 ? '' : 's'}</Tag> : <Typography sx={{ fontSize: 13 }}>{br(iso)}</Typography>;
+}
 
 function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const { data: sq } = useSquads();
@@ -22,10 +33,22 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const { data: ma } = useIntegrationAccounts('meta');
   const { data: gam } = useIntegrationAccounts('gam');
   const today = todayISO();   // data no fuso da organização (não UTC)
-  const [f, setF] = useState<Omit<Required<DomainInput>, 'revShare' | 'revShareFrom'>>({ hostname: d.hostname, active: d.active, squadId: d.squadId, googleAccounts: d.googleAccounts, metaAccounts: d.metaAccounts, gamAccountId: d.gamAccountId });
+  const [f, setF] = useState<Pick<Required<DomainInput>, 'hostname' | 'active' | 'squadId' | 'googleAccounts' | 'metaAccounts' | 'gamAccountId'>>({ hostname: d.hostname, active: d.active, squadId: d.squadId, googleAccounts: d.googleAccounts, metaAccounts: d.metaAccounts, gamAccountId: d.gamAccountId });
   const [rs, setRs] = useState(String(d.revShare ?? 0).replace('.', ','));
   const [rsFrom, setRsFrom] = useState(today);
   const [err, setErr] = useState('');
+  // 0.17: registro do domínio
+  const [reg, setReg] = useState({ registrar: d.registrar ?? '', expiresOn: d.expiresOn ?? '', hosting: d.hosting ?? '', wpUser: d.wpUser ?? '' });
+  const [pw, setPw] = useState('');                 // senha nova (vazio = mantém)
+  const [shown, setShown] = useState<string | null>(null);
+  const [clearPw, setClearPw] = useState(false);
+  const [pwErr, setPwErr] = useState('');
+  const [accFrom, setAccFrom] = useState(today);   // 0.17: a partir de quando a mudança de contas vale
+  const accChanged = [...f.googleAccounts].sort().join() !== [...d.googleAccounts].sort().join() || [...f.metaAccounts].sort().join() !== [...d.metaAccounts].sort().join();
+  const reveal = async () => {
+    setPwErr('');
+    try { const r = await adminApi.revealWpPassword(d.hostname); setShown(r.password); } catch (e) { setPwErr(e instanceof ApiError ? e.message : 'Não foi possível abrir a senha.'); }
+  };
   const save = useAdminMutation((b: DomainInput) => adminApi.updateDomain(d.hostname, b), INV);
   const multi = (label: string, key: 'googleAccounts' | 'metaAccounts', opts: { id: string; name: string }[]) => (
     <TextField select label={label} value={f[key]} fullWidth onChange={(e) => setF({ ...f, [key]: typeof e.target.value === 'string' ? e.target.value.split(',') : (e.target.value as string[]) })}
@@ -40,7 +63,13 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
     if (!Number.isFinite(share) || share < 0 || share >= 100) return setErr('revShare precisa ser um percentual entre 0 e 99,999.');
     setErr('');
     const changed = Math.abs(share - (d.revShare ?? 0)) > 1e-9;
-    save.mutate({ ...f, hostname: h, ...(changed ? { revShare: share, revShareFrom: rsFrom } : {}) }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
+    if (accChanged && accFrom > today) return setErr('A data do vínculo das contas não pode ser no futuro.');
+    const n = (v: string) => v.trim() || null;
+    save.mutate({
+      ...f, hostname: h, ...(changed ? { revShare: share, revShareFrom: rsFrom } : {}), ...(accChanged ? { accountsFrom: accFrom } : {}),
+      registrar: n(reg.registrar), expiresOn: reg.expiresOn || null, hosting: n(reg.hosting), wpUser: n(reg.wpUser),
+      ...(clearPw ? { wpPassword: null } : pw ? { wpPassword: pw } : {}),
+    }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
   };
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
@@ -65,6 +94,38 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
         </TextField>
         {multi('Contas Google Ads', 'googleAccounts', (ga?.accounts ?? []).map((a) => ({ id: a.id, name: `${a.name} · ${a.externalId}` })))}
         {multi('Contas Meta Ads', 'metaAccounts', (ma?.accounts ?? []).map((a) => ({ id: a.id, name: `${a.name} · ${a.externalId}` })))}
+        {accChanged && (
+          <TextField label="Mudança das contas vale a partir de" type="date" value={accFrom} onChange={(e) => setAccFrom(e.target.value)} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today } }}
+            helperText="A despesa das contas até o dia anterior continua no site em que estavam (ex.: site penalizado e conta passada para outro site). O histórico fica em Contas × Sites." />
+        )}
+        <Divider />
+        <Typography variant="overline" sx={{ mb: -1 }}>Registro do domínio</Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+          <TextField label="Registro" placeholder="ex.: Registro.br, GoDaddy, Hostinger" value={reg.registrar} onChange={(e) => setReg({ ...reg, registrar: e.target.value })} sx={{ flex: 1.4 }} helperText="Onde o domínio foi comprado" />
+          <TextField label="Vencimento" type="date" value={reg.expiresOn} onChange={(e) => setReg({ ...reg, expiresOn: e.target.value })} sx={{ flex: 1 }} slotProps={{ inputLabel: { shrink: true } }} helperText="Quando o registro vence" />
+        </Stack>
+        <TextField label="Hospedagem" placeholder="ex.: Hostinger VPS 2 · IP 0.0.0.0" value={reg.hosting} onChange={(e) => setReg({ ...reg, hosting: e.target.value })} fullWidth helperText="Em qual servidor o site está" />
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+          <TextField label="Usuário WP" value={reg.wpUser} onChange={(e) => setReg({ ...reg, wpUser: e.target.value })} sx={{ flex: 1 }} autoComplete="off" slotProps={{ htmlInput: { autoComplete: 'off', 'data-lpignore': 'true' } }} />
+          <TextField label={d.hasWpPassword ? 'Nova senha WP' : 'Senha WP'} type="password" value={pw} onChange={(e) => { setPw(e.target.value); setClearPw(false); }} sx={{ flex: 1 }}
+            placeholder={d.hasWpPassword ? 'deixe vazio para manter' : ''} slotProps={{ htmlInput: { autoComplete: 'new-password' } }}
+            helperText={d.hasWpPassword ? 'Senha cadastrada. Vazio mantém a atual.' : 'Fica criptografada no servidor'} />
+        </Stack>
+        {d.hasWpPassword && (
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+            {shown == null
+              ? <Button size="small" variant="outlined" startIcon={<VisibilityOutlinedIcon />} onClick={reveal}>Mostrar senha atual</Button>
+              : <TextField size="small" value={shown} sx={{ minWidth: 240 }} slotProps={{ input: { readOnly: true, sx: { fontFamily: 'IBM Plex Mono' }, endAdornment: (
+                  <InputAdornment position="end">
+                    <Tooltip title="Copiar"><IconButton size="small" onClick={() => navigator.clipboard?.writeText(shown).catch(() => {})} aria-label="Copiar senha"><ContentCopyRoundedIcon fontSize="small" /></IconButton></Tooltip>
+                    <Tooltip title="Esconder"><IconButton size="small" onClick={() => setShown(null)} aria-label="Esconder senha"><VisibilityOffOutlinedIcon fontSize="small" /></IconButton></Tooltip>
+                  </InputAdornment>) } }} />}
+            <FormControlLabel control={<Checkbox size="small" checked={clearPw} onChange={(e) => { setClearPw(e.target.checked); if (e.target.checked) setPw(''); }} />} label={<Typography sx={{ fontSize: 13 }}>Apagar senha</Typography>} />
+          </Stack>
+        )}
+        {pwErr && <Alert severity="error" variant="outlined">{pwErr}</Alert>}
+        <Typography variant="caption" sx={{ mt: -0.75 }}>A senha WP fica criptografada (não aparece na lista nem nas respostas da API). “Mostrar senha” abre uma vez e registra quem abriu.</Typography>
+        <Divider />
         <Stack spacing={0.75}>
           <Typography variant="overline">Gestores do domínio</Typography>
           {d.managers.length ? d.managers.map((m) => {
@@ -102,6 +163,7 @@ export default function AdminDomainsPage() {
   if (!data) return <PageSkeleton />;
   const tech = data.domains.find((x) => x.technical);
   const d = data.domains.filter((x) => !x.technical); const act = d.filter((x) => x.active).length; const noSq = d.filter((x) => x.active && !x.squadId).length;
+  const expiring = d.filter((x) => x.expiresOn && daysTo(x.expiresOn) <= 30).length;
   const accName = (id: string) => [...(ga?.accounts ?? []), ...(ma?.accounts ?? [])].find((a) => a.id === id)?.name ?? id;
   const add = () => {
     const v = clean(host);
@@ -110,16 +172,16 @@ export default function AdminDomainsPage() {
   };
   return (
     <>
-      <PageHead title="Domínios" sub="Cadastro dos sites: Squad, conta do Ad Manager, contas de tráfego e gestores de cada um." />
+      <PageHead title="Domínios" sub="Cadastro dos sites: Squad, conta do Ad Manager, contas de tráfego, gestores e registro (onde foi comprado, vencimento, hospedagem e acesso WP)." />
       <Grid container spacing={1.75} sx={{ mb: 1.75 }}>
-        {([['Total de domínios', d.length], ['Ativos', act], ['Inativos', d.length - act], ['Domínios sem Squad', noSq]] as const).map(([l, v]) => (
-          <Grid key={l} size={{ xs: 6, md: 3 }}><Card sx={{ p: 2.25 }}><Typography variant="caption">{l}</Typography><Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 28, color: l === 'Domínios sem Squad' && v > 0 ? 'warning.main' : undefined }}>{v}</Typography></Card></Grid>
+        {([['Total de domínios', d.length], ['Ativos', act], ['Domínios sem Squad', noSq], ['Registro vence em 30 dias', expiring]] as const).map(([l, v]) => (
+          <Grid key={l} size={{ xs: 6, md: 3 }}><Card sx={{ p: 2.25 }}><Typography variant="caption">{l}</Typography><Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 28, color: (l === 'Domínios sem Squad' || l === 'Registro vence em 30 dias') && v > 0 ? 'warning.main' : undefined }}>{v}</Typography></Card></Grid>
         ))}
       </Grid>
       <Card>
         <CardHeader title="Domínios" action={<Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}><TextField size="small" placeholder="novodominio.com" value={host} onChange={(e) => setHost(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} error={!!msg} helperText={msg || undefined} /><Button variant="contained" size="small" onClick={add} disabled={create.isPending}>Adicionar domínio</Button></Stack>} />
         <TableContainer><Table>
-          <TableHead><TableRow>{['Domínio', 'Squad', 'Gestores', 'Google Ads', 'Meta Ads', 'Ad Manager', 'revShare', 'Status', 'Último dado recebido', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
+          <TableHead><TableRow>{['Domínio', 'Squad', 'Gestores', 'Google Ads', 'Meta Ads', 'Ad Manager', 'Registro · hospedagem', 'revShare', 'Status', 'Último dado', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
           <TableBody>{d.map((x) => (
             <TableRow key={x.hostname}>
               <TableCell><b>{x.hostname}</b>{x.createdBySync && <Typography variant="caption" component="div" sx={{ color: 'warning.main' }}>Visto no Ad Manager · ative para cadastrar</Typography>}</TableCell>
@@ -128,6 +190,13 @@ export default function AdminDomainsPage() {
               <TableCell sx={{ whiteSpace: 'normal' }}>{x.googleAccounts.map(accName).join(', ') || '—'}</TableCell>
               <TableCell sx={{ whiteSpace: 'normal' }}>{x.metaAccounts.map(accName).join(', ') || '—'}</TableCell>
               <TableCell sx={{ whiteSpace: 'normal' }}>{gam?.accounts.find((a) => a.id === x.gamAccountId)?.name ?? '—'}</TableCell>
+              <TableCell sx={{ whiteSpace: 'normal', minWidth: 150 }}>
+                {x.registrar || x.expiresOn || x.hosting || x.wpUser ? <>
+                  <Typography sx={{ fontSize: 13 }}>{x.registrar || 'Registro não informado'}</Typography>
+                  {x.expiresOn && <ExpiryTag iso={x.expiresOn} />}
+                  {(x.hosting || x.wpUser) && <Typography variant="caption" component="div" color="text.secondary">{[x.hosting, x.wpUser && `WP: ${x.wpUser}${x.hasWpPassword ? ' · senha salva' : ''}`].filter(Boolean).join(' · ')}</Typography>}
+                </> : '—'}
+              </TableCell>
               <TableCell>{String(x.revShare ?? 0).replace('.', ',')}%</TableCell>
               <TableCell>{x.active ? <Tag tone="pos">Ativo</Tag> : <Tag>Inativo</Tag>}</TableCell><TableCell>{relTime(x.lastDataAt)}</TableCell>
               <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
@@ -139,8 +208,8 @@ export default function AdminDomainsPage() {
           ))}
           {tech && (
             <TableRow sx={{ bgcolor: 'rgba(255,255,255,.02)' }}>
-              <TableCell><b>Sem domínio</b><Typography variant="caption" component="div">Domínio técnico: custo de campanhas sem site identificável (ex.: Meta de mensagens). Só Admin vê.</Typography></TableCell>
-              <TableCell colSpan={7} sx={{ color: 'text.secondary', whiteSpace: 'normal' }}>Não entra em Squad, gestor, conta nem Ad Manager. Para tirar uma campanha daqui, defina o domínio dela.</TableCell>
+              <TableCell sx={{ whiteSpace: 'normal', maxWidth: 240 }}><b>Sem domínio</b><Typography variant="caption" component="div">Domínio técnico: custo de campanhas sem site identificável (ex.: Meta de mensagens). Só Admin vê.</Typography></TableCell>
+              <TableCell colSpan={8} sx={{ color: 'text.secondary', whiteSpace: 'normal' }}>Não entra em Squad, gestor, conta nem Ad Manager. Para tirar uma campanha daqui, defina o domínio dela.</TableCell>
               <TableCell>{relTime(tech.lastDataAt)}</TableCell>
               <TableCell align="right"><Button size="small" variant="outlined" component={RouterLink} to="/admin/integracoes/meta-ads">Definir domínios</Button></TableCell>
             </TableRow>

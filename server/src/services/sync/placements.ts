@@ -19,7 +19,8 @@
 import { config } from '../../config.js';
 import { q, tx } from '../../db.js';
 import { domainResolver, fxToUsd, setAccountStatus, statusFromError } from './common.js';
-import { ALL, attributeContent, ekvRefused, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runKvReport, runReport, str } from './gam.js';
+import { loadTimeline, siteForDay } from '../accountLinks.js';
+import { ALL, attributeContent, ekvRefused, fetchUnitMap, unitsToSites, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runKvReport, runReport, str } from './gam.js';
 import { ctx, gaql } from './googleAds.js';
 import { SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
@@ -117,6 +118,7 @@ export async function runGoogleAdsPlacements(w: { from: string; to: string }): P
   const accs = await q<{ id: string; external_id: string; name: string; currency: string }>(`SELECT id::text, external_id, name, currency FROM integration_accounts WHERE provider = 'google-ads' AND imported AND COALESCE(platform_status, 'ENABLED') = 'ENABLED' ORDER BY id`);
   if (!accs.length) return { status: 'skipped', message: 'nenhuma conta Google Ads ativa marcada para importar' };
   const toUsd = await fxToUsd(w.from, w.to);
+  const tl = await loadTimeline(accs.map((a) => a.id));   // 0.17: site da conta em cada dia
   const labels = new Map<string, { label: string; type: PlacementType }>();
   const notes: string[] = [];
   let ok = 0, total = 0;
@@ -137,9 +139,10 @@ export async function runGoogleAdsPlacements(w: { from: string; to: string }): P
         const p = normPlacement(v.placement || v.targetUrl || v.groupPlacementTargetUrl, v.placementType);
         if (!p) continue;
         const camp = byExt.get(String(r.campaign.id));
-        if (!camp?.domain_id) { noCamp++; continue; }
+        const site = camp ? siteForDay(tl, acc.id, r.segments.date, camp.domain_id) : null;
+        if (!camp || !site) { noCamp++; continue; }
         if ((p.type === 'app' || p.type === 'youtube') && !labels.has(p.key)) labels.set(p.key, { label: p.type === 'youtube' ? 'YouTube' : v.displayName || p.key, type: p.type });
-        facts.push({ ...zero, date: r.segments.date, domainId: camp.domain_id, campaignId: camp.id, placement: p.key,
+        facts.push({ ...zero, date: r.segments.date, domainId: site, campaignId: camp.id, placement: p.key,
           spendUsd: toUsd(Number(r.metrics.costMicros ?? 0) / 1e6, acc.currency, r.segments.date), clicks: Number(r.metrics.clicks ?? 0), trafficImpressions: Number(r.metrics.impressions ?? 0) });
       }
       total += await replacePlacements('google-ads', w.from, w.to, camps.map((x) => x.id), facts);
@@ -189,7 +192,9 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
           try { got = { rows: (await runReport(net.external_id, token, w.from, w.to, [{ ...contentKey, ekv: true }], 'pluto-placements-ekv')).rows, layout: { site: true, country: true, core: false, filter: false } }; ekv = true; }
           catch (e) { if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e; }
         }
-        const { rows: raw, layout } = got ?? await runKvReport(net.external_id, token, w.from, w.to, [], 'pluto-placements-kv', [], contentKey.adTagName);
+        let { rows: raw, layout } = got ?? await runKvReport(net.external_id, token, w.from, w.to, [], 'pluto-placements-kv', [], contentKey.adTagName);
+        // 0.17.1: aceito por bloco de anúncios → vira site pelo mapa bloco → site
+        if (layout.unit) { raw = unitsToSites(raw, await fetchUnitMap(net.external_id, token, w.from, w.to), { rows: 0, revenue: 0 }); layout = { ...layout, site: true, unit: false }; }
         const netSites = layout.site ? [] : (await q<{ hostname: string }>('SELECT hostname FROM domains WHERE gam_account_id = $1 AND NOT is_technical', [net.id])).map((x) => x.hostname);
         if (!layout.site && netSites.length !== 1) { notes.push(`${net.name}: o Ad Manager só aceitou o relatório de placements sem site e a rede tem ${netSites.length} sites; placements desta rede ficam sem receita`); continue; }
         const rows = layout.site ? raw : raw.map((r) => ({ ...r, dimensionValues: r.dimensionValues.map((v, i) => (i === 1 && str(v) === ALL ? { stringValue: netSites[0] } : v)) }));

@@ -12,6 +12,7 @@
 import { config } from '../../config.js';
 import { q } from '../../db.js';
 import { addDays } from '../../lib/dates.js';
+import { loadTimeline, siteForDay } from '../accountLinks.js';
 import { accountDomains, domainResolver, technicalDomainId, emptyFact, fxToUsd, metaIvaRate, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
 import { isMetaRateLimit, isMetaTooMuchData, requestJson, sleep, SyncError } from './http.js';
 import { metaAccessToken } from './tokens.js';
@@ -202,6 +203,8 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
   const iva = await metaIvaRate();
   const url = urlCache();
   const tech = kind === 'metrics' ? await technicalDomainId() : null;
+  // 0.17: site da conta em cada dia (vínculo com data)
+  const tl = await loadTimeline(accs.map((a) => a.id));
   const notes: string[] = [];
   let ok = 0, rowsTotal = 0;
   for (const acc of accs) {
@@ -230,7 +233,8 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
         const spendUsd = toUsd!(Number(r.spend ?? 0), acc.currency, r.date_start);
         const clicks = Number(r.inline_link_clicks ?? r.clicks ?? 0);
         // manual → criativo → campanha → domínio único da conta (ver resolveDomain)
-        const resolved = st.resolveDomain(a, c);
+        const found = st.resolveDomain(a, c);
+        const resolved = siteForDay(tl, acc.id, r.date_start, found);
         if (!resolved) {
           // sem domínio identificável (ex.: campanha de mensagens/chatbot): grava no domínio técnico "Sem domínio"
           // para o custo e o IVA não sumirem, e soma para o aviso da conta

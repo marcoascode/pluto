@@ -4,6 +4,9 @@ import { one, q, tx } from '../../db.js';
 import { conflict, notFound, parse } from '../../lib/http.js';
 import { today } from '../../lib/dates.js';
 import { config } from '../../config.js';
+import { decrypt, encrypt } from '../../lib/crypto.js';
+import { providersOf, snapshotAccount } from '../../services/accountLinks.js';
+import { requestRun } from '../../services/sync/index.js';
 
 export const domainsRouter = Router();
 
@@ -19,6 +22,8 @@ const DOMAIN_SQL = `
          COALESCE(array_agg(a.id::text ORDER BY a.name) FILTER (WHERE a.provider = 'google-ads'), '{}') AS "googleAccounts",
          COALESCE(array_agg(a.id::text ORDER BY a.name) FILTER (WHERE a.provider = 'meta'), '{}') AS "metaAccounts",
          d.gam_account_id::text AS "gamAccountId",
+         d.registrar, d.expires_on::text AS "expiresOn", d.hosting, d.wp_user AS "wpUser", (d.wp_password_enc IS NOT NULL) AS "hasWpPassword",
+         d.wp_updated_at AS "wpUpdatedAt",
          COALESCE((SELECT json_agg(json_build_object('userId', u.id::text, 'name', u.name,
              'googleAccounts', COALESCE((SELECT array_agg(x.account_id::text) FROM domain_manager_accounts x JOIN integration_accounts ia ON ia.id = x.account_id WHERE x.domain_id = dm.domain_id AND x.user_id = dm.user_id AND ia.provider = 'google-ads'), '{}'),
              'metaAccounts',   COALESCE((SELECT array_agg(x.account_id::text) FROM domain_manager_accounts x JOIN integration_accounts ia ON ia.id = x.account_id WHERE x.domain_id = dm.domain_id AND x.user_id = dm.user_id AND ia.provider = 'meta'), '{}')
@@ -71,7 +76,15 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
     googleAccounts: z.array(z.string().regex(/^\d+$/)).max(200).optional(), metaAccounts: z.array(z.string().regex(/^\d+$/)).max(200).optional(),
     revShare: revShare.optional(), revShareFrom: ISO.optional(),
     gamAccountId: z.string().regex(/^\d+$/).nullable().optional(),   // um domínio = uma conta do Ad Manager
+    // 0.17: data a partir da qual o novo vínculo de contas vale (padrão hoje; a despesa de antes fica no site antigo)
+    accountsFrom: ISO.optional(),
+    // 0.17: registro do domínio
+    registrar: z.string().trim().max(120).nullable().optional(), expiresOn: ISO.nullable().optional(),
+    hosting: z.string().trim().max(160).nullable().optional(), wpUser: z.string().trim().max(160).nullable().optional(),
+    wpPassword: z.string().max(300).nullable().optional(),   // texto = troca · null = apaga · ausente = mantém
   }), req.body);
+  if (b.accountsFrom && b.accountsFrom > today()) throw conflict('future_date', 'A data do vínculo não pode ser no futuro.');
+  const touched = new Set<string>();
   const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
   if (!d) throw notFound('Domínio não encontrado.');
   await tx(async (c) => {
@@ -100,10 +113,23 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
       if (!list) continue;
       const ok = await q<{ id: string }>('SELECT id::text FROM integration_accounts WHERE provider = $1 AND id = ANY($2::bigint[])', [prov, list], c);
       if (ok.length !== new Set(list).size) throw conflict('unknown_account', 'Alguma conta da lista não existe.');
+      const before = (await q<{ id: string }>('SELECT da.account_id::text AS id FROM domain_accounts da JOIN integration_accounts a ON a.id = da.account_id WHERE da.domain_id = $1 AND a.provider = $2', [d.id, prov], c)).map((r) => r.id);
       await c.query('DELETE FROM domain_accounts da USING integration_accounts a WHERE da.account_id = a.id AND a.provider = $2 AND da.domain_id = $1', [d.id, prov]);
       for (const a of ok) await c.query('INSERT INTO domain_accounts (domain_id, account_id) VALUES ($1, $2)', [d.id, a.id]);
+      const after = ok.map((a) => a.id);
+      for (const a of [...before.filter((x) => !after.includes(x)), ...after.filter((x) => !before.includes(x))]) touched.add(a);
+    }
+    // 0.17: histórico do vínculo (a despesa até a data fica no site antigo)
+    for (const a of touched) await snapshotAccount(c, a, b.accountsFrom ?? today(), req.user!.id);
+    // 0.17: registro do domínio
+    const reg: [string, unknown][] = [['registrar', b.registrar], ['expires_on', b.expiresOn], ['hosting', b.hosting], ['wp_user', b.wpUser]];
+    for (const [col, v] of reg) if (v !== undefined) await c.query(`UPDATE domains SET ${col} = $2 WHERE id = $1`, [d.id, v === '' ? null : v]);
+    if (b.wpPassword !== undefined) {
+      await c.query('UPDATE domains SET wp_password_enc = $2, wp_updated_at = now(), wp_updated_by = $3 WHERE id = $1', [d.id, b.wpPassword ? encrypt(b.wpPassword) : null, req.user!.id]);
+      await c.query('INSERT INTO domain_secret_access (domain_id, user_id, action) VALUES ($1, $2, $3)', [d.id, req.user!.id, b.wpPassword ? 'update' : 'clear']);
     }
   });
+  if (touched.size) for (const p of await providersOf([...touched])) { requestRun(p === 'meta' ? 'meta.metrics' : 'google-ads.metrics'); if (p === 'google-ads') requestRun('google-ads.placements'); }
   res.json(await get(b.hostname ?? host));
 });
 
@@ -116,4 +142,18 @@ domainsRouter.delete('/domains/:hostname', async (req, res) => {
   if (await one('SELECT 1 FROM daily_metrics WHERE domain_id = $1 LIMIT 1', [d.id])) throw conflict('domain_has_data', 'Este domínio tem dados históricos. Desative em vez de excluir.');
   await q('DELETE FROM domains WHERE id = $1', [d.id]);
   res.status(204).end();
+});
+
+/**
+ * 0.17 · Senha do WordPress: só sai daqui, um domínio por vez, e cada leitura fica registrada (domain_secret_access).
+ * Fica criptografada (AES-256-GCM, chave TOKEN_ENC_KEY) e não aparece na lista de domínios.
+ */
+domainsRouter.post('/domains/:hostname/wp-password', async (req, res) => {
+  const host = parse(HOST, req.params.hostname);
+  const d = await one<{ id: string; enc: Buffer | null; user: string | null }>('SELECT id::text, wp_password_enc AS enc, wp_user AS user FROM domains WHERE hostname = $1', [host]);
+  if (!d) throw notFound('Domínio não encontrado.');
+  if (!d.enc) throw notFound('Nenhuma senha cadastrada para este domínio.');
+  await q('INSERT INTO domain_secret_access (domain_id, user_id, action) VALUES ($1, $2, $3)', [d.id, req.user!.id, 'view']);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ user: d.user, password: decrypt(d.enc) });
 });

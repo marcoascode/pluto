@@ -18,6 +18,7 @@ import { financeRouter } from './routes/finance.js';
 import { placementsRouter } from './routes/placements.js';
 import { companiesReadRouter } from './routes/companies.js';
 import { adminRouter } from './routes/admin/index.js';
+import { linksRouter } from './routes/links.js';
 import { backfillIfEmpty } from './services/fx.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
 
@@ -51,6 +52,7 @@ export function createApp() {
   app.use(companiesReadRouter);
   app.use('/placements', placementsRouter);
   app.use('/finance', financeRouter);
+  app.use('/links', linksRouter);   // 0.17: Contas × Sites (gestor, gerente, admin)
   app.use(metricsRouter);
 
   app.use(notFoundHandler);

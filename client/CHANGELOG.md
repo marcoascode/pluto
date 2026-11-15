@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.1
+- **Retenção por site**: o utm_source (push/WhatsApp) não é mais repartido entre os sites da rede quando o Ad Manager só entrega o total da rede; bloco de anúncios → site quando a rede recusa Key-values com SITE; Key-values aprimorados aceitos key a key (basta utm_source marcado).
+
+## 0.17.0
+- **Domínios**: Registro (onde foi comprado), Vencimento (alerta em 30 dias e vencido), Hospedagem, Usuário WP e Senha WP (criptografada; "Mostrar senha" registra quem abriu; só Admin/SuperAdmin).
+- **Contas × Sites** (`/vinculos`): a despesa da conta segue o vínculo de cada dia. Até a data da mudança fica no site antigo; a partir dela, no novo. Data editável só por Gerente/Admin/SuperAdmin; histórico com editar/excluir.
+- **Gestores**: Gerente/Admin/SuperAdmin atribuem domínios e contas Google/Meta; o gestor só vê e só liga as contas dele aos domínios dele (sempre a partir de hoje). Restrição também no servidor.
+
 ## 0.10.0
 - **Métricas (Prompt-06)**:
   - Meta: Impressões Meta, Cliques Meta (`link_click`), CPC-L, Resultados (`onsite_conversion.messaging_conversation_started_7d`), CPR, Leads (`lead`), CPL; o sync pede `actions` no insights (`meta.ts`), em colunas novas de `daily_metrics`;

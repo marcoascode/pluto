@@ -49,9 +49,9 @@ export const MACC: AccountStatus[] = [
 export const accName = (id: string) => [...GACC, ...MACC].find((a) => a.id === id)?.name ?? id;
 
 export const DOMAINS: Domain[] = [
-  { hostname: 'dominioX.com', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g1', 'g2'], metaAccounts: ['m1'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
+  { hostname: 'dominioX.com', registrar: 'Registro.br', expiresOn: addDays(todayISO(), 18), hosting: 'VPS 01', wpUser: 'admin-x', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g1', 'g2'], metaAccounts: ['m1'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
   { hostname: 'dominioY.com', revShare: 7, revShareFrom: null, active: true, squadId: 's1', googleAccounts: ['g3'], metaAccounts: [], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 5 * 60000).toISOString() },
-  { hostname: 'dominioZ.com', revShare: 10, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g1'], metaAccounts: ['m1'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
+  { hostname: 'dominioZ.com', registrar: 'GoDaddy', expiresOn: addDays(todayISO(), 240), hosting: 'VPS 02', wpUser: 'editor-z', revShare: 10, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g1'], metaAccounts: ['m1'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 4 * 60000).toISOString() },
   { hostname: 'dominioA.com', revShare: 7, revShareFrom: null, active: true, squadId: 's2', googleAccounts: ['g4'], metaAccounts: ['m2'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 52 * 60000).toISOString() },
   { hostname: 'dominioB.com', revShare: 12, revShareFrom: null, active: true, squadId: null, googleAccounts: ['g5'], metaAccounts: ['m3'], gamAccountId: 'n1', managers: [], lastDataAt: new Date(Date.now() - 22 * 60000).toISOString() },
   { hostname: 'dominioC.com', revShare: 0, revShareFrom: null, active: false, squadId: null, googleAccounts: [], metaAccounts: [], gamAccountId: null, managers: [], lastDataAt: null },

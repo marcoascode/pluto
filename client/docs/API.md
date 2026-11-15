@@ -161,6 +161,21 @@ Implementado em `server/src/routes/admin/*`. Erros de regra de negócio voltam c
 | POST | `/admin/domains` | `{ hostname }` | `201 Domain` (normaliza: sem https://, www. e caminho) |
 | PATCH | `/admin/domains/:hostname` | `DomainInput` | `Domain`. Renomear, ativar/desativar, Squad, contas Google/Meta (ids), `gamAccountId` (a conta do Ad Manager do domínio — uma só). `managers` (gestores + contas) vem na resposta e é editado em `/admin/users` |
 | DELETE | `/admin/domains/:hostname` | — | 204. `409 domain_has_data` se tiver histórico (desative em vez de excluir) |
+| POST | `/admin/domains/:hostname/wp-password` | — | 0.17 · `{ user, password }` (senha WP aberta). `Cache-Control: no-store`; grava quem abriu em `domain_secret_access`. Só Admin/SuperAdmin |
+
+0.17 · `DomainInput` também aceita `registrar`, `expiresOn` (YYYY-MM-DD), `hosting`, `wpUser`, `wpPassword` (texto grava, `null` apaga; a senha fica criptografada com AES-256-GCM e nunca volta no `GET`, só `hasWpPassword`) e `accountsFrom` (data a partir da qual a mudança de contas vale; não pode ser futura).
+
+### Contas × Sites (0.17 · Gestor, Gerente, Admin, SuperAdmin; o servidor filtra pelo alcance)
+| Método | Rota | Corpo | Resposta |
+|---|---|---|---|
+| GET | `/links` | — | `{ viewer: { role, canDate, canAssign, today }, domains, accounts: [{ id, name, provider, externalId, domains: [{ id, hostname, editable }], since, history: [{ id, from, domains, by, at }] }] }`. Gestor: só as contas e os domínios atribuídos a ele |
+| PUT | `/links/:accountId` | `{ domainIds, from? }` | Liga a conta aos sites (vínculos de outros responsáveis ficam). `from` só para Gerente/Admin/SuperAdmin (Gestor = hoje; outra data → 403). Futuro → `409 future_date` |
+| PATCH | `/links/history/:id` | `{ from }` | Muda a data de uma mudança (Gerente+). `409 date_taken` se já houver outra no mesmo dia |
+| DELETE | `/links/history/:id` | — | 204. Exclui a mudança; os dias passam a seguir o período anterior (Gerente+) |
+| GET | `/links/assignments` | — | `{ gestores: [{ id, name, email, domains, accounts, otherDomains, otherAccounts }], accounts, domains }` (Gerente+) |
+| PUT | `/links/assignments/:userId` | `{ domainIds?, accountIds? }` | Atribui domínios e contas ao gestor. Só mexe no que está no alcance de quem edita |
+
+Regra da despesa: no dia D, a conta paga os sites do período com a maior data `≤ D` (`account_domain_history`). Até a data de uma mudança a despesa fica no site antigo; a partir dela, no novo. Os syncs (Google Ads, Meta, Placements) e a troca manual de domínio da campanha seguem essa regra.
 | PUT | `/admin/utm-templates` | `{ google, meta }` | `UtmTemplates` |
 
 **Domínio técnico `sem-dominio` ("Sem domínio"):** vem em `/admin/domains` com `technical: true`. Recebe o custo de campanhas sem domínio identificável (ex.: Meta de mensagens/chatbot) para o spend e o IVA baterem com a fatura. Só Admin/SuperAdmin enxergam (em `/dashboard`, `/domains/*`, `/campaigns`…). Para Gestor/Gerente/sócio ele não existe: `?domain=sem-dominio` → `403`. PATCH/DELETE → `409 technical_domain`; não entra em Squad, gestor, conta nem rede do Ad Manager (também bloqueado no banco).
