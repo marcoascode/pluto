@@ -91,5 +91,11 @@ export const config = {
     fallbackUrl: process.env.FX_FALLBACK_URL ?? 'https://open.er-api.com/v6/latest/USD',
     backfillDays: Number(process.env.FX_BACKFILL_DAYS ?? 430),
   },
+  /** 0.18 · Geração de copies (Anthropic). A chave fica só no ambiente do servidor; sem ela as rotas de IA respondem 503. */
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5-5',
+    timeoutMs: Number(process.env.ANTHROPIC_TIMEOUT_MS ?? 90_000),
+  },
   schedulerEnabled: bool(process.env.SCHEDULER_ENABLED, true),
 } as const;

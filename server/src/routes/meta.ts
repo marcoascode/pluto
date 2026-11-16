@@ -12,6 +12,11 @@ import { z } from 'zod';
 import { one, q } from '../db.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { HttpError, notFound, parse } from '../lib/http.js';
+import rateLimit from 'express-rate-limit';
+import { scope } from '../auth/scope.js';
+import { copyRequest, generateCopies } from '../services/metaCopies.js';
+import { suggestCampaign } from '../services/metaHistory.js';
+import { buildMetaTrackedUrl } from '../services/utm.js';
 import { listAdAccountPixels, listAdAccounts, listBusinessDatasets, listPages, toHttpError, validateToken } from '../services/metaGraph.js';
 
 export const metaRouter = Router();
@@ -122,4 +127,39 @@ metaRouter.get('/profiles/:id/pixels', async (req, res) => {
   const ok = await one(`SELECT 1 FROM manager_accounts ma JOIN integration_accounts a ON a.id = ma.account_id WHERE ma.user_id = $1 AND a.provider = 'meta' AND a.external_id = $2`, [req.user!.id, acc]);
   if (!ok) throw notFound('Conta de anúncios não atribuída a você.');
   res.json({ pixels: await listAdAccountPixels(p.token, acc).catch((e) => { throw toHttpError(e); }) });
+});
+
+/* ================= Etapa 2 · Motor de inteligência e histórico ================= */
+
+/** Site (domínio) selecionado: precisa estar no escopo do usuário (gestor: só os dele). Devolve id, host e filtro de linhas. */
+async function siteOf(req: Request, site: unknown) {
+  const host = parse(z.string().trim().toLowerCase().min(3).max(253), site);
+  const sc = await scope(req, host);
+  return { id: sc.ids[0], hostname: sc.hosts[0], filter: sc.filter };
+}
+
+/** Chamadas à IA custam dinheiro: limite por usuário. */
+const aiLimiter = rateLimit({ windowMs: 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
+  keyGenerator: (req) => `u:${req.user?.id ?? 'anon'}`, validate: { keyGeneratorIpFallback: false },
+  handler: (_req, res) => { res.status(429).json({ error: { code: 'rate_limited', message: 'Muitas gerações seguidas. Aguarde um minuto.' } }); } });
+
+/** Gera X variações completas de copy (título, texto principal, descrição, CTA) numa única chamada à IA. */
+metaRouter.post('/copies/generate', aiLimiter, async (req, res) => {
+  const b = parse(copyRequest.extend({ site: z.string() }), req.body);
+  const site = await siteOf(req, b.site);
+  res.json({ site: site.hostname, ...(await generateCopies(b, site.hostname)) });
+});
+
+/** Sugestão de campanha (objetivo, orçamento diário, público, posicionamentos, janela) a partir do histórico Meta do site. */
+metaRouter.get('/campaign-suggestion', async (req, res) => {
+  const site = await siteOf(req, req.query.site);
+  const days = parse(z.coerce.number().int().min(14).max(180).default(60), req.query.days);
+  res.json(await suggestCampaign({ domainId: site.id, hostname: site.hostname, filter: site.filter, days }));
+});
+
+/** URL de destino já parametrizada com o template de UTM do Pluto (link limpo + url_tags + preview). */
+metaRouter.post('/tracked-url', async (req, res) => {
+  const b = parse(z.object({ site: z.string(), url: z.string().max(2000) }), req.body);
+  const site = await siteOf(req, b.site);
+  res.json({ site: site.hostname, ...(await buildMetaTrackedUrl(b.url, site.hostname)) });
 });
