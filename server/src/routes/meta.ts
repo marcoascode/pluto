@@ -14,12 +14,15 @@ import { decrypt, encrypt } from '../lib/crypto.js';
 import { HttpError, notFound, parse } from '../lib/http.js';
 import rateLimit from 'express-rate-limit';
 import { scope } from '../auth/scope.js';
+import { metaCampaignsRouter } from './metaCampaigns.js';
 import { copyRequest, generateCopies } from '../services/metaCopies.js';
 import { suggestCampaign } from '../services/metaHistory.js';
 import { buildMetaTrackedUrl } from '../services/utm.js';
 import { listAdAccountPixels, listAdAccounts, listBusinessDatasets, listPages, toHttpError, validateToken } from '../services/metaGraph.js';
 
+
 export const metaRouter = Router();
+metaRouter.use(metaCampaignsRouter);   // Etapa 3: já herda requireMetaCampaigns do mount em /meta
 
 const ID = z.string().regex(/^\d+$/, 'id inválido');
 const TOKEN = z.string().trim().min(20).max(1000).regex(/^\S+$/, 'token inválido');

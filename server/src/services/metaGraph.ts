@@ -4,7 +4,7 @@
  */
 import { config } from '../config.js';
 import { HttpError } from '../lib/http.js';
-import { requestJson, SyncError } from './sync/http.js';
+import { isMetaRateLimit, requestJson, sleep, SyncError } from './sync/http.js';
 
 const base = () => `${config.api.metaGraph}/${config.oauth.metaApiVersion}`;
 const MAX_PAGES = 20;
@@ -86,4 +86,55 @@ export async function listBusinessDatasets(token: string, businessId: string): P
 /** Pixels de uma conta de anúncios. */
 export async function listAdAccountPixels(token: string, accountId: string): Promise<MetaDataset[]> {
   return (await graphList<any>(token, `act_${norm(accountId)}/adspixels`, { fields: DS_FIELDS })).map(toDataset);
+}
+
+/* ---------------- escrita (Etapa 3) ---------------- */
+/** Esperas antes de repetir uma chamada que bateu no limite de uso da Meta (5s, 15s, 45s). */
+const RATE_LIMIT_WAITS_MS = [5_000, 15_000, 45_000];
+
+export interface CallInfo { attempts: number; rateLimited: boolean }
+
+/**
+ * Executa uma escrita na Graph API. Só repete quando a Meta diz que o limite de uso foi atingido (a chamada foi recusada,
+ * então repetir não duplica nada). Falha de rede/5xx NÃO é repetida: a criação pode ter acontecido e repetir geraria
+ * objetos duplicados — o erro sobe e fica registrado na etapa.
+ */
+export async function withRateLimit<T>(fn: () => Promise<T>, info: CallInfo, onWait?: (ms: number) => void): Promise<T> {
+  for (let i = 0; ; i++) {
+    info.attempts++;
+    try { return await fn(); } catch (e) {
+      const limited = e instanceof SyncError && (e.code === 'rate_limit' || isMetaRateLimit(e));
+      if (!limited) throw e;
+      info.rateLimited = true;
+      if (i >= RATE_LIMIT_WAITS_MS.length) throw e;
+      onWait?.(RATE_LIMIT_WAITS_MS[i]);
+      await sleep(RATE_LIMIT_WAITS_MS[i]);
+    }
+  }
+}
+
+/** POST JSON (objetos aninhados vão direto no corpo). Sem retry interno do requestJson (ver withRateLimit). */
+export function graphPost<T = any>(token: string, path: string, body: Record<string, unknown>): Promise<T> {
+  return requestJson<T>(`${base()}/${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body, retries: 0, timeoutMs: 45_000 });
+}
+
+export function graphDelete<T = any>(token: string, path: string): Promise<T> {
+  return requestJson<T>(`${base()}/${path}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` }, retries: 0, timeoutMs: 30_000 });
+}
+
+/** Sobe UMA imagem (direto do buffer em memória) para a biblioteca da conta e devolve o image_hash. Nada é gravado em disco. */
+export async function uploadAdImage(token: string, accountId: string, data: Buffer, filename: string): Promise<{ hash: string; url: string | null }> {
+  const form = new FormData();
+  form.append('filename', new Blob([new Uint8Array(data)]), filename);   // o nome do campo vira a chave em `images`
+  const r = await requestJson<{ images?: Record<string, { hash?: string; url?: string }> }>(`${base()}/act_${norm(accountId)}/adimages`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form, retries: 0, timeoutMs: 90_000 });
+  const img = Object.values(r.images ?? {})[0];
+  if (!img?.hash) throw new SyncError('api', 'A Meta não devolveu o image_hash da imagem.');
+  return { hash: img.hash, url: img.url ?? null };
+}
+
+export interface AdAccountInfo { currency: string | null; status: number | null }
+export async function getAdAccountInfo(token: string, accountId: string): Promise<AdAccountInfo> {
+  const a = await graphGet<{ currency?: string; account_status?: number }>(token, `act_${norm(accountId)}`, { fields: 'currency,account_status' });
+  return { currency: a.currency ?? null, status: a.account_status ?? null };
 }
