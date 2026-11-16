@@ -11,6 +11,7 @@ import { requireCap } from '../auth/session.js';
 import { allowedDomains, canSeeCampaign, scope, type RowFilter, type Scope } from '../auth/scope.js';
 import { AD_SOURCES, aggregate, retentionChannel, roiDays, total, toMetrics, type Currency, type Metrics } from '../services/metrics.js';
 import * as fx from '../services/fx.js';
+import { utmTemplates } from '../services/utm.js';
 
 export const metricsRouter = Router();
 
@@ -293,9 +294,7 @@ metricsRouter.get('/search', async (req, res) => {
 });
 
 /* ---------- UTMs ---------- */
-async function templates() {
-  return (await one<{ value: { google: string; meta: string } }>(`SELECT value FROM app_settings WHERE key = 'utm_templates'`))?.value ?? { google: '', meta: '' };
-}
+const templates = utmTemplates;
 metricsRouter.get('/utm/templates', async (_req, res) => { res.json(await templates()); });
 
 metricsRouter.post('/utm/debug', requireCap('utm.debug'), async (req, res) => {

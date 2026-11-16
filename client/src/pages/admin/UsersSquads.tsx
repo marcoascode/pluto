@@ -1,4 +1,4 @@
-import { Alert, Avatar, AvatarGroup, Box, Button, Card, CardContent, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, ListItemText, MenuItem, Snackbar, Stack, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Avatar, AvatarGroup, Box, Button, Card, CardContent, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, ListItemText, MenuItem, Snackbar, Stack, Switch, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
@@ -54,6 +54,9 @@ function UsersTab() {
   const { user: me, isSuperAdmin } = useAuth();
   const remove = useAdminMutation(adminApi.deleteUser, INV);
   const resend = useAdminMutation(adminApi.resendInvite, [qk.users]);
+  // 0.18: flag da criação automatizada de campanhas Meta — só o SuperAdmin vê e altera (o servidor responde 403 para os demais)
+  const metaFlag = useAdminMutation(adminApi.setMetaCampaigns, [qk.users]);
+  const toggleMeta = (u: User, enabled: boolean) => metaFlag.mutate({ id: u.id, enabled }, { onSuccess: () => setToast(`${enabled ? 'Criação de campanhas Meta liberada para' : 'Criação de campanhas Meta removida de'} ${u.name}`), onError: (e) => setToast(e instanceof ApiError ? e.message : 'Não foi possível alterar a permissão.') });
   if (error) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data) return <PageSkeleton />;
   const access = (u: User) => {
@@ -70,7 +73,7 @@ function UsersTab() {
         <Typography variant="caption">O convite com a senha temporária é enviado pelo servidor.</Typography>
       </Stack>
       <TableContainer component={Card}><Table>
-        <TableHead><TableRow>{['Nome', 'E-mail', 'Permissão', 'Acesso', 'Sócio de', 'Status', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
+        <TableHead><TableRow>{[...['Nome', 'E-mail', 'Permissão', 'Acesso', 'Sócio de', 'Status'], ...(isSuperAdmin ? ['Criação Automatizada de Campanhas Meta'] : []), ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
         <TableBody>{data.users.map((u) => (
           <TableRow key={u.id}>
             <TableCell><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Avatar sx={avatarSx}>{initials(u.name)}</Avatar><span>{u.name}</span></Stack></TableCell>
@@ -79,6 +82,14 @@ function UsersTab() {
             <TableCell sx={{ whiteSpace: 'normal', maxWidth: 260 }}>{access(u)}</TableCell>
             <TableCell sx={{ whiteSpace: 'normal' }}>{u.companyIds.length ? <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{u.companyIds.map((id) => <Chip key={id} size="small" icon={<ApartmentRoundedIcon sx={{ fontSize: '14px !important' }} />} label={co?.companies.find((c) => c.id === id)?.name ?? id} sx={{ height: 22 }} />)}</Stack> : '—'}</TableCell>
             <TableCell>{u.status === 'active' ? <Tag tone="pos">Ativo</Tag> : <Tag tone="warn">{u.status === 'invited' ? 'Convite enviado' : 'Desativado'}</Tag>}</TableCell>
+            {isSuperAdmin && (
+              <TableCell>
+                <Tooltip title={u.status === 'disabled' && !u.canCreateMetaCampaigns ? 'Usuário desativado não pode receber essa permissão' : 'Libera as telas “Criar campanhas Meta” e “Perfis & BMs” para este usuário'}>
+                  <span><Switch size="small" checked={!!u.canCreateMetaCampaigns} disabled={metaFlag.isPending || (u.status === 'disabled' && !u.canCreateMetaCampaigns)}
+                    onChange={(_, v) => toggleMeta(u, v)} slotProps={{ input: { 'aria-label': `Criação Automatizada de Campanhas Meta para ${u.name}` } }} /></span>
+                </Tooltip>
+              </TableCell>
+            )}
             <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
               {u.status === 'invited' && <Tooltip title="Reenviar convite"><IconButton size="small" aria-label={`Reenviar convite para ${u.name}`} onClick={() => resend.mutate(u.id, { onSuccess: () => setToast(`Convite reenviado para ${u.email}`), onError: (e) => setToast(e instanceof ApiError ? e.message : 'Falhou') })}><ForwardToInboxOutlinedIcon fontSize="small" /></IconButton></Tooltip>}{' '}
               <Tooltip title="Editar"><span><IconButton size="small" aria-label={`Editar ${u.name}`} disabled={(!!u.isMainAdmin && u.id !== me?.id) || (u.role === 'superadmin' && !isSuperAdmin)} onClick={() => setForm(u)}><EditOutlinedIcon fontSize="small" /></IconButton></span></Tooltip>{' '}

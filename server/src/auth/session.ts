@@ -17,6 +17,8 @@ export interface SessionUser {
   status: 'active' | 'invited' | 'disabled';
   mustChangePassword: boolean;
   isMainAdmin: boolean;
+  /** 0.18: libera a criação automatizada de campanhas Meta. Só o SuperAdmin atribui. */
+  canCreateMetaCampaigns: boolean;
   permissions: Capability[];
 }
 declare global {
@@ -24,7 +26,7 @@ declare global {
 }
 
 export const USER_SQL = `
-  SELECT u.id::text, u.name, u.email, u.role, u.status, u.must_change_password AS "mustChangePassword", u.is_main_admin AS "isMainAdmin",
+  SELECT u.id::text, u.name, u.email, u.role, u.status, u.must_change_password AS "mustChangePassword", u.is_main_admin AS "isMainAdmin", u.can_create_meta_campaigns AS "canCreateMetaCampaigns",
          COALESCE((SELECT array_agg(su.squad_id::text ORDER BY su.squad_id) FROM squad_users su WHERE su.user_id = u.id), '{}') AS "squadIds",
          COALESCE((SELECT array_agg(cu.company_id::text ORDER BY cu.company_id) FROM company_users cu WHERE cu.user_id = u.id), '{}') AS "companyIds",
          COALESCE((SELECT json_agg(json_build_object(
@@ -82,6 +84,10 @@ export const requireAdmin = (req: Request, _res: Response, next: NextFunction) =
 /** Conectar integrações e mudar a frequência do sync: só SuperAdmin. */
 export const requireSuperAdmin = (req: Request, _res: Response, next: NextFunction) =>
   req.user?.role === 'superadmin' ? next() : next(new HttpError(403, 'superadmin_only', 'Só o SuperAdmin pode conectar integrações e mudar a frequência de sincronização.'));
+
+/** Criação automatizada de campanhas Meta (0.18): exige a flag can_create_meta_campaigns no usuário (atribuída só pelo SuperAdmin). */
+export const requireMetaCampaigns = (req: Request, _res: Response, next: NextFunction) =>
+  req.user?.canCreateMetaCampaigns ? next() : next(new HttpError(403, 'meta_campaigns_disabled', 'A criação de campanhas Meta não está liberada para o seu usuário.'));
 
 /** Senha nova precisa: 10+ caracteres, letra e número. */
 export function checkPasswordStrength(p: string) {

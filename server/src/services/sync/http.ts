@@ -18,8 +18,9 @@ export async function requestJson<T = any>(url: string, o: ReqOpts = {}): Promis
     try {
       const r = await fetch(url, {
         method: o.method ?? 'GET',
-        headers: { Accept: 'application/json', ...(o.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...o.headers },
-        body: o.body !== undefined ? JSON.stringify(o.body) : undefined,
+        // FormData (upload multipart): o fetch define o Content-Type com o boundary
+        headers: { Accept: 'application/json', ...(o.body !== undefined && !(o.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}), ...o.headers },
+        body: o.body === undefined ? undefined : o.body instanceof FormData ? o.body : JSON.stringify(o.body),
         signal: AbortSignal.timeout(o.timeoutMs ?? 60_000),
       });
       const text = await r.text();
