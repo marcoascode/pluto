@@ -7,7 +7,7 @@ import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { tempPassword } from '../../lib/crypto.js';
 import { inviteEmail, sendMail } from '../../lib/mailer.js';
-import { killSessions, loadUser, USER_SQL, type SessionUser } from '../../auth/session.js';
+import { killSessions, loadUser, requireSuperAdmin, USER_SQL, type SessionUser } from '../../auth/session.js';
 import { CAPABILITIES, clearPermCache, GESTOR_ALLOWED, rolesMatrix, type Capability } from '../../auth/permissions.js';
 
 export const usersRouter = Router();
@@ -142,6 +142,18 @@ usersRouter.post('/users/:id/resend-invite', async (req, res) => {
   await killSessions(uid);
   const m = inviteEmail(t.name, t.email, pw);
   res.json({ inviteSent: await sendMail(t.email, m.subject, m.html, m.text) });
+});
+
+/** 0.18: libera/revoga a criação automatizada de campanhas Meta. EXCLUSIVO do SuperAdmin (Admin recebe 403). */
+usersRouter.put('/users/:id/meta-campaigns', requireSuperAdmin, async (req, res) => {
+  const uid = parse(id, req.params.id);
+  const b = parse(z.object({ enabled: z.boolean() }), req.body);
+  const t = await loadUser(uid);
+  if (!t) throw notFound('Usuário não encontrado.');
+  if (b.enabled && t.status === 'disabled') throw conflict('disabled', 'Usuário desativado não pode receber essa permissão.');
+  await q(`UPDATE users SET can_create_meta_campaigns = $2, meta_campaigns_granted_by = $3, meta_campaigns_granted_at = now(), updated_at = now() WHERE id = $1`,
+    [uid, b.enabled, req.user!.id]);
+  res.json(await loadUser(uid));
 });
 
 /* ---------------- permissões por papel ---------------- */
