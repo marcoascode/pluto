@@ -27,6 +27,8 @@ const UsersSquads = lazy(() => import('@/pages/admin/UsersSquads'));
 const IntegrationGoogle = lazy(() => import('@/pages/admin/IntegrationGoogle'));
 const IntegrationMeta = lazy(() => import('@/pages/admin/IntegrationMeta'));
 const IntegrationGam = lazy(() => import('@/pages/admin/IntegrationGam'));
+const MetaProfiles = lazy(() => import('@/pages/meta/MetaProfiles'));
+const MetaCampaignWizard = lazy(() => import('@/pages/meta/MetaCampaignWizard'));
 const FinanceCash = lazy(() => import('@/pages/finance/Cash'));
 const FinanceCosts = lazy(() => import('@/pages/finance/Costs'));
 const FinanceCommissions = lazy(() => import('@/pages/finance/Commissions'));
@@ -41,6 +43,11 @@ function RequireCap({ cap, children }: { cap: Capability; children: ReactNode })
   const { can } = useAuth();
   return can(cap) ? <>{children}</> : <NoAccess msg="Este módulo não está liberado para o seu usuário." />;
 }
+/** 0.18: criação automatizada de campanhas Meta — só com a flag atribuída pelo SuperAdmin. O servidor também responde 403. */
+function RequireMetaCampaigns({ children }: { children: ReactNode }) {
+  const { canMetaCampaigns } = useAuth();
+  return canMetaCampaigns ? <>{children}</> : <NoAccess msg="A criação automatizada de campanhas Meta não está liberada para o seu usuário. Peça a um SuperAdmin." />;
+}
 /** Finance: Admin/SuperAdmin e sócios das Empresas. O servidor também responde 403. */
 function RequireFinance({ children }: { children: ReactNode }) {
   const { canFinance } = useAuth();
@@ -49,6 +56,7 @@ function RequireFinance({ children }: { children: ReactNode }) {
 const S = (el: ReactNode) => <Suspense fallback={<PageSkeleton />}>{el}</Suspense>;
 const F = (el: ReactNode) => S(<RequireFinance>{el}</RequireFinance>);
 const C = (cap: Capability, el: ReactNode) => S(<RequireCap cap={cap}>{el}</RequireCap>);
+const M = (el: ReactNode) => S(<RequireMetaCampaigns>{el}</RequireMetaCampaigns>);
 const A = (el: ReactNode) => S(<RequireAdmin>{el}</RequireAdmin>);
 
 export default function App() {
@@ -65,6 +73,8 @@ export default function App() {
         <Route path="vinculos" element={S(<Links />)} />
         <Route path="google-ads" element={C('campaigns.google.view', <Campaigns key="google" platform="google" />)} />
         <Route path="meta-ads" element={C('campaigns.meta.view', <Campaigns key="meta" platform="meta" />)} />
+        <Route path="criar-campanha-meta" element={M(<MetaCampaignWizard />)} />
+        <Route path="perfis-meta" element={M(<MetaProfiles />)} />
         <Route path="empresas/:id" element={S(<CompanyOverview />)} />
         <Route path="placements" element={C('campaigns.google.view', <Placements />)} />
         <Route path="ad-manager" element={C('gam.view', <AdManager />)} />

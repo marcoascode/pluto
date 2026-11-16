@@ -115,6 +115,8 @@ export const adminApi = {
   deleteSquad: (id: string) => api.del<void>(`/admin/squads/${id}`),
   users: () => api.get<{ users: T.User[] }>('/admin/users'),
   createUser: (b: T.CreateUserRequest) => api.post<T.CreateUserResponse>('/admin/users', b),
+  /** 0.18: só SuperAdmin (Admin recebe 403). */
+  setMetaCampaigns: (a: { id: string; enabled: boolean }) => api.put<T.User>(`/admin/users/${a.id}/meta-campaigns`, { enabled: a.enabled }),
   updateUser: (id: string, b: T.UpdateUserRequest) => api.patch<T.User>(`/admin/users/${id}`, b),
   deleteUser: (id: string) => api.del<void>(`/admin/users/${id}`),
   resendInvite: (id: string) => api.post<{ inviteSent: boolean }>(`/admin/users/${id}/resend-invite`),
@@ -136,4 +138,28 @@ export const financeApi = {
   deleteCost: (id: string) => api.del<void>(`/finance/costs/${id}`),
   addCash: (c: T.CashInput) => api.post<{ id: string }>('/finance/cash', c),
   deleteCash: (id: string) => api.del<void>(`/finance/cash/${id}`),
+};
+
+/* ----- 0.18 · campanhas Meta automatizadas (só com a flag can_create_meta_campaigns; o servidor responde 403 sem ela) ----- */
+const MIN = 60_000;
+export const metaCampaignsApi = {
+  profiles: () => api.get<{ profiles: T.MetaProfile[] }>('/meta/profiles'),
+  createProfile: (b: T.MetaProfileInput) => api.post<T.MetaProfile>('/meta/profiles', b, { timeoutMs: MIN }),
+  updateProfile: (a: { id: string; patch: T.MetaProfilePatch }) => api.patch<T.MetaProfile>(`/meta/profiles/${a.id}`, a.patch),
+  deleteProfile: (id: string) => api.del<void>(`/meta/profiles/${id}`),
+  validateProfile: (id: string) => api.post<T.MetaProfile>(`/meta/profiles/${id}/validate`, undefined, { timeoutMs: MIN }),
+  adAccounts: (id: string) => api.get<{ adAccounts: T.MetaAdAccount[]; hiddenCount: number }>(`/meta/profiles/${id}/ad-accounts`),
+  pages: (id: string) => api.get<{ pages: T.MetaPage[] }>(`/meta/profiles/${id}/pages`),
+  datasets: (id: string) => api.get<{ datasets: T.MetaDataset[] }>(`/meta/profiles/${id}/datasets`),
+  pixels: (id: string, adAccountId: string) => api.get<{ pixels: T.MetaDataset[] }>(`/meta/profiles/${id}/pixels`, { adAccountId }),
+  suggestion: (site: string) => api.get<T.MetaSuggestion>('/meta/campaign-suggestion', { site }),
+  trackedUrl: (site: string, url: string) => api.post<T.MetaTrackedUrl>('/meta/tracked-url', { site, url }),
+  generateCopies: (b: T.MetaCopyRequest) => api.post<T.MetaCopyResponse>('/meta/copies/generate', b, { timeoutMs: 2 * MIN }),
+  /** Os arquivos vão do navegador (memória) direto para a API → Meta; nada é salvo em disco. */
+  uploadCreatives: (profileId: string, adAccountId: string, files: File[]) => {
+    const fd = new FormData();
+    for (const f of files) fd.append('images', f, f.name);
+    return api.post<T.MetaUploadResponse>(`/meta/profiles/${profileId}/creatives`, fd, { query: { adAccountId }, timeoutMs: 5 * MIN });
+  },
+  publish: (profileId: string, b: T.MetaPublishRequest) => api.post<{ run: T.MetaRun }>(`/meta/profiles/${profileId}/campaigns/publish`, b, { timeoutMs: 10 * MIN }),
 };

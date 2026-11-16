@@ -1,6 +1,12 @@
 /** Chaves de cache do TanStack Query. Mudou o filtro, muda a chave, busca de novo. */
 import type { PeriodQuery, PlacementQuery, Platform, ReportQuery } from '@/types/api';
 export const qk = {
+  metaProfiles: ['metaProfiles'] as const,
+  metaAdAccounts: (id: string) => ['metaAdAccounts', id] as const,
+  metaPages: (id: string) => ['metaPages', id] as const,
+  metaDatasets: (id: string, account: string) => ['metaDatasets', id, account] as const,
+  metaSuggestion: (site: string) => ['metaSuggestion', site] as const,
+  metaTrackedUrl: (site: string, url: string) => ['metaTrackedUrl', site, url] as const,
   me: ['me'] as const,
   prefs: ['prefs'] as const,
   myDomains: (company?: string) => ['myDomains', company ?? ''] as const,

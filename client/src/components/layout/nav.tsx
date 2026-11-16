@@ -19,13 +19,15 @@ import TrackChangesRoundedIcon from '@mui/icons-material/TrackChangesRounded';
 import AccountBalanceOutlinedIcon from '@mui/icons-material/AccountBalanceOutlined';
 import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined';
 import EmojiEventsOutlinedIcon from '@mui/icons-material/EmojiEventsOutlined';
+import ManageAccountsOutlinedIcon from '@mui/icons-material/ManageAccountsOutlined';
+import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
 
-export interface NavItem { to: string; label: string; icon: ReactElement; cap?: Capability; manager?: boolean }
+export interface NavItem { to: string; label: string; icon: ReactElement; cap?: Capability; manager?: boolean; metaCampaigns?: boolean }
 export const NAV_MAIN: { title: string | null; items: NavItem[] }[] = [
   { title: null, items: [{ to: '/', label: 'Dashboard', icon: <SpaceDashboardOutlinedIcon /> }, { to: '/relatorios', label: 'Relatórios', icon: <TableChartOutlinedIcon />, cap: 'reports.view' }] },
   { title: 'Domínios', items: [{ to: '/dominios', label: 'Domínios / Sites', icon: <LanguageOutlinedIcon /> }, { to: '/urls', label: 'URLs', icon: <LinkRoundedIcon />, cap: 'urls.view' }, { to: '/vinculos', label: 'Contas × Sites', icon: <HubOutlinedIcon /> }] },
-  { title: 'Campanhas', items: [{ to: '/google-ads', label: 'Google Ads', icon: <GoogleIcon />, cap: 'campaigns.google.view' }, { to: '/meta-ads', label: 'Meta Ads', icon: <FacebookRoundedIcon />, cap: 'campaigns.meta.view' }, { to: '/placements', label: 'Placements', icon: <TrackChangesRoundedIcon />, cap: 'campaigns.google.view' }] },
+  { title: 'Campanhas', items: [{ to: '/google-ads', label: 'Google Ads', icon: <GoogleIcon />, cap: 'campaigns.google.view' }, { to: '/meta-ads', label: 'Meta Ads', icon: <FacebookRoundedIcon />, cap: 'campaigns.meta.view' }, { to: '/criar-campanha-meta', label: 'Criar campanhas Meta', icon: <AutoAwesomeOutlinedIcon />, metaCampaigns: true }, { to: '/perfis-meta', label: 'Perfis & BMs', icon: <ManageAccountsOutlinedIcon />, metaCampaigns: true }, { to: '/placements', label: 'Placements', icon: <TrackChangesRoundedIcon />, cap: 'campaigns.google.view' }] },
   { title: 'Monetização', items: [{ to: '/ad-manager', label: 'Google Ad Manager', icon: <PaidOutlinedIcon />, cap: 'gam.view' }] },
   { title: 'Atribuição', items: [{ to: '/atribuicao', label: 'Attribution Health', icon: <MonitorHeartOutlinedIcon />, cap: 'attribution.view' }, { to: '/utm-debugger', label: 'UTM Debugger', icon: <BugReportOutlinedIcon />, cap: 'utm.debug' }] },
 ];

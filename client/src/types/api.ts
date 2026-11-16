@@ -90,6 +90,8 @@ export interface User {
   status: 'active' | 'invited' | 'disabled';
   mustChangePassword: boolean;
   isMainAdmin?: boolean;
+  /** 0.18: criação automatizada de campanhas Meta. Só o SuperAdmin atribui. */
+  canCreateMetaCampaigns?: boolean;
   /** Módulos que o usuário pode abrir (ver Capability). SuperAdmin recebe todos. */
   permissions?: Capability[];
 }
@@ -548,3 +550,76 @@ export interface FinanceCostsResponse {
   totals: { month: number; recurring: number; once: number; byCategory: Partial<Record<CostCategory, number>> };
 }
 export interface CashInput { companyId: string; date: string; kind: CashEntry['kind']; amount: number; currency: Currency; note?: string | null }
+
+
+/* ---------- 0.18 · criação automatizada de campanhas Meta ---------- */
+export interface MetaProfile {
+  id: string;
+  name: string;
+  businessId: string | null;
+  systemUserId: string | null;
+  systemUserName: string | null;
+  tokenLast4: string;
+  status: 'valid' | 'invalid' | 'pending';
+  message: string | null;
+  scopes: string[];
+  lastValidatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface MetaProfileInput { name: string; businessId?: string; token: string }
+export interface MetaProfilePatch { name?: string; businessId?: string | null; token?: string }
+export interface MetaAdAccount { id: string; name: string; status: number | null; currency: string | null; timezone: string | null; businessId: string | null; plutoAccountId: string; sites: string[] }
+export interface MetaPage { id: string; name: string; category: string | null; tasks: string[] }
+export interface MetaDataset { id: string; name: string; lastFiredAt: string | null; unavailable: boolean }
+
+export const META_CTAS = ['LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'DOWNLOAD', 'WATCH_MORE', 'GET_OFFER', 'APPLY_NOW', 'SUBSCRIBE'] as const;
+export type MetaCta = (typeof META_CTAS)[number];
+export const META_COPY_LIMITS = { headline: 40, primaryText: 125, description: 30 } as const;
+export const META_OBJECTIVES = ['OUTCOME_TRAFFIC', 'OUTCOME_SALES', 'OUTCOME_LEADS', 'OUTCOME_ENGAGEMENT'] as const;
+export const META_OPT_GOALS = ['LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'OFFSITE_CONVERSIONS', 'IMPRESSIONS', 'REACH'] as const;
+export const META_CONVERSION_EVENTS = ['PURCHASE', 'LEAD', 'COMPLETE_REGISTRATION', 'ADD_TO_CART', 'INITIATE_CHECKOUT', 'CONTENT_VIEW', 'SUBSCRIBE', 'OTHER'] as const;
+
+export interface MetaCopy { angle?: string; headline: string; primaryText: string; description: string; cta: MetaCta }
+export interface MetaCopyRequest { site: string; count: number; offer: string; language: 'pt-BR' | 'en-US' | 'es-ES'; tone?: string }
+export interface MetaCopyResponse { site: string; model: string; requested: number; returned: number; dropped: number; variations: MetaCopy[] }
+
+export interface MetaSuggestion {
+  site: string;
+  window: { from: string; to: string; days: number };
+  confidence: 'high' | 'medium' | 'low' | 'none';
+  objective: { value: (typeof META_OBJECTIVES)[number]; optimizationGoal: (typeof META_OPT_GOALS)[number]; basis: string; note: string };
+  dailyBudget: { usd: number | null; brl: number | null; rangeUsd: [number, number] | null; basis: string; note: string };
+  audience: { countries: { code: string; spendUsd: number; revenueUsd: number; roi: number | null }[]; avoidCountries: { code: string; spendUsd: number; roi: number | null }[]; ageMin: number; ageMax: number; genders: 'all'; basis: string; note: string };
+  evidence: { campaignId: string; name: string; spendUsd: number; revenueUsd: number; roi: number | null; avgDailySpendUsd: number | null }[];
+  warnings: string[];
+}
+export interface MetaTrackedUrl { site: string; link: string; urlTags: string; preview: string; replaced: string[] }
+
+export interface MetaUploadResponse {
+  adAccountId: string;
+  uploaded: { index: number; filename: string; imageHash: string; url: string | null; bytes: number }[];
+  failed: { index: number; filename: string; code: string; message: string }[];
+}
+
+export interface MetaPublishRequest {
+  adAccountId: string;
+  pageId: string;
+  site: string;
+  url: string;
+  source: 'manual' | 'ai';
+  suggestion?: {
+    objective: { value: MetaSuggestion['objective']['value']; optimizationGoal: MetaSuggestion['objective']['optimizationGoal'] };
+    dailyBudget: { usd: number | null; brl: number | null };
+    audience: { countries: { code: string }[]; ageMin: number; ageMax: number; genders: 'all' };
+  };
+  campaign: { name?: string; objective?: MetaSuggestion['objective']['value']; status: 'PAUSED' | 'ACTIVE' };
+  adset: { dailyBudget?: number; optimizationGoal?: MetaSuggestion['objective']['optimizationGoal']; countries?: string[]; ageMin?: number; ageMax?: number; genders?: 'all' | 'male' | 'female' };
+  tracking: { datasetId?: string; linkDatasetToAdSet: boolean; conversionEvent?: (typeof META_CONVERSION_EVENTS)[number]; linkPixelToAds: boolean };
+  imageHashes: string[];
+  copies: MetaCopy[];
+  pairing: 'zip' | 'cross';
+  rollbackOnFailure: boolean;
+}
+export interface MetaRunStep { id: string; seq: number; kind: 'campaign' | 'adset' | 'creative' | 'ad' | 'rollback'; label: string; status: string; metaId: string | null; attempts: number; rateLimited: boolean; errorHttp: number | null; errorMessage: string | null }
+export interface MetaRun { id: string; profileId: string; adAccountId: string; site: string; source: string; name: string; status: string; metaCampaignId: string | null; metaAdsetId: string | null; error: string | null; createdAt: string; finishedAt: string | null; steps: MetaRunStep[] }

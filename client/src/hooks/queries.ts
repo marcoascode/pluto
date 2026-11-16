@@ -1,6 +1,6 @@
 /** Todos os hooks de dados. Cada tela usa só estes, nunca fetch direto. */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { meApi, searchApi, adminApi, companiesApi, attributionApi, campaignsApi, dashboardApi, domainsApi, financeApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
+import { metaCampaignsApi, meApi, searchApi, adminApi, companiesApi, attributionApi, campaignsApi, dashboardApi, domainsApi, financeApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
 import { qk } from '@/lib/api/keys';
 import { useFilters } from '@/context/FiltersContext';
 import type { Platform, PlacementQuery, Provider } from '@/types/api';
@@ -95,3 +95,22 @@ export function useFinanceMutation<A, R>(fn: (a: A) => Promise<R>) {
   const qc = useQueryClient();
   return useMutation({ mutationFn: fn, onSuccess: () => { qc.invalidateQueries({ queryKey: ['finance'] }); qc.invalidateQueries({ queryKey: ['financeCosts'] }); } });
 }
+
+/* ---- 0.18 · campanhas Meta automatizadas ---- */
+export function useMetaProfiles() { return useQuery({ queryKey: qk.metaProfiles, queryFn: metaCampaignsApi.profiles }); }
+export function useMetaAdAccounts(profileId: string) { return useQuery({ queryKey: qk.metaAdAccounts(profileId), queryFn: () => metaCampaignsApi.adAccounts(profileId), enabled: !!profileId, staleTime: 60_000, retry: false }); }
+export function useMetaPages(profileId: string) { return useQuery({ queryKey: qk.metaPages(profileId), queryFn: () => metaCampaignsApi.pages(profileId), enabled: !!profileId, staleTime: 60_000, retry: false }); }
+/** Datasets do BM + pixels da conta, sem repetir. Cada fonte pode falhar sozinha (ex.: Perfil sem BM). */
+export function useMetaDatasets(profileId: string, adAccountId: string, hasBusiness: boolean) {
+  return useQuery({
+    queryKey: qk.metaDatasets(profileId, adAccountId), enabled: !!profileId && !!adAccountId, staleTime: 60_000, retry: false,
+    queryFn: async () => {
+      const [ds, px] = await Promise.allSettled([hasBusiness ? metaCampaignsApi.datasets(profileId) : Promise.resolve({ datasets: [] }), metaCampaignsApi.pixels(profileId, adAccountId)]);
+      if (ds.status === 'rejected' && px.status === 'rejected') throw px.reason;
+      const all = [...(ds.status === 'fulfilled' ? ds.value.datasets : []), ...(px.status === 'fulfilled' ? px.value.pixels : [])];
+      return { datasets: [...new Map(all.map((d) => [d.id, d])).values()].filter((d) => !d.unavailable) };
+    },
+  });
+}
+export function useMetaSuggestion(site: string, enabled: boolean) { return useQuery({ queryKey: qk.metaSuggestion(site), queryFn: () => metaCampaignsApi.suggestion(site), enabled: enabled && !!site, staleTime: 5 * 60_000, retry: false }); }
+export function useMetaTrackedUrl(site: string, url: string) { return useQuery({ queryKey: qk.metaTrackedUrl(site, url), queryFn: () => metaCampaignsApi.trackedUrl(site, url), enabled: !!site && /^https:\/\/\S+\.\S+/i.test(url), staleTime: 60_000, retry: false }); }

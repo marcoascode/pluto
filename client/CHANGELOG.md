@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.0
+- **Criação automatizada de campanhas Meta**: assistente em 4 passos (`/criar-campanha-meta`) com site/Perfil/conta/Página, upload múltiplo de criativos (preview local; as imagens trafegam em memória até a Meta), copies geradas pela IA, modo manual ou otimização por histórico, Dataset/Evento do Pixel, prévia da URL com UTMs e disparo em lote com progresso por campanha.
+- **Perfis & BMs** (`/perfis-meta`): cadastro do System User Token (criptografado no servidor), revalidação e sincronização das Páginas.
+- **Governança**: a flag `can_create_meta_campaigns` é liberada só pelo SuperAdmin (Usuários & Squads); sem ela, menu e rotas ficam ocultos e o servidor responde 403.
+
 ## 0.17.1
 - **Retenção por site**: o utm_source (push/WhatsApp) não é mais repartido entre os sites da rede quando o Ad Manager só entrega o total da rede; bloco de anúncios → site quando a rede recusa Key-values com SITE; Key-values aprimorados aceitos key a key (basta utm_source marcado).
 

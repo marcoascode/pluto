@@ -16,7 +16,7 @@ const Head = ({ children, mini }: { children: string; mini: boolean }) => (mini 
 
 export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () => void }) {
   const { pathname } = useLocation();
-  const { user, isAdmin, canFinance, can } = useAuth();
+  const { user, isAdmin, canFinance, can, canMetaCampaigns } = useAuth();
   const { prefs, update } = usePrefs();
   const [adminOpen, setAdminOpen] = useState(true);
   const open = adminOpen || pathname.startsWith('/admin');
@@ -36,7 +36,7 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
         {!mini && <Box><Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 16.5, lineHeight: 1.2 }}>Pluto Mídia</Typography><Typography variant="caption" sx={{ fontSize: 10.5 }}>Media Intelligence</Typography></Box>}
       </Stack>
       <List sx={{ flex: 1, overflowY: 'auto', px: 1.25, pt: 0 }}>
-        {NAV_MAIN.map((g) => ({ ...g, items: g.items.filter((it) => !it.cap || can(it.cap)) })).filter((g) => g.items.length).map((g, i) => <Box key={i}>{g.title && <Head mini={mini}>{g.title}</Head>}{g.items.map(item)}</Box>)}
+        {NAV_MAIN.map((g) => ({ ...g, items: g.items.filter((it) => (!it.cap || can(it.cap)) && (!it.metaCampaigns || canMetaCampaigns)) })).filter((g) => g.items.length).map((g, i) => <Box key={i}>{g.title && <Head mini={mini}>{g.title}</Head>}{g.items.map(item)}</Box>)}
         {/* Finance: clica e abre Caixa Empresa e Custos */}
         {(canFinance || user?.role === 'gestor') && (
           <>

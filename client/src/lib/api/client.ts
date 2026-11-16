@@ -33,6 +33,7 @@ export function setUnauthorizedHandler(fn: () => void) {
 }
 
 async function request<T>(method: Method, path: string, opts: { query?: Query; body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<T> {
+  const isForm = typeof FormData !== 'undefined' && opts.body instanceof FormData;
   if (IS_MOCK) {
     const { mockRequest } = await import('@/mocks/handlers');
     return mockRequest<T>(method, path, opts.query, opts.body);
@@ -44,8 +45,9 @@ async function request<T>(method: Method, path: string, opts: { query?: Query; b
     const res = await fetch(`${API_BASE}${path}${qs(opts.query)}`, {
       method,
       credentials: 'include',
-      headers: { Accept: 'application/json', ...(opts.body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      // FormData: o navegador define o Content-Type (multipart + boundary)
+      headers: { Accept: 'application/json', ...(opts.body !== undefined && !isForm ? { 'Content-Type': 'application/json' } : {}) },
+      body: opts.body === undefined ? undefined : isForm ? (opts.body as FormData) : JSON.stringify(opts.body),
       signal: ctrl.signal,
     });
     if (res.status === 204) return undefined as T;
@@ -67,7 +69,8 @@ async function request<T>(method: Method, path: string, opts: { query?: Query; b
 
 export const api = {
   get: <T>(path: string, query?: Query, signal?: AbortSignal) => request<T>('GET', path, { query, signal }),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, { body }),
+  /** `timeoutMs`: operações longas (IA, upload, publicação na Meta). `query`: ex.: upload com ?adAccountId=. */
+  post: <T>(path: string, body?: unknown, o?: { timeoutMs?: number; query?: Query; signal?: AbortSignal }) => request<T>('POST', path, { body, ...o }),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, { body }),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, { body }),
   del: <T>(path: string) => request<T>('DELETE', path),
