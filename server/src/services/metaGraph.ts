@@ -39,20 +39,56 @@ export async function graphList<T = any>(token: string, path: string, params: Re
   return out;
 }
 
-export interface TokenCheck { ok: boolean; systemUserId?: string; systemUserName?: string; scopes: string[]; message?: string }
+/** Permissões que o System User Token precisa ter marcado ao ser gerado no Business Manager. */
+export const REQUIRED_SCOPES = ['ads_management', 'ads_read', 'business_management', 'pages_show_list', 'pages_read_engagement'] as const;
+export const missingScopes = (granted: string[]) => REQUIRED_SCOPES.filter((s) => !granted.includes(s));
+export const missingMessage = (missing: string[]) => `O token não tem ${missing.length > 1 ? 'as permissões' : 'a permissão'}: ${missing.join(', ')}. Gere o token de novo no Business Manager marcando ${missing.length > 1 ? 'todas' : 'essa permissão'}.`;
 
-/** Valida o System User Token: /me (identidade) + /me/permissions (escopos concedidos). */
+export interface TokenCheck {
+  ok: boolean; systemUserId?: string; systemUserName?: string;
+  /** Permissões concedidas ao token (debug_token; /me/permissions como reserva). */
+  scopes: string[];
+  /** Das 5 obrigatórias, as que faltam. Só é confiável quando ok = true. */
+  missing: string[];
+  appId?: string;
+  /** null = o token não expira. */
+  expiresAt?: string | null;
+  message?: string;
+}
+
+interface DebugToken { data?: { is_valid?: boolean; app_id?: string; scopes?: string[]; expires_at?: number; error?: { message?: string } } }
+
+/**
+ * Valida o System User Token na Graph API:
+ *  1. /me → identidade do System User;
+ *  2. /debug_token (escopos reais, validade, App emissor). Usa o token do App (APP_ID|APP_SECRET) quando configurado e, sem ele, o próprio token;
+ *  3. /me/permissions só como reserva se o debug_token não responder.
+ * Se não for possível ler as permissões, lança erro (502) em vez de dar o token por completo.
+ */
 export async function validateToken(token: string): Promise<TokenCheck> {
   try {
     const me = await graphGet<{ id: string; name?: string }>(token, 'me', { fields: 'id,name' });
-    let scopes: string[] = [];
+    const { metaAppId, metaAppSecret } = config.oauth;
+    let scopes: string[] | null = null, appId: string | undefined, expiresAt: string | null | undefined;
     try {
+      const inspector = metaAppId && metaAppSecret ? `${metaAppId}|${metaAppSecret}` : token;
+      const d = (await graphGet<DebugToken>(inspector, 'debug_token', { input_token: token })).data;
+      if (d) {
+        if (d.is_valid === false) return { ok: false, scopes: [], missing: [...REQUIRED_SCOPES], message: d.error?.message ?? 'Token expirado ou revogado.' };
+        appId = d.app_id;
+        expiresAt = d.expires_at ? new Date(d.expires_at * 1000).toISOString() : null;
+        if (Array.isArray(d.scopes)) scopes = d.scopes;
+      }
+    } catch { /* cai para /me/permissions */ }
+    if (metaAppId && appId && appId !== metaAppId) return { ok: false, scopes: [], missing: [...REQUIRED_SCOPES], appId, message: 'O token foi gerado para outro App. Na hora de gerar o token, selecione o App do Pluto Mídia.' };
+    if (!scopes?.length) {
       const p = await graphGet<{ data?: { permission: string; status: string }[] }>(token, 'me/permissions');
       scopes = (p.data ?? []).filter((x) => x.status === 'granted').map((x) => x.permission);
-    } catch { /* System Users nem sempre expõem /me/permissions; o token continua válido */ }
-    return { ok: true, systemUserId: me.id, systemUserName: me.name, scopes };
+    }
+    if (!scopes.length) throw new HttpError(502, 'meta_scopes_unreadable', 'Não foi possível ler as permissões do token na Meta. Tente de novo.');
+    return { ok: true, systemUserId: me.id, systemUserName: me.name, scopes, missing: missingScopes(scopes), appId, expiresAt };
   } catch (e) {
-    if (e instanceof SyncError && (e.code === 'token' || e.code === 'permission' || (e.http && e.http < 500 && e.code !== 'rate_limit'))) return { ok: false, scopes: [], message: e.message };
+    if (e instanceof SyncError && (e.code === 'token' || e.code === 'permission' || (e.http && e.http < 500 && e.code !== 'rate_limit'))) return { ok: false, scopes: [], missing: [...REQUIRED_SCOPES], message: e.message };
     throw toHttpError(e);
   }
 }

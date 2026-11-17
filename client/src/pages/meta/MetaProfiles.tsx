@@ -1,5 +1,8 @@
-import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Radio, Snackbar, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import { Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Radio, Snackbar, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
+import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
+import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
@@ -14,8 +17,8 @@ import { metaCampaignsApi } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
 import { relTime } from '@/lib/format';
-import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
-import type { MetaProfile } from '@/types/api';
+import { ConfirmDialog, copyText, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
+import { META_REQUIRED_SCOPES, type MetaProfile, type MetaTokenCheck } from '@/types/api';
 import { getDefaultPage, profileLabel, profileTone, setDefaultPage } from './shared';
 
 const errMsg = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -84,36 +87,110 @@ export default function MetaProfilesPage() {
   );
 }
 
-/** Cadastro/edição. Na edição o token é opcional (em branco = mantém o atual). */
+const APP_ID = (import.meta.env.VITE_META_APP_ID ?? '').trim();
+const Code = ({ children }: { children: string }) => <Box component="code" sx={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12.5, px: 0.6, py: 0.15, borderRadius: 1, bgcolor: 'action.hover' }}>{children}</Box>;
+
+/** Passo a passo para gerar o System User Token no Business Manager (retrátil). */
+function TokenGuide({ onCopied }: { onCopied: (msg: string) => void }) {
+  const copyApp = async () => onCopied(await copyText(APP_ID) ? 'ID do App copiado.' : 'Não foi possível copiar. Selecione e copie manualmente.');
+  const steps: { title: string; body: React.ReactNode }[] = [
+    { title: 'Abra as Configurações do Negócio', body: <>Acesse <Box component="a" href="https://business.facebook.com/settings" target="_blank" rel="noopener noreferrer" sx={{ color: 'primary.main' }}>business.facebook.com/settings <OpenInNewRoundedIcon sx={{ fontSize: 13, verticalAlign: 'text-bottom' }} /></Box>, escolha o Business Manager e vá em <b>Usuários → Usuários do sistema</b>.</> },
+    { title: 'Crie (ou escolha) um Usuário do Sistema', body: <>Clique em <b>Adicionar</b>, dê um nome e escolha a função <b>Administrador</b>. Também pode usar um Usuário do Sistema que já exista.</> },
+    { title: 'Atribua os ativos', body: <>Com o usuário selecionado, clique em <b>Atribuir ativos</b> e vincule, com <b>Controle total</b>: as <b>Contas de anúncios</b>, as <b>Páginas</b> e os <b>Conjuntos de dados / Pixels</b> que serão usados. Um mesmo Perfil pode ter ativos de vários BMs e várias contas.</> },
+    { title: 'Gere o token', body: <>Clique em <b>Gerar novo token</b>, selecione o App do Pluto Mídia{APP_ID ? <> (ID <Code>{APP_ID}</Code>)</> : null}, defina a validade como <b>Nunca</b> (ou 60 dias) e marque <b>obrigatoriamente</b> as 5 permissões abaixo. Copie o token na hora: a Meta só o mostra uma vez.</> },
+  ];
+  return (
+    <Accordion disableGutters variant="outlined" defaultExpanded={false} sx={{ borderRadius: 2, '&:before': { display: 'none' } }}>
+      <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} aria-controls="token-guide" id="token-guide-h"><Typography sx={{ fontWeight: 600 }}>Como gerar o System User Token</Typography></AccordionSummary>
+      <AccordionDetails id="token-guide">
+        <Stack spacing={1.5}>
+          {steps.map((st, i) => (
+            <Stack key={i} direction="row" spacing={1.25} sx={{ alignItems: 'flex-start' }}>
+              <Box sx={{ width: 24, height: 24, borderRadius: '50%', bgcolor: 'primary.main', color: 'primary.contrastText', fontSize: 12.5, fontWeight: 700, display: 'grid', placeItems: 'center', flexShrink: 0, mt: 0.1 }}>{i + 1}</Box>
+              <Box><Typography sx={{ fontWeight: 600, fontSize: 14 }}>{st.title}</Typography><Typography variant="body2" color="text.secondary">{st.body}</Typography></Box>
+            </Stack>
+          ))}
+          <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>{META_REQUIRED_SCOPES.map((sc) => <Chip key={sc} size="small" label={sc} sx={{ fontFamily: 'IBM Plex Mono, monospace' }} />)}</Stack>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            {APP_ID
+              ? <><Typography variant="body2">ID do App do Pluto: <Code>{APP_ID}</Code></Typography><Button size="small" startIcon={<ContentCopyRoundedIcon />} onClick={copyApp}>Copiar ID</Button></>
+              : <Typography variant="caption">O ID do App não está configurado neste ambiente. Peça ao administrador (META_APP_ID).</Typography>}
+          </Stack>
+        </Stack>
+      </AccordionDetails>
+    </Accordion>
+  );
+}
+
+/** Cadastro/edição. Token novo só é salvo se a Meta confirmar as 5 permissões obrigatórias. Na edição o token é opcional. */
 function ProfileDialog({ p, onClose, onSaved }: { p: MetaProfile | null; onClose: () => void; onSaved: (msg: string) => void }) {
   const [f, setF] = useState({ name: p?.name ?? '', businessId: p?.businessId ?? '', token: '' });
   const [err, setErr] = useState('');
+  const [check, setCheck] = useState<MetaTokenCheck | null>(null);
+  const [note, setNote] = useState('');
   const create = useAdminMutation(metaCampaignsApi.createProfile, INV);
   const save = useAdminMutation(metaCampaignsApi.updateProfile, INV);
-  const busy = create.isPending || save.isPending;
-  const submit = () => {
-    const name = f.name.trim(), biz = f.businessId.trim(), token = f.token.trim();
-    if (name.length < 2) return setErr('Digite o nome do Perfil.');
-    if (biz && !/^\d{5,25}$/.test(biz)) return setErr('O ID do Business Manager tem só dígitos.');
-    if (!p && !token) return setErr('Cole o System User Token.');
-    if (token && (token.length < 20 || /\s/.test(token))) return setErr('Token inválido: confira se copiou inteiro e sem espaços.');
+  const verify = useAdminMutation(metaCampaignsApi.checkToken, []);
+  const busy = create.isPending || save.isPending || verify.isPending;
+  const token = f.token.trim();
+  const setToken = (v: string) => { setF({ ...f, token: v }); setCheck(null); setErr(''); };
+  const tokenFormat = () => (token.length < 20 || /\s/.test(token) ? 'Token inválido: confira se copiou inteiro e sem espaços.' : '');
+
+  const runCheck = (then?: (c: MetaTokenCheck) => void) => {
+    const bad = tokenFormat();
+    if (bad) return setErr(bad);
     setErr('');
+    verify.mutate(token, { onSuccess: (c) => { setCheck(c); if (c.complete) then?.(c); }, onError: (e) => setErr(errMsg(e, 'Não foi possível validar o token na Meta.')) });
+  };
+  const persist = () => {
+    const name = f.name.trim(), biz = f.businessId.trim();
     const onError = (e: unknown) => setErr(errMsg(e, 'Não foi possível salvar.'));
-    const done = (r: MetaProfile) => onSaved(r.status === 'valid' ? 'Perfil salvo. Token válido.' : `Perfil salvo, mas a Meta recusou o token${r.message ? `: ${r.message}` : '.'}`);
+    const done = () => onSaved('Perfil salvo. Token válido, com todas as permissões.');
     if (!p) return create.mutate({ name, businessId: biz || undefined, token }, { onSuccess: done, onError });
     save.mutate({ id: p.id, patch: { name, businessId: biz || null, ...(token ? { token } : {}) } }, { onSuccess: done, onError });
   };
+  const submit = () => {
+    const name = f.name.trim(), biz = f.businessId.trim();
+    if (name.length < 2) return setErr('Digite o nome do Perfil.');
+    if (biz && !/^\d{5,25}$/.test(biz)) return setErr('O ID do Business Manager tem só dígitos.');
+    if (!p && !token) return setErr('Cole o System User Token.');
+    if (token && tokenFormat()) return setErr(tokenFormat());
+    setErr('');
+    if (!token || check?.complete) return persist();
+    runCheck(persist);   // confere antes de salvar; se faltar permissão, o alerta aparece e nada é salvo
+  };
+  const missing = check?.missing ?? [];
   return (
-    <Dialog open onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{p ? 'Editar Perfil' : 'Novo Perfil / BM'}<Typography variant="caption" component="div">O token é validado na Meta ao salvar.</Typography></DialogTitle>
+    <Dialog open onClose={busy ? undefined : onClose} maxWidth="md" fullWidth>
+      <DialogTitle>{p ? 'Editar Perfil' : 'Novo Perfil / BM'}<Typography variant="caption" component="div">O token é conferido na Meta antes de salvar.</Typography></DialogTitle>
       <DialogContent><Stack spacing={1.75} sx={{ pt: 1 }}>
+        <TokenGuide onCopied={setNote} />
         <TextField label="Nome do Perfil" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} fullWidth placeholder="Ex.: BM Contingência 01" />
-        <TextField label="ID do Business Manager" value={f.businessId} onChange={(e) => setF({ ...f, businessId: e.target.value })} fullWidth placeholder="Só dígitos" helperText="Necessário para listar Datasets do BM e as Páginas do Business. Opcional." />
-        <TextField label={p ? 'Novo System User Token (opcional)' : 'System User Token'} type="password" autoComplete="off" value={f.token} onChange={(e) => setF({ ...f, token: e.target.value })} fullWidth
-          placeholder={p ? `Atual: ••••${p.tokenLast4}` : 'EAAB…'} helperText="Permissões: ads_management, ads_read, business_management e pages_show_list." />
+        <TextField label="ID do Business Manager (opcional)" value={f.businessId} onChange={(e) => setF({ ...f, businessId: e.target.value })} fullWidth placeholder="Só dígitos"
+          helperText="BM principal, usado para listar Datasets e Páginas do Business. As contas de anúncios e Páginas de outros BMs atribuídas ao mesmo Usuário do Sistema aparecem normalmente." />
+        <TextField label={p ? 'Novo System User Token (opcional)' : 'System User Token'} type="password" autoComplete="off" value={f.token} onChange={(e) => setToken(e.target.value)} fullWidth
+          placeholder={p ? `Atual: ••••${p.tokenLast4}` : 'EAAB…'} helperText="Cole o token gerado no passo 4. Ele é criptografado e não pode ser lido de volta." />
+        {!!token && (
+          <Box><Button size="small" variant="outlined" onClick={() => runCheck()} disabled={busy} startIcon={verify.isPending ? <CircularProgress size={14} /> : <VerifiedUserOutlinedIcon />}>Validar token</Button></Box>
+        )}
+        {check && !check.valid && <Alert severity="error" variant="outlined">{check.message ?? 'A Meta recusou o token.'}</Alert>}
+        {check?.valid && missing.length > 0 && (
+          <Alert severity="error" variant="outlined">
+            <Typography sx={{ fontWeight: 600, fontSize: 14 }}>Faltam permissões neste token. O Perfil não será salvo.</Typography>
+            <Typography variant="body2">Gere o token de novo (passo 4) e marque {missing.length > 1 ? 'estas caixas' : 'esta caixa'}:</Typography>
+            <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap', mt: 0.75 }}>{missing.map((m) => <Chip key={m} size="small" color="error" label={m} sx={{ fontFamily: 'IBM Plex Mono, monospace' }} />)}</Stack>
+          </Alert>
+        )}
+        {check?.complete && (
+          <Alert severity="success" variant="outlined">
+            Token válido{check.systemUserName ? ` (${check.systemUserName})` : ''} com as {META_REQUIRED_SCOPES.length} permissões obrigatórias.
+            {check.expiresAt ? ` Expira em ${new Date(check.expiresAt).toLocaleDateString('pt-BR')}.` : ' Não expira.'}
+          </Alert>
+        )}
         {err && <Alert severity="error" variant="outlined">{err}</Alert>}
       </Stack></DialogContent>
-      <DialogActions><Button onClick={onClose} disabled={busy}>Cancelar</Button><Button variant="contained" onClick={submit} disabled={busy} startIcon={busy ? <CircularProgress size={16} /> : undefined}>{busy ? 'Validando…' : 'Salvar'}</Button></DialogActions>
+      <DialogActions><Button onClick={onClose} disabled={busy}>Cancelar</Button><Button variant="contained" onClick={submit} disabled={busy || (!!token && !!check && !check.complete)} startIcon={busy ? <CircularProgress size={16} /> : undefined}>{busy ? 'Validando…' : 'Salvar'}</Button></DialogActions>
+      <Snackbar open={!!note} autoHideDuration={2500} onClose={() => setNote('')} message={note} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
     </Dialog>
   );
 }

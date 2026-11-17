@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.18.1
+- **Perfis & BMs**: guia passo a passo retrátil para gerar o System User Token (com cópia do ID do App) e validação real das 5 permissões obrigatórias (`ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`) via `/debug_token`. Token incompleto ou recusado não é salvo e o formulário lista as permissões que faltam.
+
 ## 0.18.0
 - **Criação automatizada de campanhas Meta**: assistente em 4 passos (`/criar-campanha-meta`) com site/Perfil/conta/Página, upload múltiplo de criativos (preview local; as imagens trafegam em memória até a Meta), copies geradas pela IA, modo manual ou otimização por histórico, Dataset/Evento do Pixel, prévia da URL com UTMs e disparo em lote com progresso por campanha.
 - **Perfis & BMs** (`/perfis-meta`): cadastro do System User Token (criptografado no servidor), revalidação e sincronização das Páginas.
