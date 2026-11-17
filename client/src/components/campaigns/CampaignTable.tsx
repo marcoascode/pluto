@@ -33,7 +33,10 @@ export function CampaignTable({ screen, campaigns, totals, totalsRoiDays, showDo
   const rows = useMemo(() => campaigns.slice().sort((a, b) => {
     const dir = sort.d === 'asc' ? 1 : -1;
     if (sort.k === 'name') return a.name.localeCompare(b.name) * dir;
-    return ((metricValue(a.metrics, a.roiDays, sort.k) ?? -Infinity) - (metricValue(b.metrics, b.roiDays, sort.k) ?? -Infinity)) * dir;
+    // null (ex.: ROI % sem gasto) vai sempre para o fim; -Infinity − -Infinity = NaN quebrava a ordenação
+    const va = metricValue(a.metrics, a.roiDays, sort.k), vb = metricValue(b.metrics, b.roiDays, sort.k);
+    if (va == null || vb == null) return va == null ? (vb == null ? 0 : 1) : -1;
+    return (va - vb) * dir;
   }), [campaigns, sort]);
   const head = (k: MetricKey | 'name', label: string, num = true) => (
     <TableCell key={k} align={num ? 'right' : 'left'} sortDirection={sort.k === k ? sort.d : false} sx={k === 'name' ? { position: 'sticky', left: 0, zIndex: 3 } : undefined}>

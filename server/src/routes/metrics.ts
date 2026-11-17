@@ -69,7 +69,7 @@ metricsRouter.get('/domains/summary', async (req, res) => {
   res.json({ domains: sc.ids.map((id, i) => ({ domain: sc.hosts[i], metrics: by.get(id) ?? toMetrics() })) });
 });
 
-interface CampRow { id: string; db_id: string; domain_id: string; platform: 'google' | 'meta'; name: string; domain: string; account_id: string; account_name: string; status: 'ENABLED' | 'PAUSED'; no_domain: boolean; domain_manual: boolean }
+interface CampRow { id: string; db_id: string; domain_id: string; platform: 'google' | 'meta'; name: string; domain: string; account_id: string; account_name: string; status: 'ENABLED' | 'PAUSED' | 'REMOVED'; no_domain: boolean; domain_manual: boolean }
 /**
  * Campanha sem domínio (campaigns.domain_id nulo) aparece no domínio técnico "Sem domínio", que só está no escopo
  * de Admin/SuperAdmin; para os outros papéis ela simplesmente não existe. noDomain = mostrar o seletor de domínio.
@@ -80,7 +80,11 @@ const CAMP_SQL = `
     FROM campaigns c
     JOIN domains d ON d.id = COALESCE(c.domain_id, (SELECT t.id FROM domains t WHERE t.is_technical LIMIT 1))
     JOIN integration_accounts a ON a.id = c.account_id
-   WHERE d.id = ANY($1::bigint[]) AND c.status <> 'REMOVED'`;
+   WHERE d.id = ANY($1::bigint[])`;
+/** Telas que listam campanhas "vivas" (detalhe do domínio etc.). */
+const CAMP_LIVE_SQL = `${CAMP_SQL} AND c.status <> 'REMOVED'`;
+/** Teve custo ou receita no período: entra na lista e nos totais mesmo pausada/arquivada hoje. */
+const hasActivity = (m: Metrics) => m.spend > 0 || m.revenue > 0;
 
 /** Só as campanhas liberadas no escopo (Gestor: contas dele em cada domínio). */
 const visible = (sc: Scope, camps: CampRow[]) => camps.filter((c) => canSeeCampaign(sc, c.db_id, c.domain_id));
@@ -101,7 +105,7 @@ metricsRouter.get('/domains/:hostname', async (req, res) => {
   const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency };
   const prev = previous(p.from, p.to, p.today);
   const attributed = `m.platform <> 'none'`;
-  const camps = visible(sc, await q<CampRow>(CAMP_SQL + ' ORDER BY c.name', [sc.ids]));
+  const camps = visible(sc, await q<CampRow>(CAMP_LIVE_SQL + ' ORDER BY c.name', [sc.ids]));
   const [metrics, cmp, ct, ctr, rows] = await Promise.all([
     total({ ...base, from: p.from, to: p.to }),
     prev ? total({ ...base, ...prev }) : null,
@@ -122,17 +126,21 @@ metricsRouter.get('/campaigns', async (req, res) => {
   const includePaused = req.query.includePaused === 'true';
   const accountId = typeof req.query.accountId === 'string' && /^\d+$/.test(req.query.accountId) ? req.query.accountId : null;
   const all = visible(sc, await q<CampRow>(`${CAMP_SQL} AND c.platform = $2 ORDER BY c.name`, [sc.ids, platform]));
-  const camps = all.filter((c) => (includePaused || c.status === 'ENABLED') && (!accountId || c.account_id === accountId));
-  const ids = camps.map((c) => c.db_id);
+  // O status é o ATUAL (sync de estrutura). Campanha pausada/arquivada hoje que gastou ou recebeu receita no período
+  // continua na lista e nos totais; senão o custo e a receita atribuída a ela somem da tela (a Meta não tem o filtro de pausadas).
+  const pool = all.filter((c) => !accountId || c.account_id === accountId);
+  const allRows = await campaignRows(pool, base, p.from, p.to, p.today);
+  const keep = pool.map((c, i) => hasActivity(allRows[i].metrics) || c.status === 'ENABLED' || (includePaused && c.status === 'PAUSED'));
+  const rows = allRows.filter((_, i) => keep[i]);
+  const ids = pool.filter((_, i) => keep[i]).map((c) => c.db_id);
   const where = 'm.campaign_id = ANY($5::bigint[])';
   const prev = previous(p.from, p.to, p.today);
-  const [totals, cmp, trd, rows] = await Promise.all([
+  const [totals, cmp, trd] = await Promise.all([
     total({ ...base, from: p.from, to: p.to, where, params: [ids] }),
     prev ? total({ ...base, ...prev, where, params: [ids] }) : null,
     roiDays({ ...base, key: `''`, today: p.today, d3: d3(p.today), where, params: [ids] }),
-    campaignRows(camps, base, p.from, p.to, p.today),
   ]);
-  const accounts = [...new Map(all.map((c) => [c.account_id, { id: c.account_id, name: c.account_name }])).values()];
+  const accounts = [...new Map(all.filter((c) => c.status !== 'REMOVED').map((c) => [c.account_id, { id: c.account_id, name: c.account_name }])).values()];
   res.json({ comparison: prev && cmp ? { ...prev, metrics: cmp } : null, totals, totalsRoiDays: trd(''), campaigns: rows, accounts });
 });
 
@@ -285,7 +293,7 @@ metricsRouter.get('/search', async (req, res) => {
   if (t.length < 2) return res.json({ results: [] });
   const sc = await allowedDomains(req);
   const like = `%${t.replace(/[%_\\]/g, (c) => '\\' + c)}%`;
-  const camps = visible(sc, await q<CampRow>(`${CAMP_SQL} AND (lower(c.name) LIKE $2 OR c.external_id LIKE $2) ORDER BY c.name LIMIT 30`, [sc.ids, like])).slice(0, 6);
+  const camps = visible(sc, await q<CampRow>(`${CAMP_LIVE_SQL} AND (lower(c.name) LIKE $2 OR c.external_id LIKE $2) ORDER BY c.name LIMIT 30`, [sc.ids, like])).slice(0, 6);
   res.json({ results: [
     ...camps.filter((c) => req.user!.permissions.includes(c.platform === 'google' ? 'campaigns.google.view' : 'campaigns.meta.view'))
       .map((c) => ({ kind: 'campaign', label: c.name, sub: c.id, platform: c.platform, id: c.id, domain: c.domain })),
