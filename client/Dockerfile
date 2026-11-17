@@ -7,6 +7,9 @@ RUN npm ci
 COPY . .
 # produção sempre fala com a API real (nada de mock)
 ENV VITE_API_MOCK=false
+# ID público do App Meta (vem do META_APP_ID do .env via docker-compose build.args)
+ARG VITE_META_APP_ID=
+ENV VITE_META_APP_ID=$VITE_META_APP_ID
 RUN npm run build
 
 # ---------- Nginx servindo o dist/ ----------

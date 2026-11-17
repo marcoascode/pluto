@@ -18,7 +18,7 @@ import { metaCampaignsRouter } from './metaCampaigns.js';
 import { copyRequest, generateCopies } from '../services/metaCopies.js';
 import { suggestCampaign } from '../services/metaHistory.js';
 import { buildMetaTrackedUrl } from '../services/utm.js';
-import { listAdAccountPixels, listAdAccounts, listBusinessDatasets, listPages, toHttpError, validateToken } from '../services/metaGraph.js';
+import { listAdAccountPixels, listAdAccounts, listBusinessDatasets, listPages, missingMessage, REQUIRED_SCOPES, toHttpError, validateToken } from '../services/metaGraph.js';
 
 
 export const metaRouter = Router();
@@ -41,20 +41,35 @@ async function own(req: Request): Promise<Profile & { token: string }> {
   return { id: r.id, businessId: r.business_id, token: decrypt(r.token_enc) };
 }
 
-async function saveValidation(id: string, v: Awaited<ReturnType<typeof validateToken>>) {
+type Check = Awaited<ReturnType<typeof validateToken>>;
+/** Token só é aceito completo: válido na Meta e com as 5 permissões. Devolve o motivo da recusa (ou null). */
+const refusal = (v: Check) => (!v.ok ? `Token recusado pela Meta: ${v.message ?? 'inválido.'}` : v.missing.length ? missingMessage(v.missing) : null);
+
+async function saveValidation(id: string, v: Check) {
+  const why = refusal(v);
   await q(`UPDATE meta_profiles SET status = $2, message = $3, system_user_id = $4, system_user_name = $5, scopes = $6, last_validated_at = now(), updated_at = now() WHERE id = $1`,
-    [id, v.ok ? 'valid' : 'invalid', v.ok ? null : (v.message ?? 'Token inválido.').slice(0, 500), v.systemUserId ?? null, v.systemUserName ?? null, v.scopes]);
+    [id, why ? 'invalid' : 'valid', why ? why.slice(0, 500) : null, v.systemUserId ?? null, v.systemUserName ?? null, v.scopes]);
 }
+
+/** Confere o token SEM salvar (botão "Validar token" do formulário): devolve as permissões que faltam. */
+metaRouter.post('/profiles/check-token', async (req, res) => {
+  const b = parse(z.object({ token: TOKEN }), req.body);
+  const v = await validateToken(b.token);
+  res.json({ valid: v.ok, complete: v.ok && !v.missing.length, required: REQUIRED_SCOPES, granted: v.scopes, missing: v.ok ? v.missing : [],
+    systemUserName: v.systemUserName ?? null, appId: v.appId ?? null, expiresAt: v.expiresAt ?? null, message: refusal(v) });
+});
 
 /* ---------------- CRUD de Perfis ---------------- */
 metaRouter.get('/profiles', async (req, res) => {
   res.json({ profiles: await q(`SELECT ${PUBLIC} FROM meta_profiles WHERE user_id = $1 ORDER BY lower(name)`, [req.user!.id]) });
 });
 
-/** Cadastra o Perfil e já valida o token na Meta (o Perfil fica salvo mesmo se o token for recusado, com status "invalid"). */
+/** Cadastra o Perfil e valida o token na Meta. Token recusado ou sem as 5 permissões obrigatórias NÃO é salvo (422). */
 metaRouter.post('/profiles', async (req, res) => {
   const b = parse(z.object({ name: NAME, businessId: BUSINESS.optional(), token: TOKEN }), req.body);
   const v = await validateToken(b.token);
+  const why = refusal(v);
+  if (why) throw new HttpError(422, v.ok ? 'meta_scopes_missing' : 'meta_token_invalid', why);
   const r = await one<{ id: string }>(
     `INSERT INTO meta_profiles (user_id, name, business_id, token_enc, token_last4) VALUES ($1, $2, $3, $4, $5) RETURNING id::text`,
     [req.user!.id, b.name, b.businessId ?? null, encrypt(b.token), b.token.slice(-4)]);
@@ -68,6 +83,8 @@ metaRouter.patch('/profiles/:id', async (req, res) => {
   const b = parse(z.object({ name: NAME.optional(), businessId: BUSINESS.nullable().optional(), token: TOKEN.optional() }), req.body);
   if (!(await one('SELECT 1 FROM meta_profiles WHERE id = $1 AND user_id = $2', [pid, req.user!.id]))) throw notFound('Perfil não encontrado.');
   const v = b.token ? await validateToken(b.token) : null;
+  const why = v && refusal(v);
+  if (why) throw new HttpError(422, v!.ok ? 'meta_scopes_missing' : 'meta_token_invalid', why);
   await q(`UPDATE meta_profiles SET name = COALESCE($3, name), business_id = CASE WHEN $4 THEN $5 ELSE business_id END,
              token_enc = COALESCE($6, token_enc), token_last4 = COALESCE($7, token_last4), updated_at = now() WHERE id = $1 AND user_id = $2`,
     [pid, req.user!.id, b.name ?? null, b.businessId !== undefined, b.businessId ?? null, b.token ? encrypt(b.token) : null, b.token ? b.token.slice(-4) : null]);

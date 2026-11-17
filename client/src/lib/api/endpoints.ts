@@ -144,6 +144,8 @@ export const financeApi = {
 const MIN = 60_000;
 export const metaCampaignsApi = {
   profiles: () => api.get<{ profiles: T.MetaProfile[] }>('/meta/profiles'),
+  /** Confere o token na Meta sem salvar: devolve as permissões que faltam. */
+  checkToken: (token: string) => api.post<T.MetaTokenCheck>('/meta/profiles/check-token', { token }, { timeoutMs: MIN }),
   createProfile: (b: T.MetaProfileInput) => api.post<T.MetaProfile>('/meta/profiles', b, { timeoutMs: MIN }),
   updateProfile: (a: { id: string; patch: T.MetaProfilePatch }) => api.patch<T.MetaProfile>(`/meta/profiles/${a.id}`, a.patch),
   deleteProfile: (id: string) => api.del<void>(`/meta/profiles/${id}`),

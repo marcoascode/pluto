@@ -623,3 +623,7 @@ export interface MetaPublishRequest {
 }
 export interface MetaRunStep { id: string; seq: number; kind: 'campaign' | 'adset' | 'creative' | 'ad' | 'rollback'; label: string; status: string; metaId: string | null; attempts: number; rateLimited: boolean; errorHttp: number | null; errorMessage: string | null }
 export interface MetaRun { id: string; profileId: string; adAccountId: string; site: string; source: string; name: string; status: string; metaCampaignId: string | null; metaAdsetId: string | null; error: string | null; createdAt: string; finishedAt: string | null; steps: MetaRunStep[] }
+
+/** Permissões obrigatórias do System User Token (o servidor confere o mesmo conjunto). */
+export const META_REQUIRED_SCOPES = ['ads_management', 'ads_read', 'business_management', 'pages_show_list', 'pages_read_engagement'] as const;
+export interface MetaTokenCheck { valid: boolean; complete: boolean; required: string[]; granted: string[]; missing: string[]; systemUserName: string | null; appId: string | null; expiresAt: string | null; message: string | null }
