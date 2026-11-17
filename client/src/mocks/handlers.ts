@@ -135,7 +135,7 @@ const TITLES: Record<T.IssueType, [string, string, string]> = {
 };
 const UTM: T.UtmTemplates = {
   google: 'utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&utm_content={adgroupid}_{creative}&utm_term={keyword}&placement={placement}&network={network}&device={device}',
-  meta: 'utm_source={{site_source_name}}&utm_medium=paid_social&utm_campaign={{campaign.id}}&utm_content={{adset.id}}_{{ad.id}}&utm_term={{placement}}',
+  meta: 'utm_campaign={{ad.id}}&utm_content={{ad.id}}_{{placement}}',
 };
 
 export async function mockRequest<R>(method: string, path: string, query: Record<string, unknown> = {}, body?: unknown): Promise<R> {
