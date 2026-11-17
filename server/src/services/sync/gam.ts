@@ -410,7 +410,8 @@ export function attributeContent(idx: Index, content: string):
   if (cr) return { platform: cr.platform, campaignId: cr.cid, adGroupId: cr.gid, adId: cr.id, placement: tail };
   const g = idx.groupExt.get(head);
   if (g) return { platform: g.platform, campaignId: g.cid, adGroupId: g.id, adId: tail && !EMPTY.test(tail) ? idx.ad.get(`${g.id}|${tail}`) ?? null : null, placement: '' };
-  return { reason: 'gads_creative_not_found' };
+  // IDs da Meta têm 15+ dígitos (ex.: 120212345678901234); os criativos do Google Ads, até ~12
+  return { reason: /^\d{15,}$/.test(head) ? 'meta_ad_not_found' : 'gads_creative_not_found' };
 }
 
 /** "utm_content=123_site.com" → "123_site.com" (só se o key bater; o filtro CONTAINS do relatório pode trazer outro key parecido). */

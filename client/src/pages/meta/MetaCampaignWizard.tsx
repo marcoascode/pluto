@@ -355,7 +355,7 @@ export default function MetaCampaignWizardPage() {
                 <Typography variant="overline">Prévia da URL final</Typography>
                 <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: 'action.hover', fontFamily: 'IBM Plex Mono, monospace', fontSize: 12.5, overflowWrap: 'anywhere' }}>{tracked.data.preview}</Box>
                 {!!tracked.data.replaced.length && <Typography variant="caption" component="p" sx={{ mt: 0.5 }}>Parâmetros substituídos pelo template: {tracked.data.replaced.join(', ')}.</Typography>}
-                <Typography variant="caption" component="p" sx={{ mt: 0.5 }}>As macros ({'{{campaign.id}}'} etc.) são resolvidas pela Meta quando o anúncio roda.</Typography>
+                <Typography variant="caption" component="p" sx={{ mt: 0.5 }}>As macros ({'{{ad.id}}'}, {'{{placement}}'}) são resolvidas pela Meta quando o anúncio roda.</Typography>
               </Box>
             )}
           </CardContent></Card>

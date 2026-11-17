@@ -309,23 +309,39 @@ metricsRouter.post('/utm/debug', requireCap('utm.debug'), async (req, res) => {
   const { url: raw } = parse(z.object({ url: z.string().max(4000) }), req.body);
   const tpl = await templates();
   let url: URL;
-  try { url = new URL(raw.trim()); } catch {
+  const checks: { level: 'ok' | 'warn' | 'error'; message: string; detail?: string }[] = [];
+  try {
+    url = new URL(raw.trim());
+    // sufixo colado sem o "?" (ex.: https://site.com/utm_campaign=...&utm_content=...): os UTMs viram parte do caminho
+    if (!url.search && /utm_[a-z]+=/i.test(decodeURIComponent(url.pathname))) {
+      const path = decodeURIComponent(url.pathname), i = path.search(/utm_[a-z]+=/i);
+      url = new URL(`${url.origin}${path.slice(0, i).replace(/[/?&]+$/, '') || '/'}?${path.slice(i)}`);
+      checks.push({ level: 'warn', message: 'Faltou o "?" antes dos UTMs', detail: 'Analisado como se o "?" estivesse lá. Na Meta, cole o sufixo no campo "Parâmetros de URL" (sem "?"), não no fim do link.' });
+    }
+  } catch {
     return res.json({ status: 'invalid', source: null, domain: '', campaign: null, fields: {}, checks: [{ level: 'error', message: 'URL inválida', detail: 'Cole a URL completa, começando com https://' }], preview: { google: '', meta: '' } });
   }
   const host = url.hostname.replace(/^www\./, '').toLowerCase();
   const qs = Object.fromEntries(url.searchParams);
-  const checks: { level: 'ok' | 'warn' | 'error'; message: string; detail?: string }[] = [];
-  const isMeta = /^(fb|facebook|ig|instagram|an|msg)$/i.test(qs.utm_source ?? '') || qs.utm_medium === 'paid_social' || !!qs.fbclid;
-  const isGoogle = !isMeta && (/^google$/i.test(qs.utm_source ?? '') || !!qs.gclid || qs.utm_medium === 'cpc');
   const okv = (v?: string | null) => !!v && !/[{}]/.test(v);
+  // formato do dash antigo: utm_campaign={creative} e utm_content={creative}_{placement} (Meta: {{ad.id}} e {{ad.id}}_{{placement}})
+  const legacy = !!qs.utm_campaign && ((qs.utm_content ?? '') === qs.utm_campaign || (qs.utm_content ?? '').startsWith(`${qs.utm_campaign}_`));
+  // sem utm_source, a plataforma do formato antigo sai do próprio ID do anúncio (ou das macros {{…}} da Meta)
+  const legacyAd = legacy && okv(qs.utm_campaign)
+    ? await one<{ platform: 'google' | 'meta' }>(`SELECT c.platform FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id WHERE a.external_id = $1 LIMIT 1`, [qs.utm_campaign])
+    : null;
+  const bySource = /^(fb|facebook|ig|instagram|an|msg|meta)$/i.test(qs.utm_source ?? '') || qs.utm_medium === 'paid_social' || !!qs.fbclid;
+  const isMeta = bySource || legacyAd?.platform === 'meta' || (legacy && /^\{\{.+\}\}$/.test(qs.utm_campaign)) || (legacy && !legacyAd && /^\d{15,}$/.test(qs.utm_campaign));
+  const isGoogle = !isMeta && (/^google$/i.test(qs.utm_source ?? '') || !!qs.gclid || qs.utm_medium === 'cpc' || legacyAd?.platform === 'google' || (legacy && /^\{[^{}]+\}$/.test(qs.utm_campaign)));
   const source = isMeta ? 'Meta Ads' : isGoogle ? 'Google Ads' : null;
-  checks.push(source ? { level: 'ok', message: `Source identificada: ${source}` } : { level: 'error', message: 'Source não identificada', detail: 'utm_source deve ser "google" ou o {{site_source_name}} da Meta.' });
+  checks.push(source
+    ? { level: 'ok', message: `Source identificada: ${source}`, detail: qs.utm_source ? undefined : 'Pelo formato utm_campaign / utm_content (utm_source não é obrigatório).' }
+    : { level: 'error', message: 'Source não identificada', detail: 'Use utm_source=google / {{site_source_name}}, ou o formato utm_campaign={{ad.id}}&utm_content={{ad.id}}_{{placement}}.' });
   const dom = await one<{ hostname: string; active: boolean }>('SELECT hostname, active FROM domains WHERE hostname = $1', [host]);
   checks.push(dom ? { level: dom.active ? 'ok' : 'warn', message: dom.active ? `Domínio cadastrado: ${dom.hostname}` : `Domínio ${dom.hostname} está inativo` } : { level: 'error', message: `Domínio não identificado: ${host}` });
-  Object.entries(qs).filter(([, v]) => /[{}]/.test(v)).forEach(([k, v]) => checks.push({ level: 'error', message: `Macro não substituída em ${k}`, detail: `Valor "${v}".` }));
+  const macros = Object.entries(qs).filter(([, v]) => /[{}]/.test(v));
+  macros.forEach(([k, v]) => checks.push({ level: 'warn', message: `Macro em ${k}: "${v}"`, detail: 'A plataforma troca a macro na entrega. Para conferir a campanha, cole a URL de um clique real (com os IDs já preenchidos).' }));
   const [p1, p2] = (qs.utm_content ?? '').split('_');
-  // formato do dash antigo: utm_campaign={creative} e utm_content={creative}_{placement} (Meta: {{ad.id}} e {{ad.id}}_{{placement}})
-  const legacy = !!qs.utm_campaign && okv(qs.utm_campaign) && ((qs.utm_content ?? '') === qs.utm_campaign || (qs.utm_content ?? '').startsWith(`${qs.utm_campaign}_`));
   let fields: Record<string, string | null> = isMeta && legacy ? {} : isMeta
     ? { campaignId: qs.utm_campaign ?? null, adSetId: p1 || null, adId: p2 || null, placement: qs.utm_term ?? null }
     : { campaignId: qs.utm_campaign ?? null, adGroupId: p1 || null, creative: p2 || null, keyword: qs.utm_term ?? null, placement: qs.placement ?? null, network: qs.network ?? null, device: qs.device ?? null };
@@ -333,7 +349,8 @@ metricsRouter.post('/utm/debug', requireCap('utm.debug'), async (req, res) => {
     const ad = await one<{ cid: string; gid: string }>(`SELECT c.external_id AS cid, g.external_id AS gid FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id
       WHERE a.external_id = $1 AND c.platform = 'meta' LIMIT 1`, [qs.utm_campaign]);
     fields = { campaignId: ad?.cid ?? null, adSetId: ad?.gid ?? null, adId: qs.utm_campaign, placement: (qs.utm_content ?? '').slice(qs.utm_campaign.length + 1) || null };
-    checks.push({ level: 'ok', message: 'Formato do dash antigo (Meta): utm_campaign={{ad.id}} e utm_content={{ad.id}}_{{placement}}', detail: ad ? 'Campanha e conjunto encontrados pelo ID do anúncio.' : 'O ID do anúncio não está nas contas importadas (rode o sync da Meta).' });
+    checks.push({ level: 'ok', message: 'Formato Meta: utm_campaign={{ad.id}} e utm_content={{ad.id}}_{{placement}}', detail: !okv(qs.utm_campaign) ? 'Sufixo no formato certo; a Meta preenche {{ad.id}} e {{placement}} na entrega.' : ad ? 'Campanha e conjunto encontrados pelo ID do anúncio.' : undefined });
+    if (okv(qs.utm_campaign) && !ad) checks.push({ level: 'error', message: `Anúncio ${qs.utm_campaign} não localizado`, detail: 'O ID não está nas contas Meta importadas: rode o sync de estrutura da Meta.' });
   } else if (legacy) {
     const ad = await one<{ cid: string; gid: string }>(`SELECT c.external_id AS cid, g.external_id AS gid FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id JOIN campaigns c ON c.id = g.campaign_id
       WHERE a.external_id = $1 AND c.platform = 'google' LIMIT 1`, [qs.utm_campaign]);
@@ -341,9 +358,13 @@ metricsRouter.post('/utm/debug', requireCap('utm.debug'), async (req, res) => {
     checks.push({ level: 'ok', message: 'Formato do dash antigo: utm_campaign={creative} e utm_content={creative}_{placement}', detail: ad ? 'Campanha e grupo encontrados pelo ID do criativo.' : 'O ID do criativo não está nas contas importadas (rode o sync do Google Ads).' });
   }
   const need = isMeta && legacy ? [['adId', 'ad.id'], ['campaignId', 'campanha (pelo ad.id)']] : isMeta ? [['campaignId', 'campaign.id'], ['adSetId', 'adset.id'], ['adId', 'ad.id']] : legacy ? [['creative', 'creative'], ['campaignId', 'campanha (pelo creative)']] : [['campaignId', 'campaignid'], ['adGroupId', 'adgroupid']];
-  need.forEach(([k, l]) => checks.push(okv(fields[k]) ? { level: 'ok', message: `${l} detectado` } : { level: 'error', message: `${l} ausente` }));
+  // template com macros (ainda não preenchido): basta a macro estar no lugar certo; a campanha só existe com o ID real
+  const isMacro = (v?: string | null) => !!v && /[{}]/.test(v);
+  need.forEach(([k, l]) => checks.push(okv(fields[k]) ? { level: 'ok', message: `${l} detectado` }
+    : isMacro(fields[k]) || (legacy && macros.length && k === 'campaignId') ? { level: 'ok', message: `${l}: macro no lugar certo` }
+    : { level: 'error', message: `${l} ausente` }));
   if (!isMeta && !legacy) checks.push(okv(fields.creative) ? { level: 'ok', message: 'creative detectado' } : { level: 'warn', message: 'creative vazio' });
-  checks.push(okv(fields.placement) ? { level: 'ok', message: 'placement detectado' } : { level: 'warn', message: 'placement vazio', detail: 'A análise por placement fica sem essa sessão.' });
+  checks.push(okv(fields.placement) || isMacro(fields.placement) ? { level: 'ok', message: 'placement detectado' } : { level: 'warn', message: 'placement vazio', detail: 'A análise por placement fica sem essa sessão.' });
   let campaign: { id: string; name: string } | null = null;
   if (okv(fields.campaignId)) {
     const sc = await allowedDomains(req);
@@ -351,8 +372,12 @@ metricsRouter.post('/utm/debug', requireCap('utm.debug'), async (req, res) => {
     campaign = hit && canSeeCampaign(sc, hit.db_id, hit.domain_id) ? { id: hit.id, name: hit.name } : null;
     checks.push(campaign ? { level: 'ok', message: `Campanha localizada: ${campaign.name}` } : { level: 'error', message: 'Campanha não localizada', detail: 'O ID não existe nas contas importadas.' });
   }
-  const base = url.origin + url.pathname;
-  res.json({ status: checks.some((c) => c.level === 'error') ? 'invalid' : 'valid', source, domain: host, campaign, fields, checks, preview: { google: `${base}?${tpl.google}`, meta: `${base}?${tpl.meta}` } });
+  // preview: link sem os parâmetros de rastreamento (os outros, ex.: ?id=12, ficam) + o template de cada plataforma
+  const clean = new URL(url.toString());
+  for (const k of [...clean.searchParams.keys()]) if (/^utm_/i.test(k) || ['fbclid', 'gclid', 'placement', 'network', 'device'].includes(k)) clean.searchParams.delete(k);
+  clean.hash = '';
+  const base = clean.toString(), join = (t: string) => (t.trim() ? `${base}${clean.search ? '&' : '?'}${t.trim().replace(/^[?&]+/, '')}` : '');
+  res.json({ status: checks.some((c) => c.level === 'error') ? 'invalid' : 'valid', source, domain: host, campaign, fields, checks, preview: { google: join(tpl.google), meta: join(tpl.meta) } });
 });
 
 /* ---------- câmbio ---------- */
