@@ -143,16 +143,17 @@ export const financeApi = {
 /* ----- 0.18 · campanhas Meta automatizadas (só com a flag can_create_meta_campaigns; o servidor responde 403 sem ela) ----- */
 const MIN = 60_000;
 export const metaCampaignsApi = {
-  profiles: () => api.get<{ profiles: T.MetaProfile[] }>('/meta/profiles'),
-  /** Confere o token na Meta sem salvar: devolve as permissões que faltam. */
-  checkToken: (token: string) => api.post<T.MetaTokenCheck>('/meta/profiles/check-token', { token }, { timeoutMs: MIN }),
-  createProfile: (b: T.MetaProfileInput) => api.post<T.MetaProfile>('/meta/profiles', b, { timeoutMs: MIN }),
-  updateProfile: (a: { id: string; patch: T.MetaProfilePatch }) => api.patch<T.MetaProfile>(`/meta/profiles/${a.id}`, a.patch),
+  profiles: () => api.get<{ profiles: T.MetaProfile[]; required: string[] }>('/meta/profiles'),
+  /** URL do Facebook Login (OAuth). rerequest = conectar Perfil · reauthenticate = pede a senha do Perfil logado. */
+  oauthUrl: (a: { mode?: 'rerequest' | 'reauthenticate'; profileId?: string } = {}) =>
+    api.get<{ url: string }>('/meta/oauth/url', { mode: a.mode ?? 'rerequest', ...(a.profileId ? { profileId: a.profileId } : {}) }),
   deleteProfile: (id: string) => api.del<void>(`/meta/profiles/${id}`),
-  validateProfile: (id: string) => api.post<T.MetaProfile>(`/meta/profiles/${id}/validate`, undefined, { timeoutMs: MIN }),
+  /** Confere o token na Meta e re-sincroniza BMs, contas, Páginas e Pixels/Datasets. */
+  syncProfile: (id: string) => api.post<T.MetaProfileSync>(`/meta/profiles/${id}/sync`, undefined, { timeoutMs: 3 * MIN }),
   adAccounts: (id: string) => api.get<{ adAccounts: T.MetaAdAccount[]; hiddenCount: number }>(`/meta/profiles/${id}/ad-accounts`),
   pages: (id: string) => api.get<{ pages: T.MetaPage[] }>(`/meta/profiles/${id}/pages`),
-  datasets: (id: string) => api.get<{ datasets: T.MetaDataset[] }>(`/meta/profiles/${id}/datasets`),
+  /** Pixels/Datasets sincronizados: os dos BMs + os da conta de anúncios. */
+  datasets: (id: string, adAccountId: string) => api.get<{ datasets: T.MetaDataset[] }>(`/meta/profiles/${id}/datasets`, { adAccountId }),
   pixels: (id: string, adAccountId: string) => api.get<{ pixels: T.MetaDataset[] }>(`/meta/profiles/${id}/pixels`, { adAccountId }),
   suggestion: (site: string) => api.get<T.MetaSuggestion>('/meta/campaign-suggestion', { site }),
   trackedUrl: (site: string, url: string) => api.post<T.MetaTrackedUrl>('/meta/tracked-url', { site, url }),

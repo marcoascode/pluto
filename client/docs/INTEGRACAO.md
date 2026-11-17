@@ -80,7 +80,7 @@ Login: no máximo 10 tentativas **erradas** por IP a cada 15 min (logins certos 
 - Dinheiro em `NUMERIC(14,4)`, sempre em USD na tabela. Na consulta, cada linha é convertida pela taxa **do próprio dia** (`currency_rates`) antes de somar.
 - Datas em `DATE` no timezone da organização (`APP_TZ`).
 - Fatos em `daily_metrics` (dia × domínio × URL × campanha/grupo/anúncio × país). Receita sem UTM válida fica com `platform = 'none'` + `unattributed_reason` e sai como `unattributedRevenue` — nunca rateada entre campanhas.
-- Tokens OAuth (Google Ads, Meta, GAM) criptografados com AES-256-GCM; a chave fica em `TOKEN_ENC_KEY`, fora do banco.
+- Tokens OAuth (Google Ads, Meta, GAM) criptografados com AES-256-GCM; a chave fica em `TOKEN_ENCRYPTION_KEY` (ou no nome antigo `TOKEN_ENC_KEY`), fora do banco. Perfis Meta de contingência (0.18.2) usam a mesma chave para o Long-Lived User Token do Facebook Login.
 
 ## Câmbio
 

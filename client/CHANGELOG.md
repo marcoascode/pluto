@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.2
+- **Perfis do Facebook via OAuth** (substitui o System User Token manual): botão **Conectar Perfil do Facebook** abre o Facebook Login (`auth_type=rerequest`; "Reconectar / Renovar" usa `reauthenticate`). O servidor troca o `code` por um **Long-Lived User Access Token (~60 dias)**, confere `/me` e `/me/permissions` (6 escopos: `ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`, `public_profile`), salva o token criptografado com a data de expiração e sincroniza BMs, contas de anúncios, Páginas e Pixels/Datasets.
+- **Contingência multi-perfil**: cada gestor conecta quantos Perfis quiser (um por login do Facebook); cards com status do token, dias restantes, contagem de ativos, **Sincronizar Ativos** (`POST /meta/profiles/:id/sync`) e **Remover Perfil**.
+- **Wizard** passa a ler só os ativos sincronizados de cada Perfil (contas, Páginas, Pixels/Datasets); Perfis vencidos, recusados ou sem permissões ficam desabilitados.
+- Perfis antigos (System User Token) continuam funcionando, marcados como "legado". Rotas removidas: `POST /meta/profiles`, `PATCH /meta/profiles/:id`, `POST /meta/profiles/check-token`, `POST /meta/profiles/:id/validate`.
+
 ## 0.18.1
 - **Perfis & BMs**: guia passo a passo retrátil para gerar o System User Token (com cópia do ID do App) e validação real das 5 permissões obrigatórias (`ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`) via `/debug_token`. Token incompleto ou recusado não é salvo e o formulário lista as permissões que faltam.
 

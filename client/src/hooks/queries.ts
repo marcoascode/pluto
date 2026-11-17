@@ -100,16 +100,11 @@ export function useFinanceMutation<A, R>(fn: (a: A) => Promise<R>) {
 export function useMetaProfiles() { return useQuery({ queryKey: qk.metaProfiles, queryFn: metaCampaignsApi.profiles }); }
 export function useMetaAdAccounts(profileId: string) { return useQuery({ queryKey: qk.metaAdAccounts(profileId), queryFn: () => metaCampaignsApi.adAccounts(profileId), enabled: !!profileId, staleTime: 60_000, retry: false }); }
 export function useMetaPages(profileId: string) { return useQuery({ queryKey: qk.metaPages(profileId), queryFn: () => metaCampaignsApi.pages(profileId), enabled: !!profileId, staleTime: 60_000, retry: false }); }
-/** Datasets do BM + pixels da conta, sem repetir. Cada fonte pode falhar sozinha (ex.: Perfil sem BM). */
-export function useMetaDatasets(profileId: string, adAccountId: string, hasBusiness: boolean) {
+/** Pixels/Datasets sincronizados do Perfil utilizáveis na conta (BMs + pixels da conta), sem os indisponíveis. */
+export function useMetaDatasets(profileId: string, adAccountId: string) {
   return useQuery({
     queryKey: qk.metaDatasets(profileId, adAccountId), enabled: !!profileId && !!adAccountId, staleTime: 60_000, retry: false,
-    queryFn: async () => {
-      const [ds, px] = await Promise.allSettled([hasBusiness ? metaCampaignsApi.datasets(profileId) : Promise.resolve({ datasets: [] }), metaCampaignsApi.pixels(profileId, adAccountId)]);
-      if (ds.status === 'rejected' && px.status === 'rejected') throw px.reason;
-      const all = [...(ds.status === 'fulfilled' ? ds.value.datasets : []), ...(px.status === 'fulfilled' ? px.value.pixels : [])];
-      return { datasets: [...new Map(all.map((d) => [d.id, d])).values()].filter((d) => !d.unavailable) };
-    },
+    queryFn: async () => ({ datasets: (await metaCampaignsApi.datasets(profileId, adAccountId)).datasets.filter((d) => !d.unavailable) }),
   });
 }
 export function useMetaSuggestion(site: string, enabled: boolean) { return useQuery({ queryKey: qk.metaSuggestion(site), queryFn: () => metaCampaignsApi.suggestion(site), enabled: enabled && !!site, staleTime: 5 * 60_000, retry: false }); }

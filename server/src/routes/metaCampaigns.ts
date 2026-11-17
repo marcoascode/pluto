@@ -14,7 +14,8 @@ import { decrypt } from '../lib/crypto.js';
 import { HttpError, notFound, parse } from '../lib/http.js';
 import { scope } from '../auth/scope.js';
 import { CTAS, LIMITS } from '../services/metaCopies.js';
-import { getAdAccountInfo, listAdAccountPixels, listBusinessDatasets, listPages, toHttpError, uploadAdImage, withRateLimit } from '../services/metaGraph.js';
+import { getAdAccountInfo, toHttpError, uploadAdImage, withRateLimit } from '../services/metaGraph.js';
+import { hasSyncedAsset } from '../services/metaProfiles.js';
 import { CONVERSION_EVENTS, OBJECTIVES, OPTIMIZATION_GOALS, PLATFORMS, listRuns, loadRun, publishCampaign, type AdSpec } from '../services/metaPublish.js';
 import { buildMetaTrackedUrl } from '../services/utm.js';
 
@@ -25,11 +26,14 @@ const ACCOUNT = z.string().regex(/^(act_)?\d+$/, 'adAccountId inválido').transf
 const HASH = z.string().regex(/^[a-f0-9]{32}$/i, 'image_hash inválido');
 
 interface Owned { id: string; businessId: string | null; token: string }
+/** Perfil do próprio usuário, com token utilizável (não recusado e não vencido). */
 async function ownProfile(req: Request): Promise<Owned> {
-  const r = await one<{ id: string; business_id: string | null; token_enc: Buffer; status: string }>(
-    'SELECT id::text, business_id, token_enc, status FROM meta_profiles WHERE id = $1 AND user_id = $2', [parse(ID, req.params.id), req.user!.id]);
+  const r = await one<{ id: string; business_id: string | null; token_enc: Buffer; status: string; expired: boolean }>(
+    `SELECT id::text, business_id, token_enc, status, (token_expires_at IS NOT NULL AND token_expires_at <= now()) AS expired
+       FROM meta_profiles WHERE id = $1 AND user_id = $2`, [parse(ID, req.params.id), req.user!.id]);
   if (!r) throw notFound('Perfil não encontrado.');
-  if (r.status === 'invalid') throw new HttpError(422, 'profile_invalid', 'O token deste Perfil foi recusado pela Meta. Atualize o token antes de publicar.');
+  if (r.expired) throw new HttpError(422, 'profile_expired', 'O token deste Perfil venceu. Clique em "Reconectar / Renovar" em Perfis & BMs.');
+  if (r.status === 'invalid') throw new HttpError(422, 'profile_invalid', 'O token deste Perfil foi recusado pela Meta ou está sem permissões. Reconecte o Perfil em Perfis & BMs.');
   return { id: r.id, businessId: r.business_id, token: decrypt(r.token_enc) };
 }
 
@@ -171,25 +175,19 @@ metaCampaignsRouter.post('/profiles/:id/campaigns/publish', async (req, res) => 
   const hostname = sc.hosts[0];
   const tracked = await buildMetaTrackedUrl(b.url, hostname);
 
-  // pré-checagens na Meta (falham antes de criar qualquer coisa)
-  const [info, pages] = await Promise.all([
-    getAdAccountInfo(p.token, b.adAccountId).catch((e) => { throw toHttpError(e); }),
-    listPages(p.token, p.businessId).catch((e) => { throw toHttpError(e); }),
-  ]);
+  // pré-checagens (falham antes de criar qualquer coisa): conta ativa na Meta + Página/Dataset entre os ativos sincronizados do Perfil
+  const info = await getAdAccountInfo(p.token, b.adAccountId).catch((e) => { throw toHttpError(e); });
   if (info.status === 2) throw new HttpError(422, 'ad_account_disabled', 'A conta de anúncios está desativada na Meta.');
-  if (!pages.some((pg) => pg.id === b.pageId)) throw new HttpError(422, 'page_not_found', 'A Página escolhida não está acessível por este Perfil.');
+  if (!(await hasSyncedAsset(p.id, 'page', b.pageId))) throw new HttpError(422, 'page_not_found', 'A Página escolhida não está entre os ativos sincronizados deste Perfil. Clique em "Sincronizar Ativos".');
 
   const t = b.tracking;
   const wantsDataset = t.linkDatasetToAdSet || t.linkPixelToAds;
   if (wantsDataset && !t.datasetId) throw new HttpError(422, 'invalid_input', 'tracking.datasetId: obrigatório para vincular Dataset/Pixel.');
   if (t.datasetId && wantsDataset) {
-    const sets = await Promise.all([
-      listAdAccountPixels(p.token, b.adAccountId),
-      p.businessId ? listBusinessDatasets(p.token, p.businessId) : Promise.resolve([]),
-    ]).catch((e) => { throw toHttpError(e); });
-    const found = sets.flat().find((d) => d.id === t.datasetId);
-    if (!found) throw new HttpError(422, 'dataset_not_found', 'O Dataset escolhido não está disponível para esta conta de anúncios.');
-    if (found.unavailable) throw new HttpError(422, 'dataset_unavailable', 'O Dataset escolhido está indisponível na Meta.');
+    const found = await hasSyncedAsset(p.id, 'dataset', t.datasetId);
+    const usable = found && ((found.data.businessIds ?? []).length > 0 || (found.data.adAccountIds ?? []).includes(b.adAccountId));
+    if (!found || !usable) throw new HttpError(422, 'dataset_not_found', 'O Dataset escolhido não está disponível para esta conta de anúncios. Sincronize os ativos do Perfil.');
+    if (found.data.unavailable) throw new HttpError(422, 'dataset_unavailable', 'O Dataset escolhido está indisponível na Meta.');
   }
 
   // parâmetros finais: manual > sugestão da IA > padrão
