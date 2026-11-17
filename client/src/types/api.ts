@@ -553,22 +553,31 @@ export interface CashInput { companyId: string; date: string; kind: CashEntry['k
 
 
 /* ---------- 0.18 · criação automatizada de campanhas Meta ---------- */
+/** Perfil Meta de contingência. 0.18.2: conectado via Facebook Login (source 'oauth'); 'system_user' = token manual legado. */
 export interface MetaProfile {
   id: string;
   name: string;
+  source: 'oauth' | 'system_user';
+  /** id do Perfil do Facebook que autorizou (app-scoped) */
+  fbUserId: string | null;
+  email: string | null;
   businessId: string | null;
-  systemUserId: string | null;
   systemUserName: string | null;
-  tokenLast4: string;
-  status: 'valid' | 'invalid' | 'pending';
+  tokenLast4: string | null;
+  status: 'valid' | 'invalid' | 'pending' | 'expired';
   message: string | null;
   scopes: string[];
+  declinedScopes: string[];
+  /** null = não expira (System User legado) */
+  tokenExpiresAt: string | null;
   lastValidatedAt: string | null;
+  lastSyncedAt: string | null;
+  syncError: string | null;
+  counts: { businesses: number; adAccounts: number; pages: number; datasets: number };
   createdAt: string;
   updatedAt: string;
 }
-export interface MetaProfileInput { name: string; businessId?: string; token: string }
-export interface MetaProfilePatch { name?: string; businessId?: string | null; token?: string }
+export interface MetaProfileSync { profile: MetaProfile; sync: { counts: { business: number; ad_account: number; page: number; dataset: number }; warnings: string[] } }
 export interface MetaAdAccount { id: string; name: string; status: number | null; currency: string | null; timezone: string | null; businessId: string | null; plutoAccountId: string; sites: string[] }
 export interface MetaPage { id: string; name: string; category: string | null; tasks: string[] }
 export interface MetaDataset { id: string; name: string; lastFiredAt: string | null; unavailable: boolean }
@@ -625,5 +634,4 @@ export interface MetaRunStep { id: string; seq: number; kind: 'campaign' | 'adse
 export interface MetaRun { id: string; profileId: string; adAccountId: string; site: string; source: string; name: string; status: string; metaCampaignId: string | null; metaAdsetId: string | null; error: string | null; createdAt: string; finishedAt: string | null; steps: MetaRunStep[] }
 
 /** Permissões obrigatórias do System User Token (o servidor confere o mesmo conjunto). */
-export const META_REQUIRED_SCOPES = ['ads_management', 'ads_read', 'business_management', 'pages_show_list', 'pages_read_engagement'] as const;
-export interface MetaTokenCheck { valid: boolean; complete: boolean; required: string[]; granted: string[]; missing: string[]; systemUserName: string | null; appId: string | null; expiresAt: string | null; message: string | null }
+export const META_REQUIRED_SCOPES = ['ads_management', 'ads_read', 'business_management', 'pages_show_list', 'pages_read_engagement', 'public_profile'] as const;

@@ -30,7 +30,7 @@ export const config = {
     secure: bool(process.env.COOKIE_SECURE, isProd),
   },
   /** 32 bytes em base64 (openssl rand -base64 32). Criptografa os tokens OAuth no banco. */
-  tokenEncKey: req('TOKEN_ENC_KEY', isProd ? undefined : 'ZGV2LW9ubHktZGV2LW9ubHktZGV2LW9ubHktZGV2LTA='),
+  tokenEncKey: process.env.TOKEN_ENCRYPTION_KEY || req('TOKEN_ENC_KEY', isProd ? undefined : 'ZGV2LW9ubHktZGV2LW9ubHktZGV2LW9ubHktZGV2LTA='),
   admin: { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD, name: process.env.ADMIN_NAME ?? 'Administrador' },
   mail: {
     host: process.env.SMTP_HOST,
@@ -46,6 +46,8 @@ export const config = {
     metaAppId: process.env.META_APP_ID,
     metaAppSecret: process.env.META_APP_SECRET,
     metaApiVersion: process.env.META_API_VERSION ?? 'v25.0',
+    /** Callback do Facebook Login dos Perfis Meta (cadastre em Login do Facebook → URIs de redirecionamento do OAuth válidos). */
+    metaProfilesRedirectUri: process.env.META_OAUTH_REDIRECT_URI || undefined,
     googleAdsDeveloperToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
     /** MCC (só dígitos). Vai no cabeçalho login-customer-id e é de onde saem as contas. */
     googleAdsLoginCustomerId: (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ?? '').replace(/\D/g, '') || undefined,

@@ -19,7 +19,7 @@ import { placementsRouter } from './routes/placements.js';
 import { companiesReadRouter } from './routes/companies.js';
 import { adminRouter } from './routes/admin/index.js';
 import { linksRouter } from './routes/links.js';
-import { metaRouter } from './routes/meta.js';
+import { metaRouter, oauthCallbackErrors } from './routes/meta.js';
 import { backfillIfEmpty } from './services/fx.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
 
@@ -55,6 +55,7 @@ export function createApp() {
   app.use('/finance', financeRouter);
   app.use('/links', linksRouter);   // 0.17: Contas × Sites (gestor, gerente, admin)
   app.use('/meta', requireMetaCampaigns, metaRouter);   // 0.18: só com can_create_meta_campaigns
+  app.use('/meta/oauth/callback', oauthCallbackErrors);   // callback do Facebook Login: erro (até 401/403) volta para a tela de Perfis
   app.use(metricsRouter);
 
   app.use(notFoundHandler);

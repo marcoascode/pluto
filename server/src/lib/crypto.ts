@@ -12,7 +12,7 @@ export function tempPassword(len = 12): string {
 }
 
 const KEY = Buffer.from(config.tokenEncKey, 'base64');
-if (KEY.length !== 32) throw new Error('TOKEN_ENC_KEY precisa ter 32 bytes em base64 (openssl rand -base64 32).');
+if (KEY.length !== 32) throw new Error('TOKEN_ENCRYPTION_KEY (ou TOKEN_ENC_KEY) precisa ter 32 bytes em base64 (openssl rand -base64 32).');
 
 /** AES-256-GCM: [iv 12][tag 16][dados]. Para refresh/access tokens do OAuth. */
 export function encrypt(plain: string): Buffer {

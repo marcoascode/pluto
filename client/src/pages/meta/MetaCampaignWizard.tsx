@@ -17,7 +17,7 @@ import { ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
 import { TECH_DOMAIN } from '@/lib/format';
 import { META_COPY_LIMITS, META_CONVERSION_EVENTS, META_CTAS, META_OBJECTIVES, META_OPT_GOALS } from '@/types/api';
 import type { MetaCopy, MetaPublishRequest, MetaRun, MetaSuggestion } from '@/types/api';
-import { getDefaultPage, profileLabel } from './shared';
+import { getDefaultPage, profileLabel, profileUsable } from './shared';
 
 const STEPS = ['Site e conta', 'Criativos e copies', 'Configuração', 'Revisão e disparo'];
 const MAX_FILES = 20, MAX_BYTES = 10 * 1024 * 1024, MAX_ADS = 50;
@@ -84,7 +84,7 @@ export default function MetaCampaignWizardPage() {
   const sites = useMemo(() => (myDomains.data?.domains ?? []).filter((d) => d !== TECH_DOMAIN).sort(), [myDomains.data]);
   const accountsForSite = useMemo(() => (adAccounts.data?.adAccounts ?? []).filter((a) => !!site && a.sites.includes(site)), [adAccounts.data, site]);
   const account = accountsForSite.find((a) => a.id === accountId);
-  const datasets = useMetaDatasets(profileId, accountId, !!profile?.businessId);
+  const datasets = useMetaDatasets(profileId, accountId);
   const suggestion = useMetaSuggestion(site, mode === 'ai');
   const tracked = useMetaTrackedUrl(site, url.trim());
 
@@ -121,7 +121,7 @@ export default function MetaCampaignWizardPage() {
   const adsPerCampaign = layout === 'per-copy' ? creatives.length : pairing === 'cross' ? creatives.length * copies.length : Math.max(creatives.length, copies.length);
 
   /* ---------------- validação por passo ---------------- */
-  const err1 = !site ? 'Escolha o site.' : !profileId ? 'Escolha o Perfil/BM.' : profile?.status === 'invalid' ? 'O token deste Perfil foi recusado pela Meta. Atualize o token em Perfis & BMs.' : !accountId ? 'Escolha a conta de anúncios.' : !pageId ? 'Escolha a Página.' : '';
+  const err1 = !site ? 'Escolha o site.' : !profileId ? 'Escolha o Perfil do Facebook.' : profile && !profileUsable(profile) ? 'O token deste Perfil está vencido, recusado ou sem permissões. Reconecte o Perfil em Perfis & BMs.' : !accountId ? 'Escolha a conta de anúncios.' : !pageId ? 'Escolha a Página.' : '';
   const err2 = !creatives.length ? 'Envie ao menos um criativo.' : !(nCount >= 1 && nCount <= 20) ? 'A quantidade de copies vai de 1 a 20.' : offer.trim().length < 10 ? 'Descreva a oferta/site em pelo menos 10 caracteres para a IA gerar as copies.' : '';
   const budgetN = num(budget), minN = num(ageMin), maxN = num(ageMax);
   const err3 = !tracked.data ? (tracked.error ? errMsg(tracked.error, 'URL de destino inválida.') : 'Informe a URL de destino (https) do site.')
@@ -215,7 +215,7 @@ export default function MetaCampaignWizardPage() {
       <Stepper activeStep={step} alternativeLabel sx={{ mb: 2.5 }}>{STEPS.map((l) => <Step key={l}><StepLabel>{l}</StepLabel></Step>)}</Stepper>
 
       {!profiles.data.profiles.length && (
-        <Alert severity="warning" variant="outlined" sx={{ mb: 2 }} action={<Button color="inherit" size="small" component={RouterLink} to="/perfis-meta">Cadastrar</Button>}>Você ainda não tem nenhum Perfil/BM com token. Cadastre um antes de começar.</Alert>
+        <Alert severity="warning" variant="outlined" sx={{ mb: 2 }} action={<Button color="inherit" size="small" component={RouterLink} to="/perfis-meta">Conectar</Button>}>Você ainda não conectou nenhum Perfil do Facebook. Conecte um em Perfis & BMs antes de começar.</Alert>
       )}
 
       {/* ===== Passo 1 ===== */}
@@ -227,20 +227,20 @@ export default function MetaCampaignWizardPage() {
             </TextField>
           </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
-            <TextField select fullWidth label="Perfil / BM" value={profileId} onChange={(e) => { setProfileId(e.target.value); setAccountId(''); setPageId(''); setDatasetId(''); }}>
-              {profiles.data.profiles.map((p) => <MenuItem key={p.id} value={p.id} disabled={p.status === 'invalid'}>{p.name}{p.businessId ? ` · BM ${p.businessId}` : ''}{p.status !== 'valid' ? ` · ${profileLabel(p.status)}` : ''}</MenuItem>)}
+            <TextField select fullWidth label="Perfil do Facebook" value={profileId} onChange={(e) => { setProfileId(e.target.value); setAccountId(''); setPageId(''); setDatasetId(''); }}>
+              {profiles.data.profiles.map((p) => <MenuItem key={p.id} value={p.id} disabled={!profileUsable(p)}>{p.name}{p.fbUserId ? ` · ${p.fbUserId}` : p.businessId ? ` · BM ${p.businessId}` : ''} · {p.counts.adAccounts} contas · {p.counts.pages} Páginas{p.status !== 'valid' ? ` · ${profileLabel(p.status)}` : ''}</MenuItem>)}
             </TextField>
           </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
             <TextField select fullWidth label="Conta de anúncios" value={accountId} disabled={!profileId || !site || adAccounts.isLoading} onChange={(e) => { setAccountId(e.target.value); setDatasetId(''); }}
-              helperText={!profileId ? 'Escolha o Perfil primeiro.' : adAccounts.isLoading ? 'Carregando contas na Meta…' : adAccounts.error ? errMsg(adAccounts.error, 'Falha ao ler as contas.') : site && !accountsForSite.length ? `Nenhuma conta deste Perfil está ligada a ${site} para você. Peça ao Admin para vincular.` : ' '}
+              helperText={!profileId ? 'Escolha o Perfil primeiro.' : adAccounts.isLoading ? 'Carregando contas sincronizadas…' : adAccounts.error ? errMsg(adAccounts.error, 'Falha ao ler as contas.') : site && !accountsForSite.length ? `Nenhuma conta deste Perfil está ligada a ${site} para você. Peça ao Admin para vincular.` : ' '}
               error={!!adAccounts.error}>
               {accountsForSite.map((a) => <MenuItem key={a.id} value={a.id}>{a.name} · {a.id}{a.currency ? ` · ${a.currency}` : ''}</MenuItem>)}
             </TextField>
           </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
             <TextField select fullWidth label="Página" value={pageId} disabled={!profileId || pages.isLoading} onChange={(e) => setPageId(e.target.value)}
-              helperText={!profileId ? 'Escolha o Perfil primeiro.' : pages.isLoading ? 'Sincronizando Páginas…' : pages.error ? errMsg(pages.error, 'Falha ao ler as Páginas.') : !pages.data?.pages.length ? 'Nenhuma Página encontrada para este token.' : ' '} error={!!pages.error}>
+              helperText={!profileId ? 'Escolha o Perfil primeiro.' : pages.isLoading ? 'Carregando Páginas sincronizadas…' : pages.error ? errMsg(pages.error, 'Falha ao ler as Páginas.') : !pages.data?.pages.length ? 'Nenhuma Página sincronizada neste Perfil. Use "Sincronizar Ativos" em Perfis & BMs.' : ' '} error={!!pages.error}>
               {(pages.data?.pages ?? []).map((p) => <MenuItem key={p.id} value={p.id}>{p.name} · {p.id}</MenuItem>)}
             </TextField>
           </Grid>
