@@ -3,6 +3,7 @@ import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import { Link as RouterLink } from 'react-router-dom';
 import { useUtmTemplates } from '@/hooks/queries';
 import { PageHead, PageSkeleton, copyText } from '@/components/ui/States';
+import { MetaTagAuditCard } from './MetaTagAuditCard';
 
 /** Sufixo usado no dash antigo: continua funcionando aqui (o servidor reconhece pelo utm_content começar com o utm_campaign). */
 const LEGACY = 'utm_campaign={creative}&utm_content={creative}_{placement}';
@@ -24,6 +25,7 @@ export default function UtmsPage() {
           </CardContent>
         </Card></Grid>
       ))}</Grid>
+      <MetaTagAuditCard />
       <Card sx={{ mt: 1.75 }}>
         <CardHeader title="Formato do dash antigo (Google Ads e Meta)" subheader="Também aceito: as campanhas que já usam estes parâmetros funcionam nos dois dashes, sem mudar nada." />
         <CardContent>

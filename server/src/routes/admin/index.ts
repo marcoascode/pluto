@@ -11,6 +11,7 @@ import { domainsRouter } from './domains.js';
 import { integrationsRouter } from './integrations.js';
 import { companiesRouter } from './companies.js';
 import { campaignsAdminRouter } from './campaigns.js';
+import { utmAuditRouter } from './utmAudit.js';
 
 /** /admin/* — só Admin e SuperAdmin (403 para Gestor e Gerente), além do requireAuth global. */
 export const adminRouter = Router();
@@ -21,6 +22,7 @@ adminRouter.use(domainsRouter);
 adminRouter.use(integrationsRouter);
 adminRouter.use(companiesRouter);
 adminRouter.use(campaignsAdminRouter);
+adminRouter.use(utmAuditRouter);
 
 /** UTMs globais (uma estrutura por plataforma). */
 adminRouter.put('/utm-templates', async (req, res) => {

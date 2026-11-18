@@ -1,6 +1,7 @@
 /**
  * Meta Ads (Marketing API).
  *  - estrutura: /act_{id}/ads com campanha, conjunto e o link do criativo (define domínio e URL de cada campanha)
+ *               e o url_tags do criativo ("Parâmetros de URL"), auditado em Admin → UTMs (routes/admin/utmAudit.ts)
  *  - métricas:  /act_{id}/insights level=ad, time_increment=1, breakdowns=country,
  *               em blocos de até 3 dias (CHUNKING, ver chunkWindow/fetchInsightsChunked)
  * Custo vai para USD pela taxa do dia; IVA = custo × alíquota (app_settings.meta_iva_rate, 13,83%).
@@ -140,7 +141,7 @@ interface MetaAd {
   id: string; name: string; effective_status?: string; adset_id?: string;
   adset?: { id: string; name: string; effective_status?: string };
   campaign?: { id: string; name: string; effective_status?: string };
-  creative?: { link_url?: string; template_url?: string; object_story_spec?: any; asset_feed_spec?: any };
+  creative?: { link_url?: string; template_url?: string; url_tags?: string; object_story_spec?: any; asset_feed_spec?: any };
 }
 /** Link de destino do criativo (link, vídeo com CTA, carrossel, dinâmico, catálogo). */
 function adLink(ad: MetaAd): string | null {
@@ -154,7 +155,7 @@ interface Acc { id: string; external_id: string; name: string; currency: string 
 
 /** Atualiza campanhas/conjuntos/anúncios de uma conta. Devolve os mapas de ids externos → internos e o resolvedor de domínio. */
 async function syncStructure(acc: Acc, token: string, dom: Awaited<ReturnType<typeof domainResolver>>) {
-  const fields = 'id,name,effective_status,adset_id,adset{id,name,effective_status},campaign{id,name,effective_status},creative{link_url,template_url,object_story_spec,asset_feed_spec}';
+  const fields = 'id,name,effective_status,adset_id,adset{id,name,effective_status},campaign{id,name,effective_status},creative{link_url,template_url,url_tags,object_story_spec,asset_feed_spec}';
   const ads = await paginate<MetaAd>(`${base()}/act_${acc.external_id}/ads?${new URLSearchParams({ fields, limit: '200', access_token: token })}`, `${acc.name} estrutura`);
   // fallback da conta: o ÚNICO domínio ligado a ela em domain_accounts (com 0 ou 2+ não dá para adivinhar)
   const linked = await accountDomains(acc.id);
@@ -178,7 +179,7 @@ async function syncStructure(acc: Acc, token: string, dom: Awaited<ReturnType<ty
     let g = groups.get(gExt);
     if (!g) { g = await upsertAdGroup(c.id, gExt, ad.adset?.name ?? 'Conjunto', ad.adset?.effective_status); groups.set(gExt, g); }
     const link = adLink(ad);
-    adsMap.set(ad.id, { id: await upsertAd(g, ad.id, ad.name, link, ad.effective_status), path: parseUrl(link)?.pathname ?? null, domainId: dom.byUrl(link)?.id ?? null });
+    adsMap.set(ad.id, { id: await upsertAd(g, ad.id, ad.name, link, ad.effective_status, ad.creative ? (ad.creative.url_tags ?? '').trim() : null), path: parseUrl(link)?.pathname ?? null, domainId: dom.byUrl(link)?.id ?? null });
   }
   /**
    * VALIDAÇÃO DE DOMÍNIO (ordem de tentativa) para cada linha de métrica:

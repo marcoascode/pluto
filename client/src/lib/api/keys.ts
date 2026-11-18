@@ -36,6 +36,7 @@ export const qk = {
   integrations: ['integrations'] as const,
   adminDomains: ['adminDomains'] as const,
   unmapped: (p: string) => ['unmapped', p] as const,
+  metaTagAudit: (days: number) => ['metaTagAudit', days] as const,
   squads: ['squads'] as const,
   users: ['users'] as const,
   permissions: ['permissions'] as const,

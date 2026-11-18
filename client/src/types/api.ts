@@ -206,6 +206,18 @@ export interface UnmappedCampaign {
   spend: number; clicks: number; rows: number; firstDate: string | null; lastDate: string | null;
 }
 export interface UnmappedCampaignsResponse { platform: Platform; days: number; campaigns: UnmappedCampaign[]; totals: { spend: number; rows: number } }
+/** 0.18 · auditoria do sufixo de UTM dos anúncios Meta (GET /admin/utm-audit/meta). */
+export type MetaTagStatus = 'ok' | 'missing' | 'different' | 'unread';
+export interface MetaTagAuditAd {
+  id: string; name: string; status: MetaTagStatus; params: Record<string, string>; attributable: boolean;
+  urlTags: string | null; adset: string; campaignId: string; campaignName: string;
+  accountId: string; accountName: string; managers: string | null; domain: string | null; spend: number;
+}
+export interface MetaTagAuditResponse {
+  template: string; days: number;
+  totals: Record<MetaTagStatus, number> & { spendAtRisk: number };
+  ads: MetaTagAuditAd[];
+}
 export interface SetCampaignDomainResponse {
   campaign: { id: string; platform: Platform; name: string; domain: string | null; domainManual: boolean };
   movedRows: number;
