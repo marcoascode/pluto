@@ -59,6 +59,7 @@ export function useFxHistory() { return useQuery({ queryKey: qk.fxHistory, query
 /* ---- admin ---- */
 export function useIntegrations() { return useQuery({ queryKey: qk.integrations, queryFn: integrationsApi.status }); }
 export function useAdminDomains(enabled = true) { return useQuery({ queryKey: qk.adminDomains, queryFn: adminApi.domains, enabled }); }
+export function useMetaTagAudit(days = 7) { return useQuery({ queryKey: qk.metaTagAudit(days), queryFn: () => adminApi.metaTagAudit(days) }); }
 export function useUnmappedCampaigns(p: Platform = 'meta', enabled = true) { return useQuery({ queryKey: qk.unmapped(p), queryFn: () => adminApi.unmappedCampaigns(p), enabled }); }
 /** Define o domínio de uma campanha. Atualiza tudo que mostra custo por domínio/campanha. */
 export function useSetCampaignDomain() {

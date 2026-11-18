@@ -340,6 +340,15 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   }
   if (/\/sync$/.test(path)) return out(undefined);
   if (path === '/admin/domains' && method === 'GET') return out({ domains: DOMAINS.map(domOut) });
+  /* ---- 0.18 · auditoria do sufixo dos anúncios Meta ---- */
+  if (path === '/admin/utm-audit/meta') {
+    const tpl = 'utm_campaign={{ad.id}}&utm_content={{ad.id}}_{{placement}}';
+    const metaCamps = CAMPS.filter((c) => c.platform === 'meta').slice(0, 3);
+    const ads: T.MetaTagAuditAd[] = metaCamps.map((c, i) => ({ id: `12025381782848${String(i).padStart(4, '0')}`, name: `Anúncio ${i + 1}`, adset: 'Conjunto 1', campaignId: c.id, campaignName: c.name,
+      accountId: c.acc, accountName: accName(c.acc), managers: null, domain: c.domain === TECH ? null : c.domain, spend: 120 - i * 40, urlTags: i === 0 ? '' : i === 1 ? 'utm_campaign={{campaign.id}}&utm_content={{adset.id}}_{{ad.id}}' : null,
+      status: (['missing', 'different', 'unread'] as const)[i], attributable: i === 1, params: (i === 1 ? { utm_campaign: '{{campaign.id}}', utm_content: '{{adset.id}}_{{ad.id}}' } : {}) as Record<string, string> }));
+    return out<T.MetaTagAuditResponse>({ template: tpl, days: Number(q.days) || 7, totals: { ok: 12, missing: 1, different: 1, unread: 1, spendAtRisk: 120 }, ads });
+  }
   /* ---- campanhas sem domínio (Prompt-05) ---- */
   if (path === '/admin/campaigns/unmapped') {
     const platform = (q.platform as T.Platform) || 'meta'; const days = Number(q.days) || 30;

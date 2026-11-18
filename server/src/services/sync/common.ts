@@ -142,11 +142,13 @@ export async function upsertAdGroup(campaignId: string, extId: string, name: str
     RETURNING id::text`, [campaignId, extId, name.slice(0, 255) || extId, status ?? null]);
   return r!.id;
 }
-export async function upsertAd(adGroupId: string, extId: string, name: string, finalUrl?: string | null, status?: string): Promise<string> {
+/** urlTags: só a Meta manda (url_tags do criativo; '' = lido e vazio). undefined/null mantém o valor gravado. */
+export async function upsertAd(adGroupId: string, extId: string, name: string, finalUrl?: string | null, status?: string, urlTags?: string | null): Promise<string> {
   const r = await one<{ id: string }>(`
-    INSERT INTO ads (ad_group_id, external_id, name, final_url, status) VALUES ($1, $2, $3, $4, $5)
-    ON CONFLICT (ad_group_id, external_id) DO UPDATE SET name = EXCLUDED.name, final_url = COALESCE(EXCLUDED.final_url, ads.final_url), status = COALESCE(EXCLUDED.status, ads.status), last_seen_at = now()
-    RETURNING id::text`, [adGroupId, extId, name.slice(0, 255) || `Anúncio ${extId}`, finalUrl ?? null, status ?? null]);
+    INSERT INTO ads (ad_group_id, external_id, name, final_url, status, url_tags) VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (ad_group_id, external_id) DO UPDATE SET name = EXCLUDED.name, final_url = COALESCE(EXCLUDED.final_url, ads.final_url), status = COALESCE(EXCLUDED.status, ads.status),
+      url_tags = COALESCE(EXCLUDED.url_tags, ads.url_tags), last_seen_at = now()
+    RETURNING id::text`, [adGroupId, extId, name.slice(0, 255) || `Anúncio ${extId}`, finalUrl ?? null, status ?? null, urlTags ?? null]);
   return r!.id;
 }
 

@@ -103,6 +103,7 @@ export const integrationsApi = {
 
 export const adminApi = {
   domains: () => api.get<{ domains: T.Domain[] }>('/admin/domains'),
+  metaTagAudit: (days = 7) => api.get<T.MetaTagAuditResponse>('/admin/utm-audit/meta', { days }),
   unmappedCampaigns: (platform: T.Platform = 'meta', days = 30) => api.get<T.UnmappedCampaignsResponse>('/admin/campaigns/unmapped', { platform, days }),
   setCampaignDomain: (a: { id: string; platform: T.Platform; domain: string | null }) => api.patch<T.SetCampaignDomainResponse>(`/admin/campaigns/${encodeURIComponent(a.id)}`, { platform: a.platform, domain: a.domain }),
   createDomain: (hostname: string) => api.post<T.Domain>('/admin/domains', { hostname }),
