@@ -20,6 +20,7 @@ import { companiesReadRouter } from './routes/companies.js';
 import { adminRouter } from './routes/admin/index.js';
 import { linksRouter } from './routes/links.js';
 import { metaRouter, oauthCallbackErrors } from './routes/meta.js';
+import { collectRouter, flushCollect } from './routes/collect.js';
 import { backfillIfEmpty } from './services/fx.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
 
@@ -32,6 +33,9 @@ export function createApp() {
   app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } }));
   app.use(express.json({ limit: '200kb' }));
   app.use(cookieParser());
+
+  // 0.18 · coleta do rastreador dos sites: pública e de outra origem, antes do CSRF e da sessão (ver routes/collect.ts)
+  app.use(collectRouter);
 
   // CSRF: além do cookie SameSite=Lax, requisições que alteram dados precisam vir do próprio app.
   const allowed = new Set([new URL(config.appUrl).origin]);
@@ -86,7 +90,7 @@ async function main() {
   const stop = (sig: string) => {
     console.log(`[api] ${sig}: encerrando…`);
     stopScheduler();
-    server.close(() => pool.end().then(() => process.exit(0)));
+    server.close(() => flushCollect().finally(() => pool.end()).then(() => process.exit(0)));
     setTimeout(() => process.exit(1), 10_000).unref();
   };
   process.on('SIGTERM', () => stop('SIGTERM'));
