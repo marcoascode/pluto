@@ -6,6 +6,8 @@ export const qk = {
   metaPages: (id: string) => ['metaPages', id] as const,
   metaDatasets: (id: string, account: string) => ['metaDatasets', id, account] as const,
   metaSuggestion: (site: string) => ['metaSuggestion', site] as const,
+  metaConversionEvents: (id: string, account: string, dataset: string) => ['metaConversionEvents', id, account, dataset] as const,
+  metaDrafts: ['metaDrafts'] as const,
   metaTrackedUrl: (site: string, url: string) => ['metaTrackedUrl', site, url] as const,
   me: ['me'] as const,
   prefs: ['prefs'] as const,

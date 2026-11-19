@@ -14,13 +14,18 @@ const MAX_PAGES = 20;
 export function toHttpError(e: unknown): HttpError {
   if (e instanceof HttpError) return e;
   if (e instanceof SyncError) {
+    // a Meta responde HTTP 400 (não 401/403) para token inválido (#190) e falta de permissão (#10, #200–#299, #294)
+    if (e.code === 'api' && /\(#190\)/.test(e.message)) return new HttpError(422, 'meta_token_invalid', `Token recusado pela Meta: ${e.message}`);
+    if (e.code === 'permission' || (e.code === 'api' && isMetaPermission(e))) return new HttpError(422, 'meta_permission', `Sem permissão na Meta: ${e.message}`);
     if (e.code === 'token') return new HttpError(422, 'meta_token_invalid', `Token recusado pela Meta: ${e.message}`);
-    if (e.code === 'permission') return new HttpError(422, 'meta_permission', `Sem permissão na Meta: ${e.message}`);
     if (e.code === 'rate_limit') return new HttpError(429, 'meta_rate_limit', 'Limite de uso da Meta atingido. Tente de novo em instantes.');
     return new HttpError(502, 'meta_api', `Falha ao consultar a Meta: ${e.message}`);
   }
   return new HttpError(502, 'meta_api', 'Falha ao consultar a Meta.');
 }
+
+/** Erro de permissão da Graph API: códigos 10, 200–299 e 294 (ex.: "(#200) Permissions error"). */
+export const isMetaPermission = (e: unknown) => e instanceof SyncError && /\(#(10|2\d\d|294)\)|Permissions error/i.test(e.message);
 
 export async function graphGet<T = any>(token: string, path: string, params: Record<string, string> = {}): Promise<T> {
   const qs = new URLSearchParams(params).toString();
@@ -129,8 +134,51 @@ export async function uploadAdImage(token: string, accountId: string, data: Buff
   return { hash: img.hash, url: img.url ?? null };
 }
 
-export interface AdAccountInfo { currency: string | null; status: number | null }
+export interface AdAccountInfo { name: string | null; currency: string | null; status: number | null; userTasks: string[] | null }
+/** user_tasks = o que o Perfil (usuário do token) pode fazer na conta: MANAGE, ADVERTISE, ANALYZE, DRAFT. */
 export async function getAdAccountInfo(token: string, accountId: string): Promise<AdAccountInfo> {
-  const a = await graphGet<{ currency?: string; account_status?: number }>(token, `act_${norm(accountId)}`, { fields: 'currency,account_status' });
-  return { currency: a.currency ?? null, status: a.account_status ?? null };
+  const a = await graphGet<{ name?: string; currency?: string; account_status?: number; user_tasks?: string[] }>(token, `act_${norm(accountId)}`, { fields: 'name,currency,account_status,user_tasks' });
+  return { name: a.name ?? null, currency: a.currency ?? null, status: a.account_status ?? null, userTasks: Array.isArray(a.user_tasks) ? a.user_tasks : null };
+}
+
+const TASK_LABEL: Record<string, string> = { MANAGE: 'Gerenciar conta', ADVERTISE: 'Gerenciar campanhas', ANALYZE: 'Ver desempenho', DRAFT: 'Criar rascunhos' };
+/**
+ * Subir imagens e criar campanhas exige a tarefa ADVERTISE (ou MANAGE) do Perfil na conta. Sem ela a Meta responde só
+ * "(#200) Permissions error". Devolve a mensagem de erro para a tela, ou null se o Perfil pode anunciar (ou se a Meta não informou).
+ */
+export function advertiseProblem(info: AdAccountInfo, accountId: string): string | null {
+  const t = info.userTasks;
+  if (!t || !t.length || t.includes('ADVERTISE') || t.includes('MANAGE')) return null;
+  return `O Perfil não tem permissão para anunciar na conta ${info.name ? `"${info.name}" ` : ''}(${norm(accountId)}). Acesso atual: ${t.map((x) => TASK_LABEL[x] ?? x).join(', ')}. `
+    + 'No Business Manager (Configurações do negócio → Contas de anúncios → Pessoas), dê a este Perfil o acesso "Gerenciar campanhas" (ou controle total) e tente de novo.';
+}
+
+/** Dica exibida junto a um "Permissions error" da Meta numa escrita (upload de imagem, criação de campanha). */
+export const PERMISSION_HINT = 'Confira se o Perfil tem o acesso "Gerenciar campanhas" na conta de anúncios (Business Manager → Contas de anúncios → Pessoas), '
+  + 'se a conta não está restrita/desativada e se o Perfil foi conectado concedendo a permissão ads_management. Depois clique em "Reconectar / Renovar" em Perfis & BMs.';
+
+/* ---------------- eventos de conversão do Pixel (padrão + personalizados) ---------------- */
+/** Nomes dos eventos padrão/automáticos do Pixel (o que não estiver aqui é evento personalizado — fbq('trackCustom', …)). */
+const PIXEL_STANDARD = new Set(['PageView', 'ViewContent', 'Search', 'AddToCart', 'AddToWishlist', 'InitiateCheckout', 'AddPaymentInfo', 'Purchase', 'Lead',
+  'CompleteRegistration', 'Contact', 'CustomizeProduct', 'Donate', 'FindLocation', 'Schedule', 'StartTrial', 'SubmitApplication', 'Subscribe',
+  'Microdata', 'SubscribedButtonClick', 'PageLeave', 'InputData']);
+
+export interface MetaCustomConversion { id: string; name: string; eventType: string | null; pixelId: string | null; archived: boolean }
+const toConversion = (c: any): MetaCustomConversion => ({ id: String(c.id), name: c.name ?? '', eventType: c.custom_event_type ?? null, pixelId: c.pixel?.id ? String(c.pixel.id) : null, archived: !!c.is_archived });
+
+/** Conversões personalizadas da conta de anúncios (Gerenciador de Eventos → Conversões personalizadas). */
+export async function listCustomConversions(token: string, accountId: string): Promise<MetaCustomConversion[]> {
+  return (await graphList<any>(token, `act_${norm(accountId)}/customconversions`, { fields: 'id,name,custom_event_type,is_archived,pixel{id}' })).map(toConversion);
+}
+export async function getCustomConversion(token: string, id: string): Promise<MetaCustomConversion> {
+  return toConversion(await graphGet<any>(token, id, { fields: 'id,name,custom_event_type,is_archived,pixel{id}' }));
+}
+
+/** Eventos personalizados recebidos pelo Pixel nos últimos `days` dias (estatística agregada por evento), mais recebidos primeiro. */
+export async function listPixelCustomEvents(token: string, pixelId: string, days = 60): Promise<{ name: string; count: number }[]> {
+  const start = Math.floor(Date.now() / 1000) - days * 86_400;
+  const r = await graphGet<{ data?: { data?: { value?: string; count?: number }[] }[] }>(token, `${pixelId}/stats`, { aggregation: 'event', start_time: String(start) });
+  const totals = new Map<string, number>();
+  for (const bucket of r.data ?? []) for (const x of bucket.data ?? []) if (x.value && !PIXEL_STANDARD.has(x.value)) totals.set(x.value, (totals.get(x.value) ?? 0) + (Number(x.count) || 0));
+  return [...totals.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }

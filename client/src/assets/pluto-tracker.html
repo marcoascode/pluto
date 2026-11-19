@@ -1,8 +1,9 @@
-<!-- Pluto Mídia · rastreador de UTMs v1 (0.18) -->
+<!-- Pluto Mídia · rastreador de UTMs v1.1 (0.18) -->
 <!-- Onde: WP Headers and Footers → "Scripts in Header", em TODOS os sites, acima da tag do GTM. -->
 <!-- Conta páginas e impressões renderizadas pelo Google Publisher Tag (GPT) das visitas que chegaram com UTM e envia ao Pluto. -->
 <!-- Não usa cookies, não grava IP nem dados pessoais: só utm_campaign, utm_content, utm_source e contagens. -->
 <script>
+window.pluto_utm_tracker = 1;   /* 1ª linha fixa: identifica o código nas exclusões de plugins de otimização */
 (function (w) {
   if (w.__plutoTrk) return; w.__plutoTrk = 1;
   var ENDPOINT = 'https://app.plutomidia.com.br/api/collect';
@@ -26,9 +27,12 @@
   }
   w.googletag = w.googletag || { cmd: [] };
   w.googletag.cmd.push(function () {
-    w.googletag.pubads().addEventListener('slotRenderEnded', function (e) { if (!e.isEmpty) im++; });
+    var pa = w.googletag.pubads();
+    // código carregado tarde (plugin de otimização que adia/combina scripts): conta os anúncios que já apareceram
+    try { pa.getSlots().forEach(function (sl) { if (sl.getResponseInformation()) im++; }); } catch (e) {}
+    pa.addEventListener('slotRenderEnded', function (e) { if (!e.isEmpty) im++; });
   });
-  w.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') send(); });
+  w.document.addEventListener('visibilitychange', function () { if (w.document.visibilityState === 'hidden') send(); });
   w.addEventListener('pagehide', send);
   w.setInterval(send, 15000);
 })(window);

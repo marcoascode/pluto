@@ -8,6 +8,8 @@
  * - Campanha/Conjunto falharam → nada útil foi criado: desfaz a campanha (DELETE) se rollback estiver ligado.
  *   Um anúncio falhar não derruba os demais: a execução fica "partial" com o detalhe de cada falha.
  * - Dataset (pixel) → promoted_object do Conjunto · Evento de Conversão → tracking_specs dos Anúncios (quando ativado).
+ *   O evento pode ser padrão (custom_event_type), conversão personalizada (custom_conversion_id) ou evento personalizado
+ *   do Pixel (custom_event_type OTHER + custom_event_str).
  */
 import { one, q } from '../db.js';
 import { HttpError } from '../lib/http.js';
@@ -16,7 +18,9 @@ import { sleep, SyncError } from './sync/http.js';
 
 export const OBJECTIVES = ['OUTCOME_TRAFFIC', 'OUTCOME_SALES', 'OUTCOME_LEADS', 'OUTCOME_ENGAGEMENT'] as const;
 export const OPTIMIZATION_GOALS = ['LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'OFFSITE_CONVERSIONS', 'IMPRESSIONS', 'REACH'] as const;
-export const CONVERSION_EVENTS = ['PURCHASE', 'LEAD', 'COMPLETE_REGISTRATION', 'ADD_TO_CART', 'INITIATE_CHECKOUT', 'CONTENT_VIEW', 'SUBSCRIBE', 'OTHER'] as const;
+/** Valores de custom_event_type aceitos pela Graph API para eventos padrão do Pixel (InitiateCheckout = INITIATED_CHECKOUT). */
+export const CONVERSION_EVENTS = ['PURCHASE', 'LEAD', 'COMPLETE_REGISTRATION', 'ADD_TO_CART', 'INITIATED_CHECKOUT', 'ADD_PAYMENT_INFO', 'ADD_TO_WISHLIST', 'CONTENT_VIEW',
+  'SEARCH', 'CONTACT', 'SCHEDULE', 'START_TRIAL', 'SUBMIT_APPLICATION', 'SUBSCRIBE', 'OTHER'] as const;
 export const PLATFORMS = ['facebook', 'instagram', 'audience_network', 'messenger'] as const;
 
 export interface AdSpec { name: string; imageHash: string; headline: string; primaryText: string; description: string; cta: string }
@@ -38,7 +42,14 @@ export interface PublishPlan {
     genders: number[] | null; publisherPlatforms: string[] | null; startTime: string | null; endTime: string | null;
   };
   /** Dataset (pixel) já conferido contra a conta. */
-  tracking: { datasetId: string | null; linkToAdSet: boolean; conversionEvent: string | null; linkToAds: boolean };
+  tracking: {
+    datasetId: string | null; linkToAdSet: boolean; linkToAds: boolean;
+    /** Evento padrão (custom_event_type) — ou o tipo da conversão personalizada. */
+    conversionEvent: string | null;
+    customConversionId: string | null;
+    /** Nome do evento personalizado do Pixel (fbq('trackCustom', nome)). */
+    customEventName: string | null;
+  };
   ads: AdSpec[];
 }
 
@@ -54,6 +65,15 @@ export async function loadRun(userId: string, runId: string) {
   return { ...run, steps: await q<StepRow>(`SELECT ${STEP_COLS} FROM meta_campaign_run_steps WHERE run_id = $1 ORDER BY seq`, [runId]) };
 }
 export const listRuns = (userId: string, limit = 30) => q(`SELECT ${RUN_COLS} FROM meta_campaign_runs WHERE user_id = $1 ORDER BY id DESC LIMIT $2`, [userId, limit]);
+
+/** promoted_object do Conjunto: Pixel + evento padrão, conversão personalizada ou evento personalizado. */
+export function promotedObject(t: PublishPlan['tracking']): Record<string, string> {
+  const o: Record<string, string> = { pixel_id: t.datasetId! };
+  if (t.customConversionId) { o.custom_conversion_id = t.customConversionId; if (t.conversionEvent) o.custom_event_type = t.conversionEvent; }
+  else if (t.customEventName) { o.custom_event_type = 'OTHER'; o.custom_event_str = t.customEventName; }
+  else if (t.conversionEvent) o.custom_event_type = t.conversionEvent;
+  return o;
+}
 
 /** Uma publicação por Perfil por vez (evita duplicar a cascata com duplo clique e respeita o limite de uso do token). */
 const running = new Set<string>();
@@ -125,7 +145,7 @@ async function run(plan: PublishPlan) {
     };
     if (a.startTime) body.start_time = a.startTime;
     if (a.endTime) body.end_time = a.endTime;
-    if (t.linkToAdSet && t.datasetId) body.promoted_object = { pixel_id: t.datasetId, ...(t.conversionEvent ? { custom_event_type: t.conversionEvent } : {}) };
+    if (t.linkToAdSet && t.datasetId) body.promoted_object = promotedObject(t);
     const set = await step(1, () => graphPost<{ id: string }>(token, `${act}/adsets`, body));
     adsetId = set?.id ?? null;
     if (adsetId) await q(`UPDATE meta_campaign_runs SET meta_campaign_id = $2, meta_adset_id = $3 WHERE id = $1`, [runId, campaignId, adsetId]);

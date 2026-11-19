@@ -599,7 +599,10 @@ export type MetaCta = (typeof META_CTAS)[number];
 export const META_COPY_LIMITS = { headline: 40, primaryText: 125, description: 30 } as const;
 export const META_OBJECTIVES = ['OUTCOME_TRAFFIC', 'OUTCOME_SALES', 'OUTCOME_LEADS', 'OUTCOME_ENGAGEMENT'] as const;
 export const META_OPT_GOALS = ['LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'OFFSITE_CONVERSIONS', 'IMPRESSIONS', 'REACH'] as const;
-export const META_CONVERSION_EVENTS = ['PURCHASE', 'LEAD', 'COMPLETE_REGISTRATION', 'ADD_TO_CART', 'INITIATE_CHECKOUT', 'CONTENT_VIEW', 'SUBSCRIBE', 'OTHER'] as const;
+export const META_CONVERSION_EVENTS = ['PURCHASE', 'LEAD', 'COMPLETE_REGISTRATION', 'ADD_TO_CART', 'INITIATED_CHECKOUT', 'ADD_PAYMENT_INFO', 'ADD_TO_WISHLIST', 'CONTENT_VIEW',
+  'SEARCH', 'CONTACT', 'SCHEDULE', 'START_TRIAL', 'SUBMIT_APPLICATION', 'SUBSCRIBE'] as const;
+/** Eventos personalizados do Pixel para o campo "Evento do Pixel" (além dos padrão). */
+export interface MetaConversionEvents { customConversions: { id: string; name: string; eventType: string | null }[]; customEvents: { name: string; count: number }[]; warnings: string[] }
 
 export interface MetaCopy { angle?: string; headline: string; primaryText: string; description: string; cta: MetaCta }
 export interface MetaCopyRequest { site: string; count: number; offer: string; language: 'pt-BR' | 'en-US' | 'es-ES'; tone?: string }
@@ -636,7 +639,7 @@ export interface MetaPublishRequest {
   };
   campaign: { name?: string; objective?: MetaSuggestion['objective']['value']; status: 'PAUSED' | 'ACTIVE' };
   adset: { dailyBudget?: number; optimizationGoal?: MetaSuggestion['objective']['optimizationGoal']; countries?: string[]; ageMin?: number; ageMax?: number; genders?: 'all' | 'male' | 'female' };
-  tracking: { datasetId?: string; linkDatasetToAdSet: boolean; conversionEvent?: (typeof META_CONVERSION_EVENTS)[number]; linkPixelToAds: boolean };
+  tracking: { datasetId?: string; linkDatasetToAdSet: boolean; conversionEvent?: (typeof META_CONVERSION_EVENTS)[number]; customConversionId?: string; customEventName?: string; linkPixelToAds: boolean };
   imageHashes: string[];
   copies: MetaCopy[];
   pairing: 'zip' | 'cross';
@@ -644,6 +647,14 @@ export interface MetaPublishRequest {
 }
 export interface MetaRunStep { id: string; seq: number; kind: 'campaign' | 'adset' | 'creative' | 'ad' | 'rollback'; label: string; status: string; metaId: string | null; attempts: number; rateLimited: boolean; errorHttp: number | null; errorMessage: string | null }
 export interface MetaRun { id: string; profileId: string; adAccountId: string; site: string; source: string; name: string; status: string; metaCampaignId: string | null; metaAdsetId: string | null; error: string | null; createdAt: string; finishedAt: string | null; steps: MetaRunStep[] }
+
+/** Campanha pendente de envio (rascunho do assistente). */
+export type MetaDraftStatus = 'draft' | 'pending' | 'failed';
+export interface MetaDraft {
+  id: string; profileId: string | null; adAccountId: string | null; site: string | null; name: string; status: MetaDraftStatus;
+  lastError: string | null; lastRunId: string | null; createdAt: string; updatedAt: string; copies: number; images: number;
+}
+export interface MetaDraftSave { name: string; profileId?: string | null; adAccountId?: string | null; site?: string | null; status: MetaDraftStatus; lastError?: string | null; lastRunId?: string | null; state: Record<string, unknown> }
 
 /** Permissões obrigatórias do System User Token (o servidor confere o mesmo conjunto). */
 export const META_REQUIRED_SCOPES = ['ads_management', 'ads_read', 'business_management', 'pages_show_list', 'pages_read_engagement', 'public_profile'] as const;

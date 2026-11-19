@@ -9,12 +9,12 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
-import { one } from '../db.js';
+import { one, q } from '../db.js';
 import { decrypt } from '../lib/crypto.js';
 import { HttpError, notFound, parse } from '../lib/http.js';
 import { scope } from '../auth/scope.js';
 import { CTAS, LIMITS } from '../services/metaCopies.js';
-import { getAdAccountInfo, toHttpError, uploadAdImage, withRateLimit } from '../services/metaGraph.js';
+import { advertiseProblem, getAdAccountInfo, getCustomConversion, listCustomConversions, listPixelCustomEvents, PERMISSION_HINT, toHttpError, uploadAdImage, withRateLimit } from '../services/metaGraph.js';
 import { hasSyncedAsset } from '../services/metaProfiles.js';
 import { CONVERSION_EVENTS, OBJECTIVES, OPTIMIZATION_GOALS, PLATFORMS, listRuns, loadRun, publishCampaign, type AdSpec } from '../services/metaPublish.js';
 import { buildMetaTrackedUrl } from '../services/utm.js';
@@ -78,6 +78,14 @@ metaCampaignsRouter.post('/profiles/:id/creatives', receive, async (req, res) =>
     await assertAccount(req, acc);
     if (!files.length) throw new HttpError(422, 'no_files', 'Envie ao menos uma imagem no campo "images".');
 
+    // pré-checagem: sem o acesso "Gerenciar campanhas" na conta a Meta só responde "(#200) Permissions error" a cada imagem
+    const info = await getAdAccountInfo(p.token, acc).catch(() => null);
+    if (info) {
+      if (info.status === 2) throw new HttpError(422, 'ad_account_disabled', 'A conta de anúncios está desativada na Meta.');
+      const problem = advertiseProblem(info, acc);
+      if (problem) throw new HttpError(422, 'meta_no_advertise', problem);
+    }
+
     const uploaded: { index: number; filename: string; imageHash: string; url: string | null; bytes: number }[] = [];
     const failed: { index: number; filename: string; code: string; message: string }[] = [];
     for (const [i, f] of files.entries()) {
@@ -89,7 +97,7 @@ metaCampaignsRouter.post('/profiles/:id/creatives', receive, async (req, res) =>
         uploaded.push({ index: i, filename, imageHash: r.hash, url: r.url, bytes: f.size });
       } catch (e) {
         const he = toHttpError(e);
-        failed.push({ index: i, filename, code: he.code, message: he.message });
+        failed.push({ index: i, filename, code: he.code, message: he.code === 'meta_permission' ? `${he.message} — ${PERMISSION_HINT}` : he.message });
       }
     }
     res.json({ adAccountId: acc, uploaded, failed });
@@ -98,6 +106,33 @@ metaCampaignsRouter.post('/profiles/:id/creatives', receive, async (req, res) =>
     for (const f of files) (f as { buffer?: Buffer }).buffer = undefined;
     req.files = undefined;
   }
+});
+
+/* ---------------- 1b · eventos de conversão do Pixel ---------------- */
+/**
+ * ?adAccountId=&datasetId= → eventos que podem ser escolhidos em "Evento do Pixel", como no campo "Evento de conversão" do
+ * Gerenciador de Anúncios: conversões personalizadas da conta ligadas ao Pixel e eventos personalizados que o Pixel recebeu
+ * nos últimos 60 dias (os eventos padrão são fixos e ficam no cliente). Cada leitura falha isolada (vira aviso).
+ */
+metaCampaignsRouter.get('/profiles/:id/conversion-events', async (req, res) => {
+  const acc = parse(ACCOUNT, req.query.adAccountId);
+  const datasetId = parse(ID, req.query.datasetId);
+  const p = await ownProfile(req);
+  await assertAccount(req, acc);
+  const found = await hasSyncedAsset(p.id, 'dataset', datasetId);
+  if (!found || !((found.data.businessIds ?? []).length > 0 || (found.data.adAccountIds ?? []).includes(acc))) throw notFound('Dataset não encontrado entre os ativos sincronizados deste Perfil.');
+
+  const warnings: string[] = [];
+  const [conversions, events] = await Promise.all([
+    listCustomConversions(p.token, acc).catch((e) => { warnings.push(`Conversões personalizadas: ${toHttpError(e).message}`); return []; }),
+    listPixelCustomEvents(p.token, datasetId).catch((e) => { warnings.push(`Eventos personalizados do Pixel: ${toHttpError(e).message}`); return []; }),
+  ]);
+  res.json({
+    customConversions: conversions.filter((c) => !c.archived && (!c.pixelId || c.pixelId === datasetId)).map((c) => ({ id: c.id, name: c.name, eventType: c.eventType }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    customEvents: events,
+    warnings,
+  });
 });
 
 /* ---------------- 2 · publicação em cascata ---------------- */
@@ -148,11 +183,15 @@ const publishBody = z.object({
     datasetId: ID.optional(),
     /** Vincula o Dataset ao Conjunto de Anúncios (promoted_object). */
     linkDatasetToAdSet: z.boolean().default(false),
-    /** Evento de conversão a otimizar/rastrear (obrigatório em OFFSITE_CONVERSIONS). */
+    /** Evento de conversão a otimizar/rastrear (obrigatório em OFFSITE_CONVERSIONS): um evento padrão, OU uma conversão
+     *  personalizada (customConversionId), OU um evento personalizado do Pixel (customEventName). */
     conversionEvent: z.enum(CONVERSION_EVENTS).optional(),
+    customConversionId: ID.optional(),
+    customEventName: z.string().trim().min(1).max(100).regex(/^[\w\- .:]+$/, 'customEventName: use letras, números, espaço, _ - . :').optional(),
     /** Vincula o Pixel/Evento de Conversão a cada Anúncio (tracking_specs). */
     linkPixelToAds: z.boolean().default(false),
-  }).default({ linkDatasetToAdSet: false, linkPixelToAds: false }),
+  }).default({ linkDatasetToAdSet: false, linkPixelToAds: false })
+    .refine((t) => [t.conversionEvent, t.customConversionId, t.customEventName].filter(Boolean).length <= 1, 'tracking: escolha só um evento (padrão, conversão personalizada ou evento personalizado).'),
   imageHashes: z.array(HASH).min(1).max(20),
   /** Copies manuais ou `variations` de POST /meta/copies/generate. */
   copies: z.array(copySchema).min(1).max(20),
@@ -178,6 +217,8 @@ metaCampaignsRouter.post('/profiles/:id/campaigns/publish', async (req, res) => 
   // pré-checagens (falham antes de criar qualquer coisa): conta ativa na Meta + Página/Dataset entre os ativos sincronizados do Perfil
   const info = await getAdAccountInfo(p.token, b.adAccountId).catch((e) => { throw toHttpError(e); });
   if (info.status === 2) throw new HttpError(422, 'ad_account_disabled', 'A conta de anúncios está desativada na Meta.');
+  const problem = advertiseProblem(info, b.adAccountId);
+  if (problem) throw new HttpError(422, 'meta_no_advertise', problem);
   if (!(await hasSyncedAsset(p.id, 'page', b.pageId))) throw new HttpError(422, 'page_not_found', 'A Página escolhida não está entre os ativos sincronizados deste Perfil. Clique em "Sincronizar Ativos".');
 
   const t = b.tracking;
@@ -194,8 +235,19 @@ metaCampaignsRouter.post('/profiles/:id/campaigns/publish', async (req, res) => 
   const s = b.source === 'ai' ? b.suggestion : undefined;
   const objective = b.campaign.objective ?? s?.objective.value ?? 'OUTCOME_TRAFFIC';
   const optimizationGoal = b.adset.optimizationGoal ?? s?.objective.optimizationGoal ?? 'LANDING_PAGE_VIEWS';
-  if (optimizationGoal === 'OFFSITE_CONVERSIONS' && (!t.linkDatasetToAdSet || !t.datasetId || !t.conversionEvent))
-    throw new HttpError(422, 'invalid_input', 'adset.optimizationGoal OFFSITE_CONVERSIONS exige tracking.datasetId, tracking.linkDatasetToAdSet = true e tracking.conversionEvent.');
+  const hasEvent = !!(t.conversionEvent || t.customConversionId || t.customEventName);
+  if (optimizationGoal === 'OFFSITE_CONVERSIONS' && (!t.linkDatasetToAdSet || !t.datasetId || !hasEvent))
+    throw new HttpError(422, 'invalid_input', 'adset.optimizationGoal OFFSITE_CONVERSIONS exige tracking.datasetId, tracking.linkDatasetToAdSet = true e o evento de conversão.');
+  if ((t.customConversionId || t.customEventName) && !t.datasetId) throw new HttpError(422, 'invalid_input', 'tracking.datasetId: obrigatório para usar um evento personalizado.');
+
+  // conversão personalizada: precisa existir, estar ativa e pertencer ao Pixel escolhido; o tipo dela vai no promoted_object
+  let conversionEvent: string | null = t.conversionEvent ?? null;
+  if (t.customConversionId) {
+    const cc = await getCustomConversion(p.token, t.customConversionId).catch((e) => { throw toHttpError(e); });
+    if (cc.archived) throw new HttpError(422, 'custom_conversion_archived', `A conversão personalizada "${cc.name}" está arquivada na Meta.`);
+    if (cc.pixelId && cc.pixelId !== t.datasetId) throw new HttpError(422, 'custom_conversion_pixel', `A conversão personalizada "${cc.name}" pertence a outro Pixel (${cc.pixelId}). Escolha o Dataset dela.`);
+    conversionEvent = cc.eventType;
+  }
 
   let budget = b.adset.dailyBudget;
   if (budget === undefined && s) budget = (info.currency === 'BRL' ? s.dailyBudget.brl : info.currency === 'USD' ? s.dailyBudget.usd : null) ?? undefined;
@@ -228,7 +280,10 @@ metaCampaignsRouter.post('/profiles/:id/campaigns/publish', async (req, res) => 
       genders: g === 'male' ? [1] : g === 'female' ? [2] : null, publisherPlatforms: b.adset.publisherPlatforms ?? null,
       startTime: b.adset.startTime ?? null, endTime: b.adset.endTime ?? null,
     },
-    tracking: { datasetId: t.datasetId ?? null, linkToAdSet: t.linkDatasetToAdSet, conversionEvent: t.conversionEvent ?? null, linkToAds: t.linkPixelToAds },
+    tracking: {
+      datasetId: t.datasetId ?? null, linkToAdSet: t.linkDatasetToAdSet, linkToAds: t.linkPixelToAds,
+      conversionEvent, customConversionId: t.customConversionId ?? null, customEventName: t.customEventName ?? null,
+    },
     ads,
   });
   if (run.status === 'failed') return void res.status(502).json({ error: { code: 'publish_failed', message: run.error ?? 'A publicação falhou.' }, run });
@@ -243,4 +298,62 @@ metaCampaignsRouter.get('/campaigns/runs/:runId', async (req, res) => {
   const run = await loadRun(req.user!.id, parse(ID, req.params.runId));
   if (!run) throw notFound('Publicação não encontrada.');
   res.json({ run });
+});
+
+/* ---------------- 4 · campanhas pendentes de envio (rascunhos) ---------------- */
+/**
+ * Estado do assistente salvo antes do envio. Fica listado como pendente até a campanha ser criada na Meta (o cliente exclui
+ * o rascunho) — se o envio falhar ou a página for fechada no meio, ele continua aqui para editar, reenviar ou excluir.
+ * Imagens nunca são guardadas: o estado só leva o image_hash/URL das que já subiram para a biblioteca da conta na Meta.
+ */
+const DRAFT_COLS = `id::text, profile_id::text AS "profileId", ad_account_id AS "adAccountId", site, name, status, last_error AS "lastError",
+  last_run_id::text AS "lastRunId", created_at AS "createdAt", updated_at AS "updatedAt",
+  COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(state->'copies') = 'array' THEN state->'copies' END), 0) AS "copies",
+  COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(state->'images') = 'array' THEN state->'images' END), 0) AS "images"`;
+const MAX_STATE_BYTES = 256 * 1024;
+
+const draftBody = z.object({
+  name: z.string().trim().min(1).max(200),
+  profileId: ID.nullish(),
+  adAccountId: ACCOUNT.nullish(),
+  site: z.string().trim().toLowerCase().max(253).nullish(),
+  status: z.enum(['draft', 'pending', 'failed']).default('draft'),
+  lastError: z.string().max(2000).nullish(),
+  lastRunId: ID.nullish(),
+  state: z.record(z.string(), z.unknown()).refine((v) => JSON.stringify(v).length <= MAX_STATE_BYTES, 'state: grande demais.'),
+});
+
+async function draftValues(req: Request) {
+  const b = parse(draftBody, req.body);
+  if (b.profileId && !(await one('SELECT 1 FROM meta_profiles WHERE id = $1 AND user_id = $2', [b.profileId, req.user!.id]))) throw notFound('Perfil não encontrado.');
+  if (b.lastRunId && !(await one('SELECT 1 FROM meta_campaign_runs WHERE id = $1 AND user_id = $2', [b.lastRunId, req.user!.id]))) throw notFound('Publicação não encontrada.');
+  return [b.profileId ?? null, b.adAccountId ?? null, b.site || null, b.name, b.status, b.lastError ?? null, b.lastRunId ?? null, JSON.stringify(b.state)];
+}
+
+metaCampaignsRouter.get('/campaigns/drafts', async (req, res) => {
+  res.json({ drafts: await q(`SELECT ${DRAFT_COLS} FROM meta_campaign_drafts WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 100`, [req.user!.id]) });
+});
+metaCampaignsRouter.get('/campaigns/drafts/:draftId', async (req, res) => {
+  const d = await one(`SELECT ${DRAFT_COLS}, state FROM meta_campaign_drafts WHERE id = $1 AND user_id = $2`, [parse(ID, req.params.draftId), req.user!.id]);
+  if (!d) throw notFound('Campanha pendente não encontrada.');
+  res.json({ draft: d });
+});
+metaCampaignsRouter.post('/campaigns/drafts', async (req, res) => {
+  const v = await draftValues(req);
+  const d = await one(`INSERT INTO meta_campaign_drafts (user_id, profile_id, ad_account_id, site, name, status, last_error, last_run_id, state)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${DRAFT_COLS}`, [req.user!.id, ...v]);
+  res.status(201).json({ draft: d });
+});
+metaCampaignsRouter.put('/campaigns/drafts/:draftId', async (req, res) => {
+  const id = parse(ID, req.params.draftId);
+  const v = await draftValues(req);
+  const d = await one(`UPDATE meta_campaign_drafts SET profile_id = $3, ad_account_id = $4, site = $5, name = $6, status = $7, last_error = $8, last_run_id = $9, state = $10, updated_at = now()
+                        WHERE id = $1 AND user_id = $2 RETURNING ${DRAFT_COLS}`, [id, req.user!.id, ...v]);
+  if (!d) throw notFound('Campanha pendente não encontrada.');
+  res.json({ draft: d });
+});
+metaCampaignsRouter.delete('/campaigns/drafts/:draftId', async (req, res) => {
+  const d = await one('DELETE FROM meta_campaign_drafts WHERE id = $1 AND user_id = $2 RETURNING id', [parse(ID, req.params.draftId), req.user!.id]);
+  if (!d) throw notFound('Campanha pendente não encontrada.');
+  res.status(204).end();
 });
