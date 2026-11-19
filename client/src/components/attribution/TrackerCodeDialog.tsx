@@ -17,6 +17,12 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
     </Stack>
   );
 }
+/** SiteGround Speed Optimizer: tira o código do Pluto do "Combinar JavaScript" (o filtro compara o início do script inline). */
+const SG_SNIPPET = `add_filter( 'sgo_javascript_combine_excluded_inline_content', function ( $exclude_list ) {
+	$exclude_list[] = 'window.pluto_utm_tracker';
+	return $exclude_list;
+} );`;
+
 const Mono = ({ children }: { children: ReactNode }) => <Box component="code" sx={{ fontFamily: 'IBM Plex Mono', fontSize: '0.92em', px: 0.5, borderRadius: 0.5, bgcolor: 'action.hover' }}>{children}</Box>;
 
 /**
@@ -63,18 +69,35 @@ export function TrackerCodeButton() {
           </Stack>
 
           <Alert severity="warning" variant="outlined" sx={{ mb: 2.5 }}>
-            <Typography sx={{ fontWeight: 600, mb: 0.75 }}>Tem plugin de cache ou otimização instalado? (WP Rocket, LiteSpeed Cache, Autoptimize, W3 Total Cache, SiteGround Optimizer, Perfmatters…)</Typography>
+            <Typography sx={{ fontWeight: 600, mb: 0.75 }}>Tem plugin de cache ou otimização instalado? (WP Rocket, LiteSpeed Cache, Autoptimize, W3 Total Cache, Perfmatters…)</Typography>
             <Typography component="div" variant="body2">
               Esses plugins costumam <b>atrasar</b> (delay), <b>adiar</b> (defer), <b>juntar</b> (combine) ou <b>minificar</b> os scripts da página.
-              Com o código atrasado, ele só roda depois que o visitante toca na tela e perde as impressões. Faça assim:
+              Com o código atrasado, ele só roda depois que o visitante toca na tela, e quem sai sem tocar não é contado. Faça assim:
               <Box component="ol" sx={{ pl: 2.5, my: 1, '& li': { mb: 0.75 } }}>
                 <li>Procure as listas de exclusão de JavaScript do plugin: “Delay JavaScript execution / Atrasar a execução do JavaScript”, “Load JavaScript deferred / Adiar”, “Combine / Combinar JavaScript” e “Minify inline JS”.</li>
-                <li>Em cada uma dessas listas, adicione a palavra-chave <Mono>pluto_utm</Mono> (ela identifica o código do Pluto).
+                <li>Em cada uma dessas listas que aceite texto, adicione a palavra-chave <Mono>pluto_utm</Mono> (ela identifica o código do Pluto).
                   Exemplos: no <b>WP Rocket</b>, Otimização de arquivos → Atrasar a execução do JavaScript → <i>Arquivos JavaScript excluídos</i>.
                   No <b>LiteSpeed Cache</b>, Otimização da página → Ajustes → <i>JS Deferred / Delayed Excludes</i>. No <b>Autoptimize</b>, JS → <i>Excluir scripts</i>, ou desligue “Agregar JS inline”.</li>
                 <li>Se o plugin atrasa ou adia o <Mono>gpt.js</Mono> / Ad Inserter, mantenha a configuração que já funciona para os anúncios. O código do Pluto só precisa ficar <b>fora</b> do atraso.</li>
                 <li>Salve e <b>limpe todo o cache</b>: o do plugin, o da hospedagem e, se houver, o do Cloudflare. Sem isso, as páginas em cache continuam sem o código.</li>
               </Box>
+            </Typography>
+          </Alert>
+
+          <Alert severity="info" variant="outlined" sx={{ mb: 2.5 }}>
+            <Typography sx={{ fontWeight: 600, mb: 0.75 }}>Sites na SiteGround com o plugin Speed Optimizer</Typography>
+            <Typography component="div" variant="body2">
+              Em <b>Frontend → JavaScript</b>, as listas de exclusão mostram só os <b>arquivos</b> de script registrados por plugins e pelo tema.
+              O código do Pluto fica escrito dentro da página (script inline, colado pelo WP Headers and Footers), por isso <Mono>pluto_utm</Mono> nunca aparece nessas listas, e isso é esperado.
+              <Box component="ul" sx={{ pl: 2.5, my: 1, '& li': { mb: 0.75 } }}>
+                <li><b>Minify JavaScript Files</b> e <b>Defer Render-blocking JavaScript</b>: <b>nada a fazer</b>. Eles atuam sobre arquivos, e o navegador ignora o adiamento (defer) em scripts inline.</li>
+                <li><b>Combine JavaScript Files</b>: pode juntar scripts inline num arquivo carregado mais tarde. O código já conta os anúncios que apareceram antes de ele rodar, então funciona mesmo combinado. Perde-se só a visita que sai antes de esse arquivo carregar. Para tirar o código da combinação (opcional e mais preciso), peça ao desenvolvedor para adicionar o trecho abaixo com o plugin <b>Code Snippets</b> (“Executar em todo o site”) ou no <Mono>functions.php</Mono> do tema filho:</li>
+              </Box>
+              <Box sx={{ position: 'relative', mb: 1 }}>
+                <Box component="pre" sx={{ m: 0, p: 1.5, pr: 6, overflow: 'auto', borderRadius: 1, border: 1, borderColor: 'divider', bgcolor: 'action.hover', fontFamily: 'IBM Plex Mono', fontSize: 12, whiteSpace: 'pre' }}>{SG_SNIPPET}</Box>
+                <IconButton aria-label="Copiar trecho PHP" size="small" onClick={async () => setMsg((await copyText(SG_SNIPPET)) ? 'Trecho PHP copiado.' : 'Não foi possível copiar.')} sx={{ position: 'absolute', top: 6, right: 6, bgcolor: 'background.paper' }}><ContentCopyRoundedIcon fontSize="small" /></IconButton>
+              </Box>
+              Depois de colar o código do Pluto (ou mudar qualquer opção), limpe o cache: botão <b>Purge SG Cache</b> na barra do topo do WordPress, ou Speed Optimizer → Caching → limpar cache.
             </Typography>
           </Alert>
 
