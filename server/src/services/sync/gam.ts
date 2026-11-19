@@ -23,6 +23,7 @@ import { q } from '../../db.js';
 import { domainResolver, emptyFact, parseUrl, replaceFacts, setAccountStatus, statusFromError, urlCache, type Fact } from './common.js';
 import { requestJson, sleep, SyncError } from './http.js';
 import { retentionChannel } from '../metrics.js';
+import { trackerCarve } from '../tracker.js';
 import { googleAccessToken } from './tokens.js';
 import type { JobResult } from './index.js';
 
@@ -727,6 +728,16 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     pre.push(...carved);
   }
 
+  // c) 0.18 · rastreador próprio (script do Pluto no site): a receita que ficou sem campanha vai para as campanhas
+  //    contadas pelo script, pelo eCPM do site × país (services/tracker.ts). Não depende do relatório de Key-values.
+  const netDomains = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);
+  const trk = await trackerCarve(pre, baseBy, netDomains, w.from, w.to, (c, ct, s) => {
+    const src = s.toLowerCase();
+    const a = c && !EMPTY.test(c) ? attribute(idx, c, ct, src) : ct && !EMPTY.test(ct) ? attributeContent(idx, ct) : null;
+    return a && !('reason' in a) ? { platform: a.platform, campaignId: a.campaignId, adGroupId: a.adGroupId, adId: a.adId } : null;
+  }, (s) => !!retentionChannel(normSource(s) ?? ''));
+  pre.push(...trk.carved);
+
   // b) páginas por balde (até 100 por balde; o resto fica com o caminho que a linha já tinha, ou sem URL)
   const pathBy = new Map<string, { path: string; v: typeof zeroM }[]>();
   if (pathKv) {
@@ -765,7 +776,7 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     for (const k of M_KEYS) left[k] = Math.max(0, left[k]);
     await push(f.x.path, left);
   }
-  const mine = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);
+  const mine = netDomains;
   const n = await replaceFacts('gam', w.from, w.to, { domains: mine }, facts, isFinal);
   const noKv = mode === 'keyvalues' && !kvRows.length && rows.length
     ? `nenhuma linha com o key-value "${contentKey.adTagName}" no relatório: confira no Ad Manager (Inventário → Key-values → ${contentKey.adTagName}) se "Incluir valores nos relatórios" está ligado e se o site manda o key no GPT`
@@ -789,6 +800,7 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     ekvUsed.length ? `Key-values aprimorados (EKV): ${ekvUsed.map((k) => k.adTagName).join(', ')}`
       : mode === 'keyvalues' ? `atribuição pelo key-value ${contentKey.adTagName} (sem dimensão personalizada)` : 'atribuição por dimensão personalizada',
     pathKv ? `URLs por ${pathKv.adTagName}` : '',
+    trk.campaigns ? `rastreador do Pluto: ${trk.campaigns} campanhas, ${usd(trk.revenue)} atribuídos por estimativa (impressões × eCPM do site)` : '',
     auxUnit.size ? `${[...auxUnit].map((l) => l.replace('pluto-sync-', '').replace('kv', 'utm_content').replace('source', 'utm_source').replace('path', 'page_path')).join(', ')} por bloco de anúncios → site` : '',
     srcKv ? `retenção por ${srcKv.adTagName} (${retentionRows} linhas de push/whatsapp/outros)`
       : keys.some((k) => k.role === 'source') ? `retenção por ${config.gamKeys.source} (${ekvUsed.some((k) => k.role === 'source') ? 'EKV' : 'dimensão'})`

@@ -1,0 +1,35 @@
+<!-- Pluto Mídia · rastreador de UTMs v1 (0.18) -->
+<!-- Onde: WP Headers and Footers → "Scripts in Header", em TODOS os sites, acima da tag do GTM. -->
+<!-- Conta páginas e impressões renderizadas pelo Google Publisher Tag (GPT) das visitas que chegaram com UTM e envia ao Pluto. -->
+<!-- Não usa cookies, não grava IP nem dados pessoais: só utm_campaign, utm_content, utm_source e contagens. -->
+<script>
+(function (w) {
+  if (w.__plutoTrk) return; w.__plutoTrk = 1;
+  var ENDPOINT = 'https://app.plutomidia.com.br/api/collect';
+  var KEY = 'pluto_utm', TTL = 30 * 60 * 1000;   // a visita mantém as UTMs por até 30 min sem navegar
+  var qs = new URLSearchParams(w.location.search), u = null, now = Date.now();
+  var c = qs.get('utm_campaign') || '', ct = qs.get('utm_content') || '', s = qs.get('utm_source') || '';
+  try {
+    if (c || ct || s) { u = { c: c, ct: ct, s: s, t: now }; }
+    else { var o = JSON.parse(w.sessionStorage.getItem(KEY) || 'null'); if (o && now - o.t < TTL) u = o; }
+    if (u) { u.t = now; w.sessionStorage.setItem(KEY, JSON.stringify(u)); }
+  } catch (e) { if (c || ct || s) u = { c: c, ct: ct, s: s, t: now }; }
+  if (!u) return;   // visita sem UTM: nada a medir
+
+  var pv = 1, im = 0;
+  function send() {
+    if (!pv && !im) return;
+    var body = JSON.stringify({ h: w.location.hostname, c: u.c, ct: u.ct, s: u.s, pv: pv, im: im });
+    pv = 0; im = 0;
+    try { if (w.navigator.sendBeacon && w.navigator.sendBeacon(ENDPOINT, body)) return; } catch (e) {}
+    try { w.fetch(ENDPOINT, { method: 'POST', body: body, keepalive: true, mode: 'no-cors' }); } catch (e) {}
+  }
+  w.googletag = w.googletag || { cmd: [] };
+  w.googletag.cmd.push(function () {
+    w.googletag.pubads().addEventListener('slotRenderEnded', function (e) { if (!e.isEmpty) im++; });
+  });
+  w.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') send(); });
+  w.addEventListener('pagehide', send);
+  w.setInterval(send, 15000);
+})(window);
+</script>
