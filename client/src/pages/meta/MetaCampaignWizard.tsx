@@ -578,7 +578,7 @@ export default function MetaCampaignWizardPage() {
                         <Typography sx={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{j.run?.name ?? j.label}</Typography>
                         <Typography variant="caption" component="div">{j.copies.length} copy(ies) · {{ pending: 'Na fila', running: 'Criando…', done: 'Criada', error: 'Erro' }[j.status]}{j.status === 'done' && j.run?.metaCampaignId ? ` · ID ${j.run.metaCampaignId}` : ''}</Typography>
                         {j.message && <Typography variant="caption" component="div" sx={{ color: 'error.main' }}>{j.message}</Typography>}
-                        {j.run && <Typography variant="caption" component="div" sx={{ color: 'text.secondary' }}>{j.run.steps.filter((s) => s.kind === 'ad' && s.status === 'done').length} anúncio(s) · {j.run.steps.length} etapas concluídas na Meta</Typography>}
+                        {j.run && <Typography variant="caption" component="div" sx={{ color: 'text.secondary' }}>{j.run.steps.filter((s) => s.kind === 'ad' && s.status === 'ok').length} anúncio(s) · {j.run.steps.filter((s) => s.status === 'ok').length} de {j.run.steps.length} etapas concluídas na Meta{j.run.metaAdsetId ? ` · Conjunto ${j.run.metaAdsetId}` : ''}</Typography>}
                       </Box>
                       {j.status === 'error' && <Button size="small" disabled={launching} onClick={() => launch([j.key])}>Tentar de novo</Button>}
                     </Stack>
