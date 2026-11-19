@@ -166,4 +166,13 @@ export const metaCampaignsApi = {
     return api.post<T.MetaUploadResponse>(`/meta/profiles/${profileId}/creatives`, fd, { query: { adAccountId }, timeoutMs: 5 * MIN });
   },
   publish: (profileId: string, b: T.MetaPublishRequest) => api.post<{ run: T.MetaRun }>(`/meta/profiles/${profileId}/campaigns/publish`, b, { timeoutMs: 10 * MIN }),
+  /** Conversões personalizadas da conta + eventos personalizados recebidos pelo Pixel (para "Evento do Pixel"). */
+  conversionEvents: (profileId: string, adAccountId: string, datasetId: string) =>
+    api.get<T.MetaConversionEvents>(`/meta/profiles/${profileId}/conversion-events`, { adAccountId, datasetId }),
+  /* campanhas pendentes de envio */
+  drafts: () => api.get<{ drafts: T.MetaDraft[] }>('/meta/campaigns/drafts'),
+  draft: (id: string) => api.get<{ draft: T.MetaDraft & { state: Record<string, unknown> } }>(`/meta/campaigns/drafts/${id}`),
+  createDraft: (b: T.MetaDraftSave) => api.post<{ draft: T.MetaDraft }>('/meta/campaigns/drafts', b),
+  updateDraft: (id: string, b: T.MetaDraftSave) => api.put<{ draft: T.MetaDraft }>(`/meta/campaigns/drafts/${id}`, b),
+  deleteDraft: (id: string) => api.del<void>(`/meta/campaigns/drafts/${id}`),
 };

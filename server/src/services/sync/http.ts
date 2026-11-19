@@ -56,6 +56,13 @@ function errorMessage(j: any): string | null {
   const e = j.error;
   if (typeof e === 'string') return j.error_description ?? e;
   if (e?.message) {
+    // Meta ({type, code, error_subcode, error_user_msg, fbtrace_id}): a mensagem genérica ("Permissions error") sozinha não diz a causa
+    if (e.fbtrace_id || e.type) {
+      const code = typeof e.code === 'number' && !/\(#\d+\)/.test(e.message) ? `(#${e.code}) ` : '';
+      const sub = e.error_subcode ? ` [subcode ${e.error_subcode}]` : '';
+      const user = [e.error_user_title, e.error_user_msg].filter((x) => typeof x === 'string' && x.trim()).join(': ');
+      return `${code}${e.message}${sub}${user ? ` · ${user}` : ''}`;
+    }
     const detail = e.details?.[0]?.errors?.[0]?.message;   // Google Ads: detalhe do GoogleAdsFailure
     return detail ? `${e.message} · ${detail}` : e.message;
   }

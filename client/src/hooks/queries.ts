@@ -108,5 +108,9 @@ export function useMetaDatasets(profileId: string, adAccountId: string) {
     queryFn: async () => ({ datasets: (await metaCampaignsApi.datasets(profileId, adAccountId)).datasets.filter((d) => !d.unavailable) }),
   });
 }
+export function useMetaConversionEvents(profileId: string, adAccountId: string, datasetId: string) {
+  return useQuery({ queryKey: qk.metaConversionEvents(profileId, adAccountId, datasetId), queryFn: () => metaCampaignsApi.conversionEvents(profileId, adAccountId, datasetId), enabled: !!profileId && !!adAccountId && !!datasetId, staleTime: 5 * 60_000, retry: false });
+}
+export function useMetaDrafts() { return useQuery({ queryKey: qk.metaDrafts, queryFn: metaCampaignsApi.drafts }); }
 export function useMetaSuggestion(site: string, enabled: boolean) { return useQuery({ queryKey: qk.metaSuggestion(site), queryFn: () => metaCampaignsApi.suggestion(site), enabled: enabled && !!site, staleTime: 5 * 60_000, retry: false }); }
 export function useMetaTrackedUrl(site: string, url: string) { return useQuery({ queryKey: qk.metaTrackedUrl(site, url), queryFn: () => metaCampaignsApi.trackedUrl(site, url), enabled: !!site && /^https:\/\/\S+\.\S+/i.test(url), staleTime: 60_000, retry: false }); }
