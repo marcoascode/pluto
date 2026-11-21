@@ -1,6 +1,6 @@
 {
   "name": "pluto-server",
-  "version": "0.18.0",
+  "version": "0.18.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -20,6 +20,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
+    "maxmind": "^4.3.29",
     "multer": "^2.5.0",
     "nodemailer": "^10.0.13",
     "pg": "^8.23.1",

@@ -9,3 +9,5 @@ interface ImportMetaEnv {
   readonly VITE_META_APP_ID?: string;
 }
 interface ImportMeta { readonly env: ImportMetaEnv }
+/** Versão do painel, lida de client/package.json no build (vite.config.ts). */
+declare const __APP_VERSION__: string;

@@ -19,11 +19,12 @@
  * Linhas sem site / de site sem rede / de site de outra rede são contadas e viram aviso no status da rede.
  */
 import { config } from '../../config.js';
-import { q } from '../../db.js';
+import { one, q } from '../../db.js';
 import { domainResolver, emptyFact, parseUrl, replaceFacts, setAccountStatus, statusFromError, urlCache, type Fact } from './common.js';
 import { requestJson, sleep, SyncError } from './http.js';
 import { retentionChannel } from '../metrics.js';
 import { trackerCarve } from '../tracker.js';
+import { normDevice, trackerShare, unitPathKeys, type ShareCell } from '../trackerShare.js';
 import { googleAccessToken } from './tokens.js';
 import type { JobResult } from './index.js';
 
@@ -151,6 +152,21 @@ export const ekvRefused = (net: string) => EKV_REFUSED_UNTIL(net) > 0;
 const EKV_REFUSED_UNTIL = (net: string) => { const t = EKV_REFUSED.get(net); return t && Date.now() - t < KV_RETRY_MS ? t + KV_RETRY_MS : 0; };
 /** 0.17.1 · rede → keys aceitos como EKV quando nem todos foram (ex.: utm_source marcado e page_path não). 12 h, depois testa todos de novo. */
 const EKV_PARTIAL = new Map<string, { roles: string[]; at: number }>();
+/** 0.18 · rede → keys (role) que o relatório-base já aceitou como EKV. */
+const EKV_ACCEPTED = new Map<string, { roles: string[]; at: number }>();
+/**
+ * O que o sync principal já sabe sobre um key como EKV nesta rede (vale 12 h, até reiniciar a api):
+ * accepted = foi aceito · refused = a rede recusou EKV, ou testou key a key e este não passou · unknown = ainda não testado.
+ */
+export function ekvKnown(net: string, role: KeyInfo['role']): 'accepted' | 'refused' | 'unknown' {
+  const fresh = (x?: { at: number }) => !!x && Date.now() - x.at < KV_RETRY_MS;
+  const acc = EKV_ACCEPTED.get(net);
+  if (fresh(acc) && acc!.roles.includes(role)) return 'accepted';
+  if (EKV_REFUSED_UNTIL(net)) return 'refused';
+  const part = EKV_PARTIAL.get(net);
+  if (fresh(part) && !part!.roles.includes(role)) return 'refused';
+  return 'unknown';
+}
 /** Erro de "esta rede não aceita relatório por Key-values": a solução é configuração no Ad Manager, não código. */
 export class KvUnsupported extends SyncError {
   constructor(public key: string, until: number) {
@@ -158,7 +174,7 @@ export class KvUnsupported extends SyncError {
   }
 }
 export const ALL = '__ALL__';
-const isConstraint = (e: unknown) => e instanceof SyncError && e.http === 400 && /CONSTRAINTS_INCOMPATIBILITY|INVALID_ARGUMENT|invalid as specified/i.test(`${e.body ?? ''} ${e.message}`);
+export const isConstraint = (e: unknown) => e instanceof SyncError && e.http === 400 && /CONSTRAINTS_INCOMPATIBILITY|INVALID_ARGUMENT|invalid as specified/i.test(`${e.body ?? ''} ${e.message}`);
 
 /** Relatório de Key-values com o primeiro formato que o Ad Manager aceitar nesta rede. */
 export async function runKvReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey: string) {
@@ -258,6 +274,58 @@ export async function fetchUnitMap(network: string, token: string, from: string,
   }
   return [];
 }
+
+/**
+ * 0.18 · Relatório só com dimensões nativas para a atribuição por participação (services/trackerShare.ts):
+ * DATE × SITE × AD_UNIT_ID × COUNTRY_CODE × DEVICE_CATEGORY_NAME. Sem key-values, então não esbarra nas restrições
+ * de Key-values/EKV. Se a rede recusar o dispositivo, segue sem ele (12 h sem tentar de novo).
+ * Linhas normalizadas: DATE, SITE, COUNTRY_CODE, AD_UNIT_ID[, DEVICE_CATEGORY_NAME].
+ */
+const DEVICE_REFUSED = new Map<string, number>();
+export async function fetchShareCells(network: string, token: string, from: string, to: string): Promise<{ rows: ReportRows; device: boolean }> {
+  const lays: Layout[] = [{ site: true, unit: true, country: true, core: true, filter: false }, { site: true, unit: true, country: true, core: true, filter: false, adx: true }];
+  const devOff = (DEVICE_REFUSED.get(network) ?? 0) > Date.now() - KV_RETRY_MS;
+  for (const device of devOff ? [false] : [true, false]) {
+    for (const lay of lays) {
+      try { return { rows: (await runReport(network, token, from, to, [], 'pluto-share-cells', device ? ['DEVICE_CATEGORY_NAME'] : [], undefined, lay)).rows, device }; } catch (e) {
+        if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
+      }
+    }
+    if (device) DEVICE_REFUSED.set(network, Date.now());
+  }
+  return { rows: [], device: false };
+}
+
+/** Blocos de anúncios da rede: caminho (como no GPT, sem a rede) → AD_UNIT_ID. Cache de 6 h. null se a API recusar. */
+const UNIT_PATHS = new Map<string, { at: number; map: Map<string, string> }>();
+export async function adUnitPaths(network: string, token: string): Promise<Map<string, string> | null> {
+  const c = UNIT_PATHS.get(network);
+  if (c && Date.now() - c.at < 6 * 3600_000) return c.map;
+  type U = { name?: string; adUnitId?: string; adUnitCode?: string; parentPath?: { adUnitCode?: string }[] };
+  const map = new Map<string, string>();
+  let pageToken: string | undefined;
+  try {
+    for (let i = 0; i < 50; i++) {
+      const j = await requestJson<{ adUnits?: U[]; nextPageToken?: string }>(`${config.api.gam}/v1/networks/${network}/adUnits?${new URLSearchParams({ pageSize: '1000', ...(pageToken ? { pageToken } : {}) })}`, { headers: { Authorization: `Bearer ${token}` } });
+      for (const u of j.adUnits ?? []) {
+        const id = u.adUnitId ?? u.name?.split('/').pop();
+        if (!id || !u.adUnitCode) continue;
+        const chain = [...(u.parentPath ?? []).map((p) => p.adUnitCode ?? ''), u.adUnitCode].filter(Boolean).map((x) => x.toLowerCase());
+        // com e sem o bloco-raiz da rede (o 1º segmento do caminho do GPT é o código da rede)
+        for (const k of [chain.join('/'), chain.slice(1).join('/')]) if (k && !map.has(k)) map.set(k, String(id));
+      }
+      pageToken = j.nextPageToken;
+      if (!pageToken) break;
+    }
+  } catch (e) {
+    if (e instanceof SyncError && ['token', 'not_connected'].includes(e.code)) throw e;
+    logGam({ network, step: 'adUnits', message: (e as Error).message, body: e instanceof SyncError ? e.body ?? null : null });
+    return null;
+  }
+  UNIT_PATHS.set(network, { at: Date.now(), map });
+  return map;
+}
+export { unitPathKeys };
 
 /** Sites com receita em cada dia do relatório-base. */
 const sitesByDay = (base: ReportRows) => {
@@ -546,10 +614,12 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
         if (ekvUsed.some((k) => k.role === 'path')) pathKv = null;
         const refused = ekvKeys.filter((k) => !ekvUsed.includes(k));
         if (refused.length) auxFail.push(`Key-values aprimorados: ${refused.map((k) => k.adTagName).join(', ')} ainda não marcado(s) como EKV nesta rede (os outros já funcionam)`);
+        EKV_ACCEPTED.set(net.external_id, { roles: ekvUsed.map((k) => k.role), at: Date.now() });
         logGam({ network: net.external_id, report: 'pluto-sync', ekvAccepted: ekvUsed.map((k) => k.adTagName), ekvRefused: refused.map((k) => k.adTagName) });
       } else {
         EKV_REFUSED.set(net.external_id, Date.now());
         EKV_PARTIAL.delete(net.external_id);
+        EKV_ACCEPTED.delete(net.external_id);
         logGam({ network: net.external_id, report: 'pluto-sync', ekvRefused: ekvKeys.map((k) => k.adTagName), message: r.message.slice(0, 300), nextTry: new Date(Date.now() + KV_RETRY_MS).toISOString() });
       }
     }
@@ -731,11 +801,40 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
   // c) 0.18 · rastreador próprio (script do Pluto no site): a receita que ficou sem campanha vai para as campanhas
   //    contadas pelo script, pelo eCPM do site × país (services/tracker.ts). Não depende do relatório de Key-values.
   const netDomains = (await q<{ id: string }>('SELECT id::text FROM domains WHERE gam_account_id = $1', [net.id])).map((x) => x.id);
-  const trk = await trackerCarve(pre, baseBy, netDomains, w.from, w.to, (c, ct, s) => {
+  const resolveUtm = (c: string, ct: string, s: string) => {
     const src = s.toLowerCase();
     const a = c && !EMPTY.test(c) ? attribute(idx, c, ct, src) : ct && !EMPTY.test(ct) ? attributeContent(idx, ct) : null;
     return a && !('reason' in a) ? { platform: a.platform, campaignId: a.campaignId, adGroupId: a.adGroupId, adId: a.adId } : null;
-  }, (s) => !!retentionChannel(normSource(s) ?? ''));
+  };
+  const isRetUtm = (s: string) => !!retentionChannel(normSource(s) ?? '');
+  // c1) 0.18 · rastreador v1.2: dia × site com impressões por bloco/país/dispositivo (orgânicas incluídas) → a receita de
+  //     cada célula do relatório nativo é dividida pela participação de cada campanha (services/trackerShare.ts)
+  let share: Awaited<ReturnType<typeof trackerShare<Pre>>> | null = null;
+  let shareNote = '';
+  const v12 = netDomains.length ? await one(`SELECT 1 FROM tracker_impressions WHERE date BETWEEN $1::date AND $2::date AND domain_id = ANY($3::bigint[]) LIMIT 1`, [w.from, w.to, netDomains]) : null;
+  if (v12) {
+    try {
+      const sc = await fetchShareCells(net.external_id, token, w.from, w.to);
+      const cells: ShareCell[] = [];
+      for (const r of sc.rows) {
+        const d = r.dimensionValues;
+        const day = isoDate(d[0]); const site = str(d[1]);
+        const rev = num(r.metricValueGroups?.[0]?.primaryValues?.[0]);
+        if (!day || !site || EMPTY.test(site) || rev <= 0) continue;
+        const domain = await dom.ensure(site);
+        if (!domain || domain.pending || domain.gam !== net.id) continue;
+        cells.push({ day, dom: domain.id, country: str(d[2]).toUpperCase() || 'ZZ', unit: str(d[3]) || null, device: sc.device ? normDevice(str(d[4])) || null : null, rev });
+      }
+      const units = cells.length ? await adUnitPaths(net.external_id, token) : null;
+      share = await trackerShare(pre, cells, units, sc.device, netDomains, w.from, w.to, resolveUtm, isRetUtm, normSource);
+      pre.splice(0, pre.length, ...share.pre);
+      if (!cells.length) shareNote = 'rastreador v1.2: o Ad Manager não entregou o relatório por bloco de anúncios × país; atribuição pelo método anterior';
+    } catch (e) {
+      if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
+      shareNote = `rastreador v1.2: falha na atribuição por participação (${(e as Error).message.slice(0, 160)}); usado o método anterior`;
+    }
+  }
+  const trk = await trackerCarve(pre, baseBy, netDomains, w.from, w.to, resolveUtm, isRetUtm, share?.covered);
   pre.push(...trk.carved);
 
   // b) páginas por balde (até 100 por balde; o resto fica com o caminho que a linha já tinha, ou sem URL)
@@ -800,6 +899,8 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
     ekvUsed.length ? `Key-values aprimorados (EKV): ${ekvUsed.map((k) => k.adTagName).join(', ')}`
       : mode === 'keyvalues' ? `atribuição pelo key-value ${contentKey.adTagName} (sem dimensão personalizada)` : 'atribuição por dimensão personalizada',
     pathKv ? `URLs por ${pathKv.adTagName}` : '',
+    share?.days ? `rastreador v1.2: ${share.days} dia(s) × site por participação nas impressões (${share.unitLevel} com bloco de anúncios), ${share.campaigns} campanhas, ${usd(share.revenue)}` : '',
+    shareNote,
     trk.campaigns ? `rastreador do Pluto: ${trk.campaigns} campanhas, ${usd(trk.revenue)} atribuídos por estimativa (impressões × eCPM do site)` : '',
     auxUnit.size ? `${[...auxUnit].map((l) => l.replace('pluto-sync-', '').replace('kv', 'utm_content').replace('source', 'utm_source').replace('path', 'page_path')).join(', ')} por bloco de anúncios → site` : '',
     srcKv ? `retenção por ${srcKv.adTagName} (${retentionRows} linhas de push/whatsapp/outros)`
