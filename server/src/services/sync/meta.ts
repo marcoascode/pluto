@@ -258,6 +258,14 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
       await setAccountStatus(acc.id, msg ? 'warn' : 'ok', msg);
       ok++;
     } catch (e) {
+      // token da integração recusado (senha alterada, sessão invalidada, app removido…): vale para todas as contas.
+      // Marca a conexão para reconectar e para aqui, em vez de repetir o mesmo erro em cada conta.
+      if (e instanceof SyncError && e.code === 'token') {
+        const msg = `Token da Meta recusado: ${e.message}. Reconecte em Integrações → Meta Ads.`.slice(0, 300);
+        await q(`UPDATE integration_connections SET status = 'token' WHERE provider = 'meta'`).catch(() => {});
+        await q(`UPDATE integration_accounts SET status = 'token', message = $1 WHERE provider = 'meta' AND imported`, [msg]).catch(() => {});
+        return { status: 'failed', message: msg };
+      }
       notes.push(`${acc.name}: ${(e as Error).message}`);
       await setAccountStatus(acc.id, statusFromError(e), (e as Error).message.slice(0, 300)).catch(() => {});
       // segue para a próxima conta: um erro numa conta não interrompe as outras
