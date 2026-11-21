@@ -151,6 +151,21 @@ export const ekvRefused = (net: string) => EKV_REFUSED_UNTIL(net) > 0;
 const EKV_REFUSED_UNTIL = (net: string) => { const t = EKV_REFUSED.get(net); return t && Date.now() - t < KV_RETRY_MS ? t + KV_RETRY_MS : 0; };
 /** 0.17.1 · rede → keys aceitos como EKV quando nem todos foram (ex.: utm_source marcado e page_path não). 12 h, depois testa todos de novo. */
 const EKV_PARTIAL = new Map<string, { roles: string[]; at: number }>();
+/** 0.18 · rede → keys (role) que o relatório-base já aceitou como EKV. */
+const EKV_ACCEPTED = new Map<string, { roles: string[]; at: number }>();
+/**
+ * O que o sync principal já sabe sobre um key como EKV nesta rede (vale 12 h, até reiniciar a api):
+ * accepted = foi aceito · refused = a rede recusou EKV, ou testou key a key e este não passou · unknown = ainda não testado.
+ */
+export function ekvKnown(net: string, role: KeyInfo['role']): 'accepted' | 'refused' | 'unknown' {
+  const fresh = (x?: { at: number }) => !!x && Date.now() - x.at < KV_RETRY_MS;
+  const acc = EKV_ACCEPTED.get(net);
+  if (fresh(acc) && acc!.roles.includes(role)) return 'accepted';
+  if (EKV_REFUSED_UNTIL(net)) return 'refused';
+  const part = EKV_PARTIAL.get(net);
+  if (fresh(part) && !part!.roles.includes(role)) return 'refused';
+  return 'unknown';
+}
 /** Erro de "esta rede não aceita relatório por Key-values": a solução é configuração no Ad Manager, não código. */
 export class KvUnsupported extends SyncError {
   constructor(public key: string, until: number) {
@@ -158,7 +173,7 @@ export class KvUnsupported extends SyncError {
   }
 }
 export const ALL = '__ALL__';
-const isConstraint = (e: unknown) => e instanceof SyncError && e.http === 400 && /CONSTRAINTS_INCOMPATIBILITY|INVALID_ARGUMENT|invalid as specified/i.test(`${e.body ?? ''} ${e.message}`);
+export const isConstraint = (e: unknown) => e instanceof SyncError && e.http === 400 && /CONSTRAINTS_INCOMPATIBILITY|INVALID_ARGUMENT|invalid as specified/i.test(`${e.body ?? ''} ${e.message}`);
 
 /** Relatório de Key-values com o primeiro formato que o Ad Manager aceitar nesta rede. */
 export async function runKvReport(network: string, token: string, from: string, to: string, keys: KeyInfo[], label: string, extra: string[], kvKey: string) {
@@ -546,10 +561,12 @@ async function runNetwork(net: { id: string; external_id: string; name: string }
         if (ekvUsed.some((k) => k.role === 'path')) pathKv = null;
         const refused = ekvKeys.filter((k) => !ekvUsed.includes(k));
         if (refused.length) auxFail.push(`Key-values aprimorados: ${refused.map((k) => k.adTagName).join(', ')} ainda não marcado(s) como EKV nesta rede (os outros já funcionam)`);
+        EKV_ACCEPTED.set(net.external_id, { roles: ekvUsed.map((k) => k.role), at: Date.now() });
         logGam({ network: net.external_id, report: 'pluto-sync', ekvAccepted: ekvUsed.map((k) => k.adTagName), ekvRefused: refused.map((k) => k.adTagName) });
       } else {
         EKV_REFUSED.set(net.external_id, Date.now());
         EKV_PARTIAL.delete(net.external_id);
+        EKV_ACCEPTED.delete(net.external_id);
         logGam({ network: net.external_id, report: 'pluto-sync', ekvRefused: ekvKeys.map((k) => k.adTagName), message: r.message.slice(0, 300), nextTry: new Date(Date.now() + KV_RETRY_MS).toISOString() });
       }
     }

@@ -20,7 +20,7 @@ import { config } from '../../config.js';
 import { q, tx } from '../../db.js';
 import { domainResolver, fxToUsd, setAccountStatus, statusFromError } from './common.js';
 import { loadTimeline, siteForDay } from '../accountLinks.js';
-import { ALL, attributeContent, ekvRefused, fetchUnitMap, unitsToSites, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runKvReport, runReport, str } from './gam.js';
+import { ALL, attributeContent, ekvKnown, fetchUnitMap, isConstraint, unitsToSites, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runKvReport, runReport, str } from './gam.js';
 import { ctx, gaql } from './googleAds.js';
 import { SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
@@ -160,6 +160,17 @@ export async function runGoogleAdsPlacements(w: { from: string; to: string }): P
 }
 
 /* ---------------- Ad Manager: receita por placement ---------------- */
+/**
+ * 0.18 · Relatório de placements por EKV (utm_content como Key-values aprimorados). Formatos tentados, em ordem:
+ * 6 métricas → só receita/impressões/cliques (AD_REQUESTS/RESPONSES_SERVED/Active View costumam ser incompatíveis
+ * com dimensões de key-values: REPORT_ERROR_CONSTRAINTS_INCOMPATIBILITY). Se a rede recusar todos (ou o sync principal
+ * já viu que o utm_content não está marcado como EKV), não tenta de novo por 12 h e usa o relatório de Key-values.
+ */
+const EKV_PL_LAYOUTS = [{ site: true, country: true, core: false, filter: false }, { site: true, country: true, core: true, filter: false }];
+const EKV_PL_REFUSED = new Map<string, number>();
+const EKV_PL_RETRY_MS = 12 * 3600_000;
+const ekvPlacementsOff = (net: string) => { const t = EKV_PL_REFUSED.get(net); return (!!t && Date.now() - t < EKV_PL_RETRY_MS) || ekvKnown(net, 'content') === 'refused'; };
+
 /** Todas as redes importadas; erro numa rede não interrompe as outras. Cada rede só grava os domínios dela. */
 export async function runGamPlacements(w: { from: string; to: string }, isFinal = false): Promise<JobResult> {
   const nets = await q<{ id: string; external_id: string; name: string }>(`SELECT id::text, external_id, name FROM integration_accounts WHERE provider = 'gam' AND imported ORDER BY id`);
@@ -188,9 +199,18 @@ export async function runGamPlacements(w: { from: string; to: string }, isFinal 
         // 0.15.3: dimensão Key-values no formato que a rede aceitar (sem SITE, só com um site na rede)
         let ekv = false;
         let got: { rows: Awaited<ReturnType<typeof runKvReport>>['rows']; layout: Awaited<ReturnType<typeof runKvReport>>['layout'] } | null = null;
-        if (contentKey.id && !ekvRefused(net.external_id)) {
-          try { got = { rows: (await runReport(net.external_id, token, w.from, w.to, [{ ...contentKey, ekv: true }], 'pluto-placements-ekv')).rows, layout: { site: true, country: true, core: false, filter: false } }; ekv = true; }
-          catch (e) { if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e; }
+        if (contentKey.id && !ekvPlacementsOff(net.external_id)) {
+          for (const lay of EKV_PL_LAYOUTS) {
+            try { got = { rows: (await runReport(net.external_id, token, w.from, w.to, [{ ...contentKey, ekv: true }], 'pluto-placements-ekv', [], undefined, lay)).rows, layout: lay }; ekv = true; EKV_PL_REFUSED.delete(net.external_id); break; }
+            catch (e) {
+              if (e instanceof SyncError && ['token', 'permission', 'not_connected'].includes(e.code)) throw e;
+              if (!isConstraint(e)) break;   // outro erro (ex.: 5xx): segue para o relatório de Key-values neste ciclo
+              if (lay === EKV_PL_LAYOUTS[EKV_PL_LAYOUTS.length - 1]) {
+                EKV_PL_REFUSED.set(net.external_id, Date.now());
+                console.warn(`[gam] ${JSON.stringify({ network: net.external_id, report: 'pluto-placements-ekv', ekvRefused: contentKey.adTagName, fallback: 'pluto-placements-kv', nextTry: new Date(Date.now() + EKV_PL_RETRY_MS).toISOString() })}`);
+              }
+            }
+          }
         }
         let { rows: raw, layout } = got ?? await runKvReport(net.external_id, token, w.from, w.to, [], 'pluto-placements-kv', [], contentKey.adTagName);
         // 0.17.1: aceito por bloco de anúncios → vira site pelo mapa bloco → site
