@@ -45,9 +45,13 @@ export function TrackerCodeButton() {
         <DialogContent dividers>
           <Typography variant="body2" sx={{ mb: 2 }}>
             <b>Para que serve:</b> liga a receita do Ad Manager às campanhas Meta e Google Ads quando o Ad Manager não informa o UTM no relatório.
-            O código guarda o <Mono>utm_campaign</Mono> e o <Mono>utm_content</Mono> da visita e conta os anúncios exibidos em cada página.
-            Com isso, o Pluto distribui a receita por campanha (estimativa pelo eCPM do site). Ele não usa cookies nem guarda dados pessoais.
+            O código guarda o <Mono>utm_campaign</Mono> e o <Mono>utm_content</Mono> da visita e conta os anúncios exibidos em cada página, por bloco de anúncios e tipo de dispositivo,
+            de <b>todas</b> as visitas (com e sem UTM). Com isso, a receita de cada bloco × país × dispositivo no Ad Manager é dividida pela participação de cada campanha
+            nas impressões. Ele não usa cookies nem guarda dados pessoais (o país vem do IP no servidor, que não é gravado).
           </Typography>
+          <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
+            <b>Versão 1.2.</b> Se o site já tem o código, <b>substitua</b> o antigo (v1.1) por este, no mesmo lugar: logo após <Mono>&lt;head&gt;</Mono> e antes do GTM. Não deixe as duas versões juntas.
+          </Alert>
 
           <Box sx={{ position: 'relative', mb: 2.5 }}>
             <Box component="pre" sx={{ m: 0, p: 2, pr: 6, maxHeight: 280, overflow: 'auto', borderRadius: 1, border: 1, borderColor: 'divider', bgcolor: 'action.hover', fontFamily: 'IBM Plex Mono', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre' }}>{code}</Box>
@@ -105,6 +109,7 @@ export function TrackerCodeButton() {
           <Typography component="div" variant="body2" color="text.secondary">
             Abra o site com UTMs na URL (por exemplo, pela visualização do anúncio na Meta). Clique com o botão direito → <b>Exibir código-fonte</b> e procure por <Mono>pluto_utm</Mono>.
             O código deve aparecer antes do <Mono>Google Tag Manager</Mono>. No console do navegador, <Mono>sessionStorage.getItem('pluto_utm')</Mono> deve mostrar as UTMs da visita.
+            No código-fonte, a 1ª linha do comentário deve dizer <Mono>v1.2</Mono>; na aba Rede (Network), os envios para <Mono>/api/collect</Mono> levam <Mono>"v":2</Mono> e os blocos em <Mono>"u"</Mono>.
             A receita aparece por campanha no próximo sync do Ad Manager, em até 1 hora, e só a partir da instalação, sem retroativo.
           </Typography>
         </DialogContent>

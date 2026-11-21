@@ -1,7 +1,8 @@
-<!-- Pluto Mídia · rastreador de UTMs v1.1 (0.18) -->
-<!-- Onde: WP Headers and Footers → "Scripts in Header", em TODOS os sites, acima da tag do GTM. -->
-<!-- Conta páginas e impressões renderizadas pelo Google Publisher Tag (GPT) das visitas que chegaram com UTM e envia ao Pluto. -->
-<!-- Não usa cookies, não grava IP nem dados pessoais: só utm_campaign, utm_content, utm_source e contagens. -->
+<!-- Pluto Mídia · rastreador de UTMs v1.2 (0.18) -->
+<!-- Onde: WP Headers and Footers → "Scripts in Header", em TODOS os sites, logo após <head> e acima da tag do GTM. -->
+<!-- Conta páginas e impressões renderizadas pelo Google Publisher Tag (GPT), por bloco de anúncios e tipo de dispositivo, -->
+<!-- de TODAS as visitas (com e sem UTM) e envia ao Pluto. As visitas sem UTM são o que permite calcular a participação -->
+<!-- de cada campanha na receita de cada bloco. Não usa cookies, não grava IP nem dados pessoais. -->
 <script>
 window.pluto_utm_tracker = 1;   /* 1ª linha fixa: identifica o código nas exclusões de plugins de otimização */
 (function (w) {
@@ -15,13 +16,20 @@ window.pluto_utm_tracker = 1;   /* 1ª linha fixa: identifica o código nas excl
     else { var o = JSON.parse(w.sessionStorage.getItem(KEY) || 'null'); if (o && now - o.t < TTL) u = o; }
     if (u) { u.t = now; w.sessionStorage.setItem(KEY, JSON.stringify(u)); }
   } catch (e) { if (c || ct || s) u = { c: c, ct: ct, s: s, t: now }; }
-  if (!u) return;   // visita sem UTM: nada a medir
+  if (!u) u = { c: '', ct: '', s: '' };   // visita sem UTM (orgânica): também é contada
 
-  var pv = 1, im = 0;
+  var ua = w.navigator.userAgent || '';
+  var dev = /iPad|Tablet|PlayBook|Silk|Kindle/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua)) || (/Macintosh/i.test(ua) && w.navigator.maxTouchPoints > 1) ? 'tablet'
+    : /Mobi|iPhone|iPod|Android|IEMobile|Opera Mini/i.test(ua) ? 'smartphone' : 'desktop';
+  var pv = 1, im = 0, units = {};
+  function count(sl) {
+    var p = ''; try { p = sl.getAdUnitPath(); } catch (e) {}
+    im++; if (p) units[p] = (units[p] || 0) + 1;
+  }
   function send() {
     if (!pv && !im) return;
-    var body = JSON.stringify({ h: w.location.hostname, c: u.c, ct: u.ct, s: u.s, pv: pv, im: im });
-    pv = 0; im = 0;
+    var body = JSON.stringify({ v: 2, h: w.location.hostname, c: u.c, ct: u.ct, s: u.s, pv: pv, im: im, d: dev, u: units });
+    pv = 0; im = 0; units = {};
     try { if (w.navigator.sendBeacon && w.navigator.sendBeacon(ENDPOINT, body)) return; } catch (e) {}
     try { w.fetch(ENDPOINT, { method: 'POST', body: body, keepalive: true, mode: 'no-cors' }); } catch (e) {}
   }
@@ -29,8 +37,8 @@ window.pluto_utm_tracker = 1;   /* 1ª linha fixa: identifica o código nas excl
   w.googletag.cmd.push(function () {
     var pa = w.googletag.pubads();
     // código carregado tarde (plugin de otimização que adia/combina scripts): conta os anúncios que já apareceram
-    try { pa.getSlots().forEach(function (sl) { if (sl.getResponseInformation()) im++; }); } catch (e) {}
-    pa.addEventListener('slotRenderEnded', function (e) { if (!e.isEmpty) im++; });
+    try { pa.getSlots().forEach(function (sl) { if (sl.getResponseInformation()) count(sl); }); } catch (e) {}
+    pa.addEventListener('slotRenderEnded', function (e) { if (!e.isEmpty) count(e.slot); });
   });
   w.document.addEventListener('visibilitychange', function () { if (w.document.visibilityState === 'hidden') send(); });
   w.addEventListener('pagehide', send);

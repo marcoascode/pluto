@@ -38,7 +38,7 @@ interface Want { platform: 'google' | 'meta'; campaignId: string; adGroupId: str
  * Altera os pre-fatos de origem (subtrai o que foi atribuído) e devolve os novos pre-fatos atribuídos.
  */
 export async function trackerCarve<P extends PreLike>(pre: P[], baseBy: Map<string, M>, domainIds: string[], from: string, to: string,
-  resolve: TrackerResolve, isRetention: (s: string) => boolean): Promise<{ carved: P[]; campaigns: number; revenue: number }> {
+  resolve: TrackerResolve, isRetention: (s: string) => boolean, skip?: Set<string>): Promise<{ carved: P[]; campaigns: number; revenue: number }> {
   const none = { carved: [] as P[], campaigns: 0, revenue: 0 };
   if (!domainIds.length) return none;
   const rows = await q<{ date: string; dom: string; c: string; ct: string; s: string; im: number }>(`
@@ -53,6 +53,7 @@ export async function trackerCarve<P extends PreLike>(pre: P[], baseBy: Map<stri
   // impressões rastreadas por dia × site × campanha (+ grupo/anúncio do 1º UTM visto)
   const tracked = new Map<string, { day: string; dom: string; a: NonNullable<ReturnType<TrackerResolve>>; im: number }>();
   for (const r of rows) {
+    if (skip?.has(`${r.date}|${r.dom}`)) continue;   // dia × site já atribuído por participação (services/trackerShare.ts)
     if (r.s && isRetention(r.s)) continue;
     const a = resolve(r.c, r.ct, r.s);
     if (!a || kvDone.has(`${r.date}|${r.dom}|${a.campaignId}`)) continue;
