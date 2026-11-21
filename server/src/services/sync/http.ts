@@ -35,7 +35,8 @@ export async function requestJson<T = any>(url: string, o: ReqOpts = {}): Promis
       // Meta "Please reduce the amount of data…" (código 1, HTTP 500): repetir igual não adianta, quem chamou precisa pedir menos
       if (TOO_MUCH_DATA.test(msg)) throw new SyncError('too_much_data', msg, r.status, body);
       if ([429, 500, 502, 503, 504].includes(r.status) && i < retries) { await sleep(retryAfter(r) ?? 1000 * 2 ** i); last = new SyncError(r.status === 429 ? 'rate_limit' : 'api', msg, r.status, body); continue; }
-      if (r.status === 401) throw new SyncError('token', msg, r.status, body);
+      // Meta responde HTTP 400 (não 401) para token inválido/sessão invalidada: código 190 (ex.: subcode 460 = senha alterada)
+      if (r.status === 401 || (j?.error?.code === 190 && (j.error.fbtrace_id || j.error.type))) throw new SyncError('token', msg, r.status, body);
       if (r.status === 403) throw new SyncError('permission', msg, r.status, body);
       throw new SyncError('api', msg, r.status, body);
     } catch (e) {
