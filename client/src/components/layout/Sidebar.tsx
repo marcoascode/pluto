@@ -68,6 +68,12 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
           {onNavigate === undefined && <IconButton size="small" onClick={() => update({ sideMini: !prefs.sideMini })} aria-label={mini ? 'Expandir menu' : 'Recolher menu'}>{mini ? <ChevronRightRoundedIcon fontSize="small" /> : <ChevronLeftRoundedIcon fontSize="small" />}</IconButton>}
         </Stack>
       )}
+      <Tooltip title={mini ? `Pluto Mídia v${__APP_VERSION__}` : ''} placement="right">
+        <Typography variant="caption" component="div" aria-label={`Versão do painel: ${__APP_VERSION__}`}
+          sx={{ px: 1.5, pb: 1, pt: user ? 0 : 1, fontSize: 10.5, color: 'text.disabled', fontFamily: 'IBM Plex Mono', textAlign: mini ? 'center' : 'left' }}>
+          {mini ? `v${__APP_VERSION__.split('.').slice(0, 2).join('.')}` : `Pluto Mídia · v${__APP_VERSION__}`}
+        </Typography>
+      </Tooltip>
     </Stack>
   );
 }

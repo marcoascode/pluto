@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 
@@ -27,12 +28,16 @@ function demoFonts(): Plugin {
   };
 }
 
+/** Versão do painel (client/package.json), exibida no menu lateral. */
+const APP_VERSION = (JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }).version;
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const target = env.VITE_API_PROXY_TARGET || 'http://localhost:4000';
   const demo = mode === 'demo';
   return {
     plugins: demo ? [react(), demoFonts(), viteSingleFile()] : [react()],
+    define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
     resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
     server: {
       port: 5173,
