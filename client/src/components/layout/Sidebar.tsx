@@ -32,8 +32,9 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
   return (
     <Stack sx={{ height: '100%' }}>
       <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', justifyContent: mini ? 'center' : 'flex-start', px: mini ? 0 : 2.25, pt: 2.25, pb: 1.75 }}>
-        <Logo />
-        {!mini && <Box><Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 16.5, lineHeight: 1.2 }}>Pluto Mídia</Typography><Typography variant="caption" sx={{ fontSize: 10.5 }}>Media Intelligence</Typography></Box>}
+        {/* menu recolhido: a versão fica no tooltip do logo */}
+        <Tooltip title={mini ? `Pluto Mídia v${__APP_VERSION__}` : ''} placement="right"><Box sx={{ display: 'flex' }}><Logo /></Box></Tooltip>
+        {!mini && <Box><Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 16.5, lineHeight: 1.2 }}>Pluto Mídia</Typography><Typography variant="caption" sx={{ fontSize: 10.5 }}>Media Intelligence<Box component="span" aria-label={`Versão do painel: ${__APP_VERSION__}`}> · v{__APP_VERSION__}</Box></Typography></Box>}
       </Stack>
       <List sx={{ flex: 1, overflowY: 'auto', px: 1.25, pt: 0 }}>
         {NAV_MAIN.map((g) => ({ ...g, items: g.items.filter((it) => (!it.cap || can(it.cap)) && (!it.metaCampaigns || canMetaCampaigns)) })).filter((g) => g.items.length).map((g, i) => <Box key={i}>{g.title && <Head mini={mini}>{g.title}</Head>}{g.items.map(item)}</Box>)}
@@ -68,12 +69,6 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
           {onNavigate === undefined && <IconButton size="small" onClick={() => update({ sideMini: !prefs.sideMini })} aria-label={mini ? 'Expandir menu' : 'Recolher menu'}>{mini ? <ChevronRightRoundedIcon fontSize="small" /> : <ChevronLeftRoundedIcon fontSize="small" />}</IconButton>}
         </Stack>
       )}
-      <Tooltip title={mini ? `Pluto Mídia v${__APP_VERSION__}` : ''} placement="right">
-        <Typography variant="caption" component="div" aria-label={`Versão do painel: ${__APP_VERSION__}`}
-          sx={{ px: 1.5, pb: 1, pt: user ? 0 : 1, fontSize: 10.5, color: 'text.disabled', fontFamily: 'IBM Plex Mono', textAlign: mini ? 'center' : 'left' }}>
-          {mini ? `v${__APP_VERSION__.split('.').slice(0, 2).join('.')}` : `Pluto Mídia · v${__APP_VERSION__}`}
-        </Typography>
-      </Tooltip>
     </Stack>
   );
 }
