@@ -264,9 +264,15 @@ metaCampaignsRouter.post('/profiles/:id/campaigns/publish', async (req, res) => 
   const stamp = new Date().toISOString().slice(0, 10);
   const name = b.campaign.name ?? `${hostname} · ${objective.replace('OUTCOME_', '')} · ${stamp}`;
 
+  // Nomenclatura: "(Cj.N) <nome>" no Conjunto e "(Cj.N / Ad.M) <nome>" nos anúncios.
+  // A numeração dos anúncios (Ad.M) é contínua entre conjuntos — não reinicia em cada Cj. — para facilitar a contagem do gestor.
+  // Hoje cada publicação cria um único Conjunto (Cj.1).
+  const adsetNo = 1;
+  const adsetName = `(Cj.${adsetNo}) ${b.adset.name ?? name}`;
+
   // anúncios = imagens × copies
   const ads: AdSpec[] = [];
-  const mk = (img: string, c: z.infer<typeof copySchema>) => ads.push({ name: `${name} · Anúncio ${String(ads.length + 1).padStart(2, '0')}`, imageHash: img.toLowerCase(), headline: c.headline, primaryText: c.primaryText, description: c.description, cta: c.cta });
+  const mk = (img: string, c: z.infer<typeof copySchema>) => ads.push({ name: `(Cj.${adsetNo} / Ad.${ads.length + 1}) ${name}`, imageHash: img.toLowerCase(), headline: c.headline, primaryText: c.primaryText, description: c.description, cta: c.cta });
   if (b.pairing === 'cross') for (const img of b.imageHashes) for (const c of b.copies) mk(img, c);
   else for (let i = 0; i < Math.max(b.imageHashes.length, b.copies.length); i++) mk(b.imageHashes[i % b.imageHashes.length], b.copies[i % b.copies.length]);
   if (ads.length > 50) throw new HttpError(422, 'too_many_ads', 'No máximo 50 anúncios por publicação.');
@@ -276,7 +282,7 @@ metaCampaignsRouter.post('/profiles/:id/campaigns/publish', async (req, res) => 
     pageId: b.pageId, link: tracked.link, urlTags: tracked.urlTags, rollbackOnFailure: b.rollbackOnFailure,
     campaign: { name, objective, status: b.campaign.status, specialAdCategories: b.campaign.specialAdCategories },
     adset: {
-      name: b.adset.name ?? `${name} · Conjunto`, dailyBudgetMinor, optimizationGoal, countries, ageMin, ageMax,
+      name: adsetName, dailyBudgetMinor, optimizationGoal, countries, ageMin, ageMax,
       genders: g === 'male' ? [1] : g === 'female' ? [2] : null, publisherPlatforms: b.adset.publisherPlatforms ?? null,
       startTime: b.adset.startTime ?? null, endTime: b.adset.endTime ?? null,
     },
