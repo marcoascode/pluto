@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.4
+- **Sidebar**: a versão do painel saiu do rodapé e foi para o topo, ao lado de "Media Intelligence" (`Media Intelligence · v0.18.4`); com o menu recolhido, aparece no tooltip do logo.
+- **Criação de campanhas Meta**: Conjuntos e anúncios recebem numeração no início do nome: `(Cj.1) <campanha>` e `(Cj.1 / Ad.N) <campanha>`. A contagem de anúncios é contínua entre Conjuntos.
+
 ## 0.18.2
 - **Perfis do Facebook via OAuth** (substitui o System User Token manual): botão **Conectar Perfil do Facebook** abre o Facebook Login (`auth_type=rerequest`; "Reconectar / Renovar" usa `reauthenticate`). O servidor troca o `code` por um **Long-Lived User Access Token (~60 dias)**, confere `/me` e `/me/permissions` (6 escopos: `ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`, `public_profile`), salva o token criptografado com a data de expiração e sincroniza BMs, contas de anúncios, Páginas e Pixels/Datasets.
 - **Contingência multi-perfil**: cada gestor conecta quantos Perfis quiser (um por login do Facebook); cards com status do token, dias restantes, contagem de ativos, **Sincronizar Ativos** (`POST /meta/profiles/:id/sync`) e **Remover Perfil**.

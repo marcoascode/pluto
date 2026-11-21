@@ -10,3 +10,4 @@
 2. **Ambiente Cloud (Sem `.env`):** O ambiente atual não possui acesso ao banco PostgreSQL de produção nem às chaves de API. Valide o código usando apenas checagem estática de tipos (`npx tsc --noEmit`) e build (`npm run build`), sem tentar rodar migrations ou conexões reais com o banco.
 3. **Governança:** A nova funcionalidade de criação automatizada de campanhas Meta deve ser controlada pela flag `can_create_meta_campaigns` na tabela de usuários, atribuível exclusivamente por usuários com role `SuperAdmin`.
 4. **Criativos:** Nunca salve imagens no disco do servidor; todo upload de criativo deve trafegar em memória (buffer) direto para a Meta Graph API.
+5. **Versionamento:** Toda modificação que inclua, remova ou altere funções da aplicação deve subir a versão (patch) em `client/package.json` e `server/package.json` (e nos `package-lock.json`) e ganhar uma entrada em `client/CHANGELOG.md`. A versão exibida na sidebar vem de `client/package.json`.
