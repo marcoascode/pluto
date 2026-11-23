@@ -19,8 +19,8 @@ import { metaCampaignsApi } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
 import { TECH_DOMAIN } from '@/lib/format';
-import { META_COPY_LIMITS, META_CONVERSION_EVENTS, META_CTAS, META_OBJECTIVES, META_OPT_GOALS } from '@/types/api';
-import type { MetaCopy, MetaDraft, MetaDraftStatus, MetaPublishRequest, MetaRun, MetaSuggestion } from '@/types/api';
+import { META_COPY_LIMITS, META_CONVERSION_EVENTS, META_CTAS, META_DEVICES, META_OBJECTIVES, META_OPT_GOALS, META_PLATFORM_POSITIONS, META_PLATFORMS } from '@/types/api';
+import type { MetaCopy, MetaPlatform, MetaDraft, MetaDraftStatus, MetaPublishRequest, MetaRun, MetaSuggestion } from '@/types/api';
 import { getDefaultPage, profileLabel, profileUsable } from './shared';
 
 const STEPS = ['Site e conta', 'Criativos e copies', 'Configuração', 'Revisão e disparo'];
@@ -33,6 +33,24 @@ const EVENT_LABEL: Record<string, string> = {
   PURCHASE: 'Compra', LEAD: 'Lead', COMPLETE_REGISTRATION: 'Cadastro completo', ADD_TO_CART: 'Adicionar ao carrinho', INITIATED_CHECKOUT: 'Iniciar finalização da compra',
   ADD_PAYMENT_INFO: 'Adicionar dados de pagamento', ADD_TO_WISHLIST: 'Adicionar à lista de desejos', CONTENT_VIEW: 'Visualização de conteúdo', SEARCH: 'Pesquisa',
   CONTACT: 'Contato', SCHEDULE: 'Agendamento', START_TRIAL: 'Iniciar avaliação', SUBMIT_APPLICATION: 'Enviar inscrição', SUBSCRIBE: 'Assinatura', OTHER: 'Outro',
+};
+const PLATFORM_LABEL: Record<MetaPlatform, string> = { facebook: 'Facebook', instagram: 'Instagram', audience_network: 'Audience Network', messenger: 'Messenger' };
+const POSITION_LABEL: Record<MetaPlatform, Record<string, string>> = {
+  facebook: { feed: 'Feed', profile_feed: 'Feed do perfil', marketplace: 'Marketplace', right_hand_column: 'Coluna da direita', search: 'Resultados da pesquisa', story: 'Stories', facebook_reels: 'Reels', instream_video: 'Vídeos in-stream' },
+  instagram: { stream: 'Feed', profile_feed: 'Feed do perfil', explore: 'Explorar', explore_home: 'Página inicial do Explorar', ig_search: 'Resultados da pesquisa', story: 'Stories', reels: 'Reels' },
+  audience_network: { classic: 'Nativo, banner e intersticial', rewarded_video: 'Vídeos premiados' },
+  messenger: { messenger_home: 'Caixa de entrada', story: 'Stories' },
+};
+const DEVICE_LABEL: Record<(typeof META_DEVICES)[number], string> = { mobile: 'Celular', desktop: 'Computador' };
+type Positions = Record<MetaPlatform, string[]>;
+type Device = (typeof META_DEVICES)[number];
+const allPositions = (): Positions => ({ facebook: [...META_PLATFORM_POSITIONS.facebook], instagram: [...META_PLATFORM_POSITIONS.instagram], audience_network: [...META_PLATFORM_POSITIONS.audience_network], messenger: [...META_PLATFORM_POSITIONS.messenger] });
+/** Posições vindas de um rascunho: só valores conhecidos; formato inválido = todas. */
+const parsePositions = (v: unknown): Positions => {
+  const all = allPositions();
+  if (!v || typeof v !== 'object') return all;
+  const o = v as Record<string, unknown>;
+  return Object.fromEntries(META_PLATFORMS.map((pf) => [pf, Array.isArray(o[pf]) ? all[pf].filter((x) => (o[pf] as unknown[]).includes(x)) : all[pf]])) as Positions;
 };
 /** Valor do campo "Evento do Pixel": std:EVENTO · cc:ID (conversão personalizada) · ce:NOME (evento personalizado) · ce* (digitar o nome). */
 const EV_TYPED = 'ce*';
@@ -79,6 +97,9 @@ export default function MetaCampaignWizardPage() {
   const [linkPixel, setLinkPixel] = useState(false);
   const [event, setEvent] = useState('');
   const [typedEvent, setTypedEvent] = useState('');
+  const [placeMode, setPlaceMode] = useState<'auto' | 'manual'>('auto');
+  const [positions, setPositions] = useState<Positions>(allPositions);
+  const [devices, setDevices] = useState<Device[]>([...META_DEVICES]);
   /* --- passo 4 --- */
   const [copies, setCopies] = useState<MetaCopy[]>([]);
   const [layout, setLayout] = useState<'single' | 'per-copy'>('single');
@@ -147,6 +168,13 @@ export default function MetaCampaignWizardPage() {
   /* ---------------- validação por passo ---------------- */
   const err1 = !site ? 'Escolha o site.' : !profileId ? 'Escolha o Perfil do Facebook.' : profile && !profileUsable(profile) ? 'O token deste Perfil está vencido, recusado ou sem permissões. Reconecte o Perfil em Perfis & BMs.' : !accountId ? 'Escolha a conta de anúncios.' : !pageId ? 'Escolha a Página.' : '';
   const err2 = !nImages ? 'Envie ao menos um criativo.' : !(nCount >= 1 && nCount <= 20) ? 'A quantidade de copies vai de 1 a 20.' : offer.trim().length < 10 ? 'Descreva a oferta/site em pelo menos 10 caracteres para a IA gerar as copies.' : '';
+  const pickedPlatforms = META_PLATFORMS.filter((pf) => positions[pf].length > 0);
+  const placementErr = placeMode === 'auto' ? ''
+    : !pickedPlatforms.length ? 'Posicionamentos manuais: selecione ao menos um posicionamento.'
+    : !positions.facebook.length && (positions.audience_network.length || positions.messenger.length) ? 'Audience Network e Messenger só podem ser usados junto com algum posicionamento do Facebook.'
+    : !devices.length ? 'Posicionamentos manuais: selecione ao menos um dispositivo.' : '';
+  const placementLabel = placeMode === 'auto' ? 'Posicionamentos automáticos (Advantage+)'
+    : `${pickedPlatforms.map((pf) => `${PLATFORM_LABEL[pf]}${positions[pf].length < META_PLATFORM_POSITIONS[pf].length ? ` (${positions[pf].length}/${META_PLATFORM_POSITIONS[pf].length})` : ''}`).join(', ')}${devices.length === 1 ? ` · só ${DEVICE_LABEL[devices[0]].toLowerCase()}` : ''}`;
   const budgetN = num(budget), minN = num(ageMin), maxN = num(ageMax);
   const err3 = !tracked.data ? (tracked.error ? errMsg(tracked.error, 'URL de destino inválida.') : 'Informe a URL de destino (https) do site.')
     : !(budgetN > 0) ? `Informe o orçamento diário${account?.currency ? ` (${account.currency})` : ''}.`
@@ -154,7 +182,8 @@ export default function MetaCampaignWizardPage() {
     : !(minN >= 18 && maxN <= 65 && minN <= maxN) ? 'Idade: de 18 a 65, com mínima ≤ máxima.'
     : (linkDataset || linkPixel || offsite) && !datasetId ? 'Escolha o Dataset para vincular ao conjunto/anúncios.'
     : offsite && !event ? 'Otimizar por conversões exige escolher o Evento do Pixel.'
-    : event === EV_TYPED && !CUSTOM_EVENT_RE.test(typedEvent.trim()) ? 'Digite o nome do evento personalizado exatamente como no Pixel (letras, números, espaço, _ - . :).' : '';
+    : event === EV_TYPED && !CUSTOM_EVENT_RE.test(typedEvent.trim()) ? 'Digite o nome do evento personalizado exatamente como no Pixel (letras, números, espaço, _ - . :).'
+    : placementErr;
   const copyBad = (c: MetaCopy) => !c.headline.trim() || !c.primaryText.trim() || c.headline.length > META_COPY_LIMITS.headline || c.primaryText.length > META_COPY_LIMITS.primaryText || c.description.length > META_COPY_LIMITS.description;
   const err4 = !copies.length ? 'Gere ou adicione ao menos uma copy.' : copies.some(copyBad) ? 'Há copies vazias ou acima do limite de caracteres da Meta.' : adsPerCampaign > MAX_ADS ? `Máximo de ${MAX_ADS} anúncios por campanha (hoje: ${adsPerCampaign}). Use o pareamento “1 a 1” ou menos copies.` : '';
   const stepErr = [err1, err2, err3, err4][step];
@@ -202,7 +231,7 @@ export default function MetaCampaignWizardPage() {
   /** Estado do assistente que vai para o rascunho. Imagens: só as que já estão na Meta (hash/URL); arquivos locais não vão. */
   const snapshot = (copiesOverride?: MetaCopy[]) => ({
     v: 1, site, profileId, accountId, pageId, offer, language, tone, count, mode, url, campName, objective, goal, budget, countries, ageMin, ageMax, gender, active,
-    datasetId, linkDataset, linkPixel, event, typedEvent, copies: copiesOverride ?? copies, layout, pairing,
+    datasetId, linkDataset, linkPixel, event, typedEvent, placeMode, positions, devices, copies: copiesOverride ?? copies, layout, pairing,
     images: [...savedImages, ...creatives.map((c) => hashes.current.get(c.id)).filter((x): x is SavedImage => !!x)],
   });
   const draftName = () => campName.trim() || (site ? `${site} · ${copies.length} copy(ies) × ${nImages} imagem(ns)` : 'Campanha sem nome');
@@ -240,6 +269,8 @@ export default function MetaCampaignWizardPage() {
       setBudget(str('budget')); setCountries(str('countries')); setAgeMin(str('ageMin', '18')); setAgeMax(str('ageMax', '65'));
       setGender(['all', 'male', 'female'].includes(st.gender) ? st.gender : 'all'); setActive(!!st.active);
       setDatasetId(str('datasetId')); setLinkDataset(!!st.linkDataset); setLinkPixel(!!st.linkPixel); setEvent(str('event')); setTypedEvent(str('typedEvent'));
+      setPlaceMode(st.placeMode === 'manual' ? 'manual' : 'auto'); setPositions(parsePositions(st.positions));
+      setDevices(Array.isArray(st.devices) ? META_DEVICES.filter((d) => st.devices.includes(d)) : [...META_DEVICES]);
       setCopies(Array.isArray(st.copies) ? st.copies : []); setLayout(st.layout === 'per-copy' ? 'per-copy' : 'single'); setPairing(st.pairing === 'cross' ? 'cross' : 'zip');
       setSavedImages(Array.isArray(st.images) ? st.images.filter((x: any) => x && typeof x.hash === 'string') : []);
       applied.current = `${str('site')}|${str('accountId')}`;   // não sobrescreve os campos com a sugestão da IA
@@ -255,7 +286,8 @@ export default function MetaCampaignWizardPage() {
       adAccountId: accountId, pageId, site, url: url.trim(), source: mode,
       ...(mode === 'ai' && s ? { suggestion: { objective: { value: s.objective.value, optimizationGoal: s.objective.optimizationGoal }, dailyBudget: { usd: s.dailyBudget.usd, brl: s.dailyBudget.brl }, audience: { countries: s.audience.countries.slice(0, 50).map((c) => ({ code: c.code })), ageMin: s.audience.ageMin, ageMax: s.audience.ageMax, genders: s.audience.genders } } } : {}),
       campaign: { ...(name ? { name } : {}), objective, status: active ? 'ACTIVE' : 'PAUSED' },
-      adset: { dailyBudget: budgetN, optimizationGoal: goal, countries: countryList, ageMin: minN, ageMax: maxN, genders: gender },
+      adset: { dailyBudget: budgetN, optimizationGoal: goal, countries: countryList, ageMin: minN, ageMax: maxN, genders: gender,
+        ...(placeMode === 'manual' ? { publisherPlatforms: pickedPlatforms, positions: Object.fromEntries(pickedPlatforms.map((pf) => [pf, positions[pf]])), devicePlatforms: devices } : {}) },
       tracking: { ...(datasetId ? { datasetId } : {}), linkDatasetToAdSet: linkDataset || offsite, ...eventFields(), linkPixelToAds: linkPixel },
       imageHashes, pairing: layout === 'single' ? pairing : 'zip', rollbackOnFailure: true,
       copies: cs.map((c) => ({ angle: c.angle?.slice(0, 80), headline: c.headline.trim(), primaryText: c.primaryText.trim(), description: c.description.trim(), cta: c.cta })),
@@ -447,6 +479,8 @@ export default function MetaCampaignWizardPage() {
             <Grid size={{ xs: 4, md: 1 }}><TextField select label="Gênero" fullWidth value={gender} onChange={(e) => setGender(e.target.value as typeof gender)}><MenuItem value="all">Todos</MenuItem><MenuItem value="male">Homens</MenuItem><MenuItem value="female">Mulheres</MenuItem></TextField></Grid>
           </Grid></CardContent></Card>
 
+          <PlacementsCard mode={placeMode} onMode={setPlaceMode} positions={positions} onPositions={setPositions} devices={devices} onDevices={setDevices} error={placementErr} />
+
           <Card><CardContent>
             <Typography variant="h2" sx={{ mb: 1.5 }}>Rastreamento (opcional)</Typography>
             <Grid container spacing={2}>
@@ -553,7 +587,7 @@ export default function MetaCampaignWizardPage() {
                 </Collapse>
                 <FormControlLabel sx={{ display: 'flex', mt: 1.5 }} control={<Checkbox checked={active} onChange={(e) => setActive(e.target.checked)} />} label="Publicar já ativa (por padrão as campanhas são criadas PAUSADAS para revisão na Meta)" />
                 <Typography variant="caption" component="p" sx={{ mt: 1 }}>
-                  Resumo: {site} · {account?.name ?? accountId} · {nImages} imagem(ns) · {copies.length} copy(ies) · {layout === 'per-copy' ? `${copies.length} campanha(s) × ${nImages} anúncio(s)` : `${adsPerCampaign} anúncio(s)`} · {budget} {account?.currency}/dia · {countryList.join(', ')}{eventLabel ? ` · ${eventLabel}` : ''}
+                  Resumo: {site} · {account?.name ?? accountId} · {nImages} imagem(ns) · {copies.length} copy(ies) · {layout === 'per-copy' ? `${copies.length} campanha(s) × ${nImages} anúncio(s)` : `${adsPerCampaign} anúncio(s)`} · {budget} {account?.currency}/dia · {countryList.join(', ')} · {placementLabel}{eventLabel ? ` · ${eventLabel}` : ''}
                 </Typography>
               </CardContent></Card>
             </>
@@ -646,6 +680,58 @@ function PendingDrafts({ drafts, error, currentId, busy, onOpen, onDeleted }: { 
         <Typography>“{del?.name}” sai da lista de pendentes. Nada é alterado na Meta (as imagens já enviadas continuam na biblioteca da conta).</Typography>
         {rm.error && <Alert severity="error" variant="outlined" sx={{ mt: 1.5 }}>{errMsg(rm.error, 'Não foi possível excluir.')}</Alert>}
       </ConfirmDialog>
+    </CardContent></Card>
+  );
+}
+
+/** Etapa 3 · posicionamentos do Conjunto: automáticos (Advantage+) ou manuais por plataforma, posição e dispositivo. */
+function PlacementsCard({ mode, onMode, positions, onPositions, devices, onDevices, error }: {
+  mode: 'auto' | 'manual'; onMode: (m: 'auto' | 'manual') => void; positions: Positions; onPositions: (p: Positions) => void; devices: Device[]; onDevices: (d: Device[]) => void; error: string;
+}) {
+  const setPlatform = (pf: MetaPlatform, on: boolean) => onPositions({ ...positions, [pf]: on ? [...META_PLATFORM_POSITIONS[pf]] : [] });
+  const togglePos = (pf: MetaPlatform, pos: string, on: boolean) =>
+    onPositions({ ...positions, [pf]: META_PLATFORM_POSITIONS[pf].filter((x) => (x === pos ? on : positions[pf].includes(x))) });
+  const toggleDevice = (d: Device, on: boolean) => onDevices(META_DEVICES.filter((x) => (x === d ? on : devices.includes(x))));
+  return (
+    <Card><CardContent>
+      <Typography variant="h2" sx={{ mb: 1.5 }}>Posicionamentos</Typography>
+      <RadioGroup value={mode} onChange={(e) => onMode(e.target.value as 'auto' | 'manual')}>
+        <FormControlLabel value="auto" control={<Radio />} label="Automáticos (Advantage+): a Meta distribui os anúncios onde tiverem melhor desempenho" />
+        <FormControlLabel value="manual" control={<Radio />} label="Manuais: escolher plataformas, posições e dispositivos" />
+      </RadioGroup>
+      <Collapse in={mode === 'manual'}>
+        <Box sx={{ mt: 1.5 }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1.5, flexWrap: 'wrap' }} useFlexGap>
+            <Typography variant="overline" sx={{ mr: 1 }}>Dispositivos</Typography>
+            {META_DEVICES.map((d) => <FormControlLabel key={d} control={<Checkbox size="small" checked={devices.includes(d)} onChange={(e) => toggleDevice(d, e.target.checked)} />} label={DEVICE_LABEL[d]} />)}
+            <Box sx={{ flex: 1 }} />
+            <Button size="small" onClick={() => onPositions(allPositions())}>Marcar todos</Button>
+            <Button size="small" onClick={() => onPositions({ facebook: [], instagram: [], audience_network: [], messenger: [] })}>Desmarcar todos</Button>
+          </Stack>
+          <Grid container spacing={2}>
+            {META_PLATFORMS.map((pf) => {
+              const all = META_PLATFORM_POSITIONS[pf], sel = positions[pf];
+              return (
+                <Grid key={pf} size={{ xs: 12, sm: 6, md: 3 }}>
+                  <Card variant="outlined" sx={{ p: 1.5, height: '100%' }}>
+                    <FormControlLabel sx={{ '& .MuiFormControlLabel-label': { fontWeight: 600 } }}
+                      control={<Checkbox checked={sel.length === all.length} indeterminate={sel.length > 0 && sel.length < all.length} onChange={(e) => setPlatform(pf, e.target.checked)} />}
+                      label={`${PLATFORM_LABEL[pf]} (${sel.length}/${all.length})`} />
+                    <Stack sx={{ pl: 3 }}>
+                      {all.map((pos) => (
+                        <FormControlLabel key={pos} control={<Checkbox size="small" checked={sel.includes(pos)} onChange={(e) => togglePos(pf, pos, e.target.checked)} />}
+                          label={<Typography variant="body2">{POSITION_LABEL[pf][pos]}</Typography>} />
+                      ))}
+                    </Stack>
+                  </Card>
+                </Grid>
+              );
+            })}
+          </Grid>
+          <Typography variant="caption" component="p" sx={{ mt: 1 }}>Audience Network e Messenger exigem ao menos uma posição do Facebook. A Meta pode recusar combinações incompatíveis com o objetivo ou o formato (ex.: Coluna da direita só aparece no computador).</Typography>
+          {error && <Typography variant="caption" component="p" sx={{ color: 'warning.main', mt: 0.5 }}>{error}</Typography>}
+        </Box>
+      </Collapse>
     </CardContent></Card>
   );
 }

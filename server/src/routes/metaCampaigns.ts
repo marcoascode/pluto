@@ -16,7 +16,7 @@ import { scope } from '../auth/scope.js';
 import { CTAS, LIMITS } from '../services/metaCopies.js';
 import { advertiseProblem, getAdAccountInfo, getCustomConversion, listCustomConversions, listPixelCustomEvents, PERMISSION_HINT, toHttpError, uploadAdImage, withRateLimit } from '../services/metaGraph.js';
 import { hasSyncedAsset } from '../services/metaProfiles.js';
-import { CONVERSION_EVENTS, OBJECTIVES, OPTIMIZATION_GOALS, PLATFORMS, listRuns, loadRun, publishCampaign, type AdSpec } from '../services/metaPublish.js';
+import { CONVERSION_EVENTS, DEVICE_PLATFORMS, OBJECTIVES, OPTIMIZATION_GOALS, PLATFORMS, PLATFORM_POSITIONS, listRuns, loadRun, publishCampaign, type AdSpec } from '../services/metaPublish.js';
 import { buildMetaTrackedUrl } from '../services/utm.js';
 
 export const metaCampaignsRouter = Router();
@@ -174,7 +174,15 @@ const publishBody = z.object({
     ageMin: z.number().int().min(18).max(65).optional(),
     ageMax: z.number().int().min(18).max(65).optional(),
     genders: z.enum(['all', 'male', 'female']).optional(),
-    publisherPlatforms: z.array(z.enum(PLATFORMS)).min(1).optional(),   // omitido = posicionamentos automáticos
+    publisherPlatforms: z.array(z.enum(PLATFORMS)).min(1).optional(),   // omitido = posicionamentos automáticos (Advantage+)
+    /** Posições por plataforma (posicionamentos manuais). Plataforma ausente = todas as posições dela. */
+    positions: z.object({
+      facebook: z.array(z.enum(PLATFORM_POSITIONS.facebook)).min(1).optional(),
+      instagram: z.array(z.enum(PLATFORM_POSITIONS.instagram)).min(1).optional(),
+      audience_network: z.array(z.enum(PLATFORM_POSITIONS.audience_network)).min(1).optional(),
+      messenger: z.array(z.enum(PLATFORM_POSITIONS.messenger)).min(1).optional(),
+    }).optional(),
+    devicePlatforms: z.array(z.enum(DEVICE_PLATFORMS)).min(1).optional(),   // omitido = celular e computador
     startTime: z.string().datetime({ offset: true }).optional(),
     endTime: z.string().datetime({ offset: true }).optional(),
   }).default({}),
@@ -259,6 +267,18 @@ metaCampaignsRouter.post('/profiles/:id/campaigns/publish', async (req, res) => 
   const ageMin = b.adset.ageMin ?? s?.audience.ageMin ?? 18, ageMax = b.adset.ageMax ?? s?.audience.ageMax ?? 65;
   if (ageMin > ageMax) throw new HttpError(422, 'invalid_input', 'adset.ageMin não pode ser maior que ageMax.');
   const g = b.adset.genders ?? s?.audience.genders ?? 'all';
+  // posicionamentos manuais: posições só valem para plataformas escolhidas; Audience Network e Messenger exigem o Facebook
+  const platforms = b.adset.publisherPlatforms ? [...new Set(b.adset.publisherPlatforms)] : null;
+  const positions: Partial<Record<(typeof PLATFORMS)[number], string[]>> = {};
+  for (const [pf, pos] of Object.entries(b.adset.positions ?? {}) as [(typeof PLATFORMS)[number], string[] | undefined][]) {
+    if (!pos?.length) continue;
+    if (!platforms?.includes(pf)) throw new HttpError(422, 'invalid_input', `adset.positions.${pf}: a plataforma não está em adset.publisherPlatforms.`);
+    const uniq = [...new Set(pos)];
+    if (uniq.length < PLATFORM_POSITIONS[pf].length) positions[pf] = uniq;   // todas marcadas = deixa a Meta incluir posições novas
+  }
+  if (platforms && !platforms.includes('facebook') && platforms.some((x) => x === 'audience_network' || x === 'messenger'))
+    throw new HttpError(422, 'invalid_input', 'adset.publisherPlatforms: Audience Network e Messenger só podem ser usados junto com o Facebook.');
+  const devicePlatforms = b.adset.devicePlatforms ? [...new Set(b.adset.devicePlatforms)] : null;
   if (b.adset.startTime && b.adset.endTime && Date.parse(b.adset.endTime) <= Date.parse(b.adset.startTime)) throw new HttpError(422, 'invalid_input', 'adset.endTime precisa ser depois de startTime.');
 
   const stamp = new Date().toISOString().slice(0, 10);
@@ -283,7 +303,8 @@ metaCampaignsRouter.post('/profiles/:id/campaigns/publish', async (req, res) => 
     campaign: { name, objective, status: b.campaign.status, specialAdCategories: b.campaign.specialAdCategories },
     adset: {
       name: adsetName, dailyBudgetMinor, optimizationGoal, countries, ageMin, ageMax,
-      genders: g === 'male' ? [1] : g === 'female' ? [2] : null, publisherPlatforms: b.adset.publisherPlatforms ?? null,
+      genders: g === 'male' ? [1] : g === 'female' ? [2] : null, publisherPlatforms: platforms,
+      positions: Object.keys(positions).length ? positions : null, devicePlatforms: devicePlatforms && devicePlatforms.length < DEVICE_PLATFORMS.length ? devicePlatforms : null,
       startTime: b.adset.startTime ?? null, endTime: b.adset.endTime ?? null,
     },
     tracking: {
