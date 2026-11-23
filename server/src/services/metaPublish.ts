@@ -22,6 +22,15 @@ export const OPTIMIZATION_GOALS = ['LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'OFFSITE
 export const CONVERSION_EVENTS = ['PURCHASE', 'LEAD', 'COMPLETE_REGISTRATION', 'ADD_TO_CART', 'INITIATED_CHECKOUT', 'ADD_PAYMENT_INFO', 'ADD_TO_WISHLIST', 'CONTENT_VIEW',
   'SEARCH', 'CONTACT', 'SCHEDULE', 'START_TRIAL', 'SUBMIT_APPLICATION', 'SUBSCRIBE', 'OTHER'] as const;
 export const PLATFORMS = ['facebook', 'instagram', 'audience_network', 'messenger'] as const;
+/** Posições aceitas por plataforma (targeting.<plataforma>_positions da Graph API). */
+export const PLATFORM_POSITIONS = {
+  facebook: ['feed', 'profile_feed', 'marketplace', 'right_hand_column', 'search', 'story', 'facebook_reels', 'instream_video'],
+  instagram: ['stream', 'profile_feed', 'explore', 'explore_home', 'ig_search', 'story', 'reels'],
+  audience_network: ['classic', 'rewarded_video'],
+  messenger: ['messenger_home', 'story'],
+} as const satisfies Record<(typeof PLATFORMS)[number], readonly string[]>;
+export const DEVICE_PLATFORMS = ['mobile', 'desktop'] as const;
+export type Platform = (typeof PLATFORMS)[number];
 
 export interface AdSpec { name: string; imageHash: string; headline: string; primaryText: string; description: string; cta: string }
 
@@ -39,7 +48,11 @@ export interface PublishPlan {
   campaign: { name: string; objective: string; status: 'PAUSED' | 'ACTIVE'; specialAdCategories: string[] };
   adset: {
     name: string; dailyBudgetMinor: number; optimizationGoal: string; countries: string[]; ageMin: number; ageMax: number;
-    genders: number[] | null; publisherPlatforms: string[] | null; startTime: string | null; endTime: string | null;
+    genders: number[] | null; publisherPlatforms: string[] | null;
+    /** Só as plataformas com seleção parcial de posições; ausente = todas as posições da plataforma. */
+    positions: Partial<Record<Platform, string[]>> | null;
+    devicePlatforms: string[] | null;
+    startTime: string | null; endTime: string | null;
   };
   /** Dataset (pixel) já conferido contra a conta. */
   tracking: {
@@ -139,6 +152,8 @@ async function run(plan: PublishPlan) {
     const targeting: Record<string, unknown> = { geo_locations: { countries: a.countries }, age_min: a.ageMin, age_max: a.ageMax };
     if (a.genders) targeting.genders = a.genders;
     if (a.publisherPlatforms) targeting.publisher_platforms = a.publisherPlatforms;
+    for (const [pf, pos] of Object.entries(a.positions ?? {})) if (pos?.length) targeting[`${pf}_positions`] = pos;
+    if (a.devicePlatforms) targeting.device_platforms = a.devicePlatforms;
     const body: Record<string, unknown> = {
       name: a.name, campaign_id: campaignId, daily_budget: a.dailyBudgetMinor, billing_event: 'IMPRESSIONS', optimization_goal: a.optimizationGoal,
       bid_strategy: 'LOWEST_COST_WITHOUT_CAP', targeting, status: plan.campaign.status,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.5
+- **Criação de campanhas Meta · Etapa 3 (Configuração)**: novo bloco **Posicionamentos** do Conjunto de Anúncios. Padrão: automáticos (Advantage+). Em **Manuais**, dá para marcar/desmarcar plataformas inteiras (Facebook, Instagram, Audience Network, Messenger), cada posição (Feed, Stories, Reels, Explorar, Marketplace, Coluna da direita…) e os dispositivos (celular/computador). A seleção vai para `targeting.publisher_platforms`, `<plataforma>_positions` e `device_platforms`, é salva nas campanhas pendentes e aparece no resumo da revisão.
+- Validação no assistente e no servidor: ao menos um posicionamento e um dispositivo; Audience Network e Messenger só junto com o Facebook; posição só para plataforma escolhida.
+
 ## 0.18.4
 - **Sidebar**: a versão do painel saiu do rodapé e foi para o topo, ao lado de "Media Intelligence" (`Media Intelligence · v0.18.4`); com o menu recolhido, aparece no tooltip do logo.
 - **Criação de campanhas Meta**: Conjuntos e anúncios recebem numeração no início do nome: `(Cj.1) <campanha>` e `(Cj.1 / Ad.N) <campanha>`. A contagem de anúncios é contínua entre Conjuntos.

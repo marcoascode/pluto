@@ -598,6 +598,16 @@ export const META_CTAS = ['LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'DOWNLOAD', 'WATC
 export type MetaCta = (typeof META_CTAS)[number];
 export const META_COPY_LIMITS = { headline: 40, primaryText: 125, description: 30 } as const;
 export const META_OBJECTIVES = ['OUTCOME_TRAFFIC', 'OUTCOME_SALES', 'OUTCOME_LEADS', 'OUTCOME_ENGAGEMENT'] as const;
+/** Posicionamentos manuais do Conjunto (targeting.publisher_platforms / <plataforma>_positions / device_platforms). */
+export const META_PLATFORMS = ['facebook', 'instagram', 'audience_network', 'messenger'] as const;
+export type MetaPlatform = (typeof META_PLATFORMS)[number];
+export const META_PLATFORM_POSITIONS = {
+  facebook: ['feed', 'profile_feed', 'marketplace', 'right_hand_column', 'search', 'story', 'facebook_reels', 'instream_video'],
+  instagram: ['stream', 'profile_feed', 'explore', 'explore_home', 'ig_search', 'story', 'reels'],
+  audience_network: ['classic', 'rewarded_video'],
+  messenger: ['messenger_home', 'story'],
+} as const satisfies Record<MetaPlatform, readonly string[]>;
+export const META_DEVICES = ['mobile', 'desktop'] as const;
 export const META_OPT_GOALS = ['LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'OFFSITE_CONVERSIONS', 'IMPRESSIONS', 'REACH'] as const;
 export const META_CONVERSION_EVENTS = ['PURCHASE', 'LEAD', 'COMPLETE_REGISTRATION', 'ADD_TO_CART', 'INITIATED_CHECKOUT', 'ADD_PAYMENT_INFO', 'ADD_TO_WISHLIST', 'CONTENT_VIEW',
   'SEARCH', 'CONTACT', 'SCHEDULE', 'START_TRIAL', 'SUBMIT_APPLICATION', 'SUBSCRIBE'] as const;
@@ -638,7 +648,9 @@ export interface MetaPublishRequest {
     audience: { countries: { code: string }[]; ageMin: number; ageMax: number; genders: 'all' };
   };
   campaign: { name?: string; objective?: MetaSuggestion['objective']['value']; status: 'PAUSED' | 'ACTIVE' };
-  adset: { dailyBudget?: number; optimizationGoal?: MetaSuggestion['objective']['optimizationGoal']; countries?: string[]; ageMin?: number; ageMax?: number; genders?: 'all' | 'male' | 'female' };
+  adset: { dailyBudget?: number; optimizationGoal?: MetaSuggestion['objective']['optimizationGoal']; countries?: string[]; ageMin?: number; ageMax?: number; genders?: 'all' | 'male' | 'female';
+    /** Omitido = posicionamentos automáticos (Advantage+). */
+    publisherPlatforms?: MetaPlatform[]; positions?: Partial<Record<MetaPlatform, string[]>>; devicePlatforms?: (typeof META_DEVICES)[number][] };
   tracking: { datasetId?: string; linkDatasetToAdSet: boolean; conversionEvent?: (typeof META_CONVERSION_EVENTS)[number]; customConversionId?: string; customEventName?: string; linkPixelToAds: boolean };
   imageHashes: string[];
   copies: MetaCopy[];
