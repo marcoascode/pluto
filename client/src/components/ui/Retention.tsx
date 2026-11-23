@@ -29,7 +29,7 @@ export function RetentionLine({ m, compact }: { m: Metrics; compact?: boolean })
         aria-label="Ver receita de retenção por canal"
         sx={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center', mt: compact ? 0.75 : 1.25, px: 1, py: 0.6, borderRadius: 1.5, bgcolor: alpha(p.accent, 0.08), '&:hover': { bgcolor: alpha(p.accent, 0.16) } }}>
         <Typography component="span" sx={{ fontSize: 12.5, fontWeight: 600, color: p.accent, textDecoration: 'underline dotted', textUnderlineOffset: 3 }}>Retenção{share != null ? ` · ${share}%` : ''}</Typography>
-        <Typography component="span" sx={{ fontSize: 13, fontWeight: 600 }}><Money v={total} /></Typography>
+        <Typography component="span" sx={{ fontSize: 13, fontWeight: 600 }}><Money v={total} cur="USD" /></Typography>
       </ButtonBase>
       <Popover open={!!el} anchorEl={el} onClose={(e: object) => { (e as MouseEvent).stopPropagation?.(); setEl(null); }} onClick={stop}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }} transformOrigin={{ vertical: 'top', horizontal: 'left' }}>
@@ -39,7 +39,7 @@ export function RetentionLine({ m, compact }: { m: Metrics; compact?: boolean })
             <Stack key={l} direction="row" spacing={1} sx={{ alignItems: 'center', py: 0.5 }}>
               <Box sx={{ color: c, display: 'flex', width: 16 }}>{icon}</Box>
               <Typography sx={{ fontSize: 13, flex: 1 }}>{l}</Typography>
-              <Typography sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}><Money v={v} /></Typography>
+              <Typography sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}><Money v={v} cur="USD" /></Typography>
               <Typography variant="caption" sx={{ width: 38, textAlign: 'right' }}>{total ? `${Math.round((v / total) * 100)}%` : ''}</Typography>
             </Stack>
           ))}

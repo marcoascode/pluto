@@ -19,9 +19,9 @@ export function AttributionStrip({ m }: { m: Metrics }) {
   return (
     <Card>
       <Stack direction="row" sx={{ flexWrap: 'wrap', alignItems: 'center' }} >
-        {cell('Revenue total', <Money v={m.revenue} />)}
-        {cell('Atribuída', <Money v={m.attributedRevenue} />, p.pos)}
-        {cell('Não atribuída', <Money v={m.unattributedRevenue} />, p.warn)}
+        {cell('Revenue total', <Money v={m.revenue} cur="USD" />)}
+        {cell('Atribuída', <Money v={m.attributedRevenue} cur="USD" />, p.pos)}
+        {cell('Não atribuída', <Money v={m.unattributedRevenue} cur="USD" />, p.warn)}
         <Box sx={{ px: 2.25, py: 1.5, width: { xs: '50%', md: 'auto' } }}>
           <Typography variant="caption">Attribution Rate</Typography>
           <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 17 }}>{pct(r)}</Typography>

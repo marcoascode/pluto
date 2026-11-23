@@ -9,7 +9,7 @@ import TrendingUpRoundedIcon from '@mui/icons-material/TrendingUpRounded';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useFilters } from '@/context/FiltersContext';
-import { useFinanceCosts, useFinanceMutation } from '@/hooks/queries';
+import { FINANCE_CURRENCY, useFinanceCosts, useFinanceMutation } from '@/hooks/queries';
 import { financeApi } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton } from '@/components/ui/States';
@@ -24,7 +24,7 @@ const NOW = todayISO().slice(0, 7);
 /** Finance → Custos: custos fixos e avulsos lançados à mão (ferramentas, domínios, hospedagem, equipe…). Entram no fechamento e no caixa. */
 export default function CostsPage() {
   const { pluto: p } = useTheme();
-  const { currency } = useFilters();
+  const currency = FINANCE_CURRENCY;
   const [month, setMonth] = useState(NOW);
   const [onlyMonth, setOnlyMonth] = useState(true);
   const [edit, setEdit] = useState<FinanceCost | 'new' | null>(null);

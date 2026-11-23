@@ -27,8 +27,8 @@ export function DomainCard({ d, rank, rankLabel }: { d: DomainSummary; rank?: nu
           <RoiChip v={m.roi} />
         </Stack>
         <Grid container spacing={1.25} sx={{ mt: 1.25 }}>
-          {stat('Receita', <Money v={m.revenue} />)}{stat('Despesas', <Money v={m.spend} />)}{stat('ROI', <Profit v={m.profit} />)}
-          {stat('ROI %', <RoiText v={m.roi} />)}{stat('Margem', pct(m.margin))}{stat('eCPM', <Money v={m.ecpm} />)}
+          {stat('Receita', <Money v={m.revenue} cur="USD" />)}{stat('Despesas', <Money v={m.spend} cur="BRL" />)}{stat('ROI', <Profit v={m.profit} />)}
+          {stat('ROI %', <RoiText v={m.roi} />)}{stat('Margem', pct(m.margin))}{stat('eCPM', <Money v={m.ecpm} cur="USD" />)}
         </Grid>
         <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mt: 1.5 }}>
           <Typography variant="caption" sx={{ width: 56 }}>ROI</Typography>

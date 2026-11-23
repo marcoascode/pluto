@@ -46,12 +46,16 @@ function quantile(sorted: number[], p: number) {
 
 export async function suggestCampaign(o: { domainId: string; hostname: string; filter: RowFilter | null; days: number }): Promise<CampaignSuggestion> {
   const to = today(), from = addDays(to, -(o.days - 1));
-  const base = { from, to, domainIds: [o.domainId], filter: o.filter, currency: 'USD' as const, where: `m.platform = 'meta' AND m.campaign_id IS NOT NULL` };
-  const [byCampaign, byCountry, byCampaignDay] = await Promise.all([
+  const base = { from, to, domainIds: [o.domainId], filter: o.filter, where: `m.platform = 'meta' AND m.campaign_id IS NOT NULL` };
+  // 0.18.6: o custo vem em BRL; a sugestão trabalha em USD (orçamento e faixas), então converte o gasto pela cotação atual.
+  // ROI % e lucro (sinal) continuam os do relatório.
+  const brlRate = (await fx.latest().catch(() => null))?.rates.BRL ?? null;
+  const toUsd = (mp: Map<string, Metrics>) => new Map([...mp].map(([k, m]) => [k, { ...m, spend: brlRate ? m.spend / Number(brlRate) : m.spend }]));
+  const [byCampaign, byCountry, byCampaignDay] = (await Promise.all([
     aggregate({ ...base, groupBy: 'm.campaign_id' }),
     aggregate({ ...base, groupBy: 'm.country' }),
     aggregate({ ...base, groupBy: `(m.campaign_id::text || '|' || m.date::text)` }),
-  ]);
+  ])).map(toUsd);
 
   const warnings: string[] = [];
   const camps = [...byCampaign.entries()].map(([id, m]) => ({ id, m })).filter((c) => n(c.m.spend) >= MIN_SPEND_USD);
@@ -75,7 +79,6 @@ export async function suggestCampaign(o: { domainId: string; hostname: string; f
 
   // orçamento diário: mediana do gasto diário das vencedoras (dias com gasto), faixa p25–p75
   const days = winners.flatMap((c) => dailySpend(c.id)).sort((a, b) => a - b);
-  const brlRate = (await fx.latest().catch(() => null))?.rates.BRL ?? null;
   const med = days.length ? r2(quantile(days, 0.5)) : null;
   const dailyBudget = {
     usd: med, brl: med != null && brlRate ? r2(med * Number(brlRate)) : null,

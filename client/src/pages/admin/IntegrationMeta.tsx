@@ -15,9 +15,10 @@ export default function IntegrationMetaPage() {
     <>
       <PageHead title="Integração · Meta Ads" sub="Conecte o Business Manager via OAuth." right={<ConnectButton onClick={() => connect('meta')}>Conectar Meta</ConnectButton>} />
       <Card><CardContent><Grid container spacing={1.5}>{[['Business', m.business], ['Usuário', m.user], ['Contas de anúncio', String(m.accounts.length)], ['Última sincronização', relTime(m.lastSyncAt)]].map(([l, v]) => <Grid key={l} size={{ xs: 6, md: 3 }}><Stat label={l}>{v}</Stat></Grid>)}</Grid></CardContent></Card>
-      <UnmappedCampaignsCard platform="meta" />
       <AccountsCard provider="meta" title="Contas de anúncio" />
-      <SyncPanel provider="meta" />{snack}
+      <SyncPanel provider="meta" />
+      {/* 0.18.6: "Campanhas sem domínio" no fim da página, abaixo de Sincronização */}
+      <UnmappedCampaignsCard platform="meta" />{snack}
     </>
   );
 }

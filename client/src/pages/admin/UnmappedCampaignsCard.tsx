@@ -51,7 +51,7 @@ export function UnmappedCampaignsCard({ platform = 'meta' }: { platform?: Platfo
   return (
     <Card sx={{ mt: 1.75, borderColor: 'warning.main' }}>
       <CardHeader title={<Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><span>Campanhas sem domínio</span><Tag tone="warn">{list.length}</Tag></Stack>}
-        subheader={`${money(data.totals.spend, 'USD')} de custo (com IVA) nos últimos ${data.days} dias está em "Sem domínio": entra no total, mas em nenhum site. Defina o domínio de cada campanha; o histórico é movido e a janela é ressincronizada.`} />
+        subheader={`${money(data.totals.spend, 'BRL')} de custo (com IVA) nos últimos ${data.days} dias está em "Sem domínio": entra no total, mas em nenhum site. Defina o domínio de cada campanha; o histórico é movido e a janela é ressincronizada.`} />
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} sx={{ px: 2, pb: 1.5, alignItems: { sm: 'center' } }}>
         <TextField size="small" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome ou ID da campanha" sx={{ flex: 1, maxWidth: { sm: 380 } }}
           slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }, htmlInput: { 'aria-label': 'Buscar campanha por nome ou ID' } }} />
@@ -60,7 +60,7 @@ export function UnmappedCampaignsCard({ platform = 'meta' }: { platform?: Platfo
           <MenuItem value="">Todas as contas ({list.length})</MenuItem>
           {accounts.map((a) => <MenuItem key={a.id} value={a.id}>{a.name} ({a.n})</MenuItem>)}
         </TextField>
-        {filtering && <Typography variant="caption" sx={{ ml: { sm: 'auto' } }}>{filtered.length} de {list.length} campanhas · {money(filteredSpend, 'USD')}</Typography>}
+        {filtering && <Typography variant="caption" sx={{ ml: { sm: 'auto' } }}>{filtered.length} de {list.length} campanhas · {money(filteredSpend, 'BRL')}</Typography>}
       </Stack>
       <TableContainer><Table>
         <TableHead><TableRow>{['Campanha', 'Conta', 'Custo', 'Cliques', 'Período', 'Domínio'].map((h) => <TableCell key={h} align={['Custo', 'Cliques'].includes(h) ? 'right' : 'left'}>{h}</TableCell>)}</TableRow></TableHead>
@@ -69,7 +69,7 @@ export function UnmappedCampaignsCard({ platform = 'meta' }: { platform?: Platfo
             <TableRow key={c.id}>
               <TableCell sx={{ whiteSpace: 'normal', minWidth: 220 }}><b>{c.name}</b><Typography variant="caption" component="div" sx={{ fontFamily: 'IBM Plex Mono' }}>{c.id}{c.status !== 'ENABLED' ? ' · Pausada' : ''}</Typography></TableCell>
               <TableCell>{c.accountName}</TableCell>
-              <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{c.spend ? money(c.spend, 'USD') : '—'}</TableCell>
+              <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{c.spend ? money(c.spend, 'BRL') : '—'}</TableCell>
               <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{c.rows ? int(c.clicks) : '—'}</TableCell>
               <TableCell>{c.firstDate && c.lastDate ? `${ddmm(c.firstDate)} – ${ddmm(c.lastDate)}` : 'sem custo ainda'}</TableCell>
               <TableCell><CampaignDomainSelect id={c.id} platform={c.platform} name={c.name} onSaved={setSaved} /></TableCell>

@@ -5,7 +5,7 @@
 import { ApiError } from '@/lib/api/client';
 import type * as T from '@/types/api';
 import { addDays, lastMonths } from '@/lib/period';
-import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, originOf, TECH, type Row } from './db';
+import { agg, CAMPS, COMPANIES, CT, DATES, DAYS, DOMAINS, FX, FXD, GACC, MACC, ROWS, SQUADS, TODAY, UNKNOWN_DOMAIN, USERS, accName, dayIndex, discountAt, FX_LOCKS, originOf, TECH, type Row } from './db';
 import { PL_LABEL, placementRows, typeOf, type PRow } from './placements';
 import { financeCosts, financeMutate, financeOverview } from './finance';
 import { linksMock, setWpPassword, wpPasswordOf } from './links';
@@ -278,7 +278,10 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path === '/reports/monthly') {
     const n = Math.min(Math.max(1, Number(q.months) || 12), 36); const rows = rowsFor(u, q, undefined, [0, DAYS - 1]); const g = group(rows, (r) => DATES[r.di].slice(0, 7));
     const months = lastMonths(n, TODAY); const keep = rows.filter((r) => months.includes(DATES[r.di].slice(0, 7)));
-    return out<T.MonthlyReportResponse>({ total: agg(keep, cur), months: months.map((mk, i) => ({ key: mk, partial: i === 0 || addDays(TODAY, -3).slice(0, 7) === mk, metrics: agg(g.get(mk) ?? [], cur) })) });
+    const current = Math.max(0.0001, (FX.BRL[0] ?? 5) - discountAt(0));
+    return out<T.MonthlyReportResponse>({ total: agg(keep, cur), currentRate: current, canLock: u.role === 'admin' || u.role === 'superadmin',
+      months: months.map((mk, i) => { const l = FX_LOCKS.get(mk); return { key: mk, partial: i === 0 || addDays(TODAY, -3).slice(0, 7) === mk, metrics: agg(g.get(mk) ?? [], cur),
+        fx: { rate: l?.rate ?? current, locked: !!l, note: l?.note ?? null, lockedAt: l?.createdAt ?? null, lockedBy: l ? u.name : null } }; }) });
   }
   if (path === '/gam/summary') { need(u, 'gam.view'); const rows = rowsFor(u, q); return out<T.GamSummaryResponse>({ network: { name: 'Minha Rede GAM', code: '12345678', currency: 'USD' }, metrics: agg(rows, cur), domains: [...group(rows.filter((r) => DOMAINS.find((d) => d.hostname === r.domain)), (r) => r.domain)].map(([d, rs]) => ({ domain: d, metrics: agg(rs, cur) })) }); }
   if (path === '/attribution/health') {
@@ -329,6 +332,24 @@ export async function mockRequest<R>(method: string, path: string, query: Record
     if (b.enabled !== undefined) st.enabled = !!b.enabled;
     st.nextRunAt = st.enabled ? new Date(Date.parse(st.lastRunAt ?? new Date().toISOString()) + st.everyMinutes * 60000).toISOString() : null; return out(st); }
   if (path === '/admin/fx/refresh') { FX.BRL[0] = +(FX.BRL[0] + (Math.random() - 0.5) * 0.01).toFixed(4); return out<T.FxLatest>(fxLatest('Frankfurter (mock)', 0)); }
+  if (path.startsWith('/admin/reports/')) {
+    // 0.18.6 · modo mock: lista as contas; as métricas vêm zeradas (o painel real soma daily_metrics por conta)
+    const [, , , prov, sub] = path.split('/') as [string, string, string, T.AdminReportPlatform, string | undefined];
+    const accounts = ACCTS.filter((a) => a.provider === prov).map((a) => ({ id: a.id, name: a.name, externalId: a.externalId, currency: a.currency, imported: a.imported, status: a.status }));
+    const currency = prov === 'gam' ? 'USD' : 'BRL';
+    if (sub === 'accounts') return out<T.AdminReportAccountsResponse>({ platform: prov, currency, accounts });
+    const mode = q.mode === 'account' ? 'account' : 'period';
+    const ids = mode === 'account' ? String(q.accounts ?? '').split(',') : accounts.map((x) => x.id);
+    const sel = accounts.filter((x) => ids.includes(x.id));
+    return out<T.AdminReportResponse>({ platform: prov, mode, from: String(q.from), to: String(q.to), currency, accounts: sel, total: {},
+      rows: mode === 'period' ? sel.map((x) => ({ date: null, accountId: x.id, accountName: x.name, externalId: x.externalId, metrics: {} })) : [] });
+  }
+  if (path.startsWith('/admin/fx-locks/')) {
+    const mk = path.split('/').pop()!;
+    if (method === 'PUT') FX_LOCKS.set(mk, { rate: Number(b.rate), note: (b.note as string) ?? null, createdAt: new Date().toISOString() });
+    if (method === 'DELETE') FX_LOCKS.delete(mk);
+    return out({ locks: [...FX_LOCKS].map(([month, l]) => ({ month, rate: l.rate, note: l.note, createdAt: l.createdAt, createdBy: u.name })) });
+  }
   if (path === '/admin/fx-discount') {
     if (method === 'PUT') { const amount = Number(b.amount); if (!(amount >= 0 && amount < 5)) throw new ApiError(422, 'invalid_input', 'Deságio entre R$ 0 e R$ 4,9999.'); const from = b.validFrom ?? (FXD.length ? TODAY : '2000-01-01'); const ex = FXD.find((x) => x.validFrom === from); if (ex) { ex.amount = amount; ex.createdBy = u.name; } else FXD.push({ validFrom: from, amount, createdAt: new Date().toISOString(), createdBy: u.name }); }
     const curD = FXD.filter((x) => x.validFrom <= TODAY).sort((a2, b2) => b2.validFrom.localeCompare(a2.validFrom))[0];

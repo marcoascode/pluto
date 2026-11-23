@@ -31,7 +31,8 @@ export function AppShell() {
   if (!loading && user?.mustChangePassword) return <Navigate to="/login?change=1" replace />;
   const w = mobile ? 0 : prefs.sideMini ? MINI : FULL;
   const paper = { width: mobile ? 272 : w, bgcolor: theme.pluto.side, backgroundImage: 'linear-gradient(180deg,#0d1b36,#0b172f)', borderRight: `1px solid ${theme.pluto.line}`, transition: 'width .18s', overflowX: 'hidden' };
-  const showFilters = !(pathname.startsWith('/admin') && pathname !== '/admin/moedas');
+  // Administração → Relatórios (0.18.6) usa a Data do topo
+  const showFilters = !(pathname.startsWith('/admin') && pathname !== '/admin/moedas' && !pathname.startsWith('/admin/relatorios'));
   const tab = TABS.findIndex((t) => isActive(pathname, t.to));
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>

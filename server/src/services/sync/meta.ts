@@ -4,7 +4,7 @@
  *               e o url_tags do criativo ("Parâmetros de URL"), auditado em Admin → UTMs (routes/admin/utmAudit.ts)
  *  - métricas:  /act_{id}/insights level=ad, time_increment=1, breakdowns=country,
  *               em blocos de até 3 dias (CHUNKING, ver chunkWindow/fetchInsightsChunked)
- * Custo vai para USD pela taxa do dia; IVA = custo × alíquota (app_settings.meta_iva_rate, 13,83%).
+ * Custo fica em BRL (moeda da conta; outra moeda é convertida para BRL pela taxa do dia); IVA = custo × alíquota (app_settings.meta_iva_rate, 13,83%).
  * Limite de uso da Meta: pausa 60 s e repete (metaGet). Consulta pesada: bloco → dias soltos → página menor (paginate).
  * Domínio de cada linha: manual → criativo → campanha → domínio único da conta (resolveDomain). Sem nenhum: domínio
  * técnico "Sem domínio" (só Admin vê) + aviso na conta.
@@ -14,7 +14,7 @@ import { config } from '../../config.js';
 import { q } from '../../db.js';
 import { addDays } from '../../lib/dates.js';
 import { loadTimeline, siteForDay } from '../accountLinks.js';
-import { accountDomains, domainResolver, technicalDomainId, emptyFact, fxToUsd, metaIvaRate, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
+import { accountDomains, domainResolver, technicalDomainId, emptyFact, fxToBrl, metaIvaRate, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
 import { isMetaRateLimit, isMetaTooMuchData, requestJson, sleep, SyncError } from './http.js';
 import { metaAccessToken } from './tokens.js';
 import type { JobResult } from './index.js';
@@ -200,7 +200,7 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
   let skippedInactive = 0;
   if (!accs.length) return { status: 'skipped', message: 'nenhuma conta Meta marcada para importar' };
   const dom = await domainResolver();
-  const toUsd = kind === 'metrics' ? await fxToUsd(w.from, w.to) : null;
+  const toBrl = kind === 'metrics' ? await fxToBrl(w.from, w.to) : null;
   const iva = await metaIvaRate();
   const url = urlCache();
   const tech = kind === 'metrics' ? await technicalDomainId() : null;
@@ -222,7 +222,7 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
       // ---- métricas em blocos de até 3 dias (chunking) ----
       const { rows, chunks } = await fetchInsightsChunked(acc, token, w);
       const facts: Fact[] = [];
-      const lost = { rows: 0, spendUsd: 0, clicks: 0, impressions: 0, campaigns: new Map<string, number>() };
+      const lost = { rows: 0, spendBrl: 0, clicks: 0, impressions: 0, campaigns: new Map<string, number>() };
       for (const r of rows) {
         // anúncio novo que a estrutura ainda não viu (ex.: criado agora)
         let c = st.camps.get(r.campaign_id);
@@ -231,7 +231,7 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
         if (!g) { g = await upsertAdGroup(c.id, r.adset_id, r.adset_name); st.groups.set(r.adset_id, g); }
         let a = st.ads.get(r.ad_id);
         if (!a) { a = { id: await upsertAd(g, r.ad_id, r.ad_name), path: null, domainId: null }; st.ads.set(r.ad_id, a); }
-        const spendUsd = toUsd!(Number(r.spend ?? 0), acc.currency, r.date_start);
+        const spendBrl = toBrl!(Number(r.spend ?? 0), acc.currency, r.date_start);
         const clicks = Number(r.inline_link_clicks ?? r.clicks ?? 0);
         // manual → criativo → campanha → domínio único da conta (ver resolveDomain)
         const found = st.resolveDomain(a, c);
@@ -239,14 +239,14 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
         if (!resolved) {
           // sem domínio identificável (ex.: campanha de mensagens/chatbot): grava no domínio técnico "Sem domínio"
           // para o custo e o IVA não sumirem, e soma para o aviso da conta
-          lost.rows++; lost.spendUsd += spendUsd; lost.clicks += clicks; lost.impressions += Number(r.impressions ?? 0);
-          lost.campaigns.set(r.campaign_name, (lost.campaigns.get(r.campaign_name) ?? 0) + spendUsd);
+          lost.rows++; lost.spendBrl += spendBrl; lost.clicks += clicks; lost.impressions += Number(r.impressions ?? 0);
+          lost.campaigns.set(r.campaign_name, (lost.campaigns.get(r.campaign_name) ?? 0) + spendBrl);
         }
         const domainId = resolved ?? tech!;
         facts.push(emptyFact({
           date: r.date_start, domainId, urlId: resolved && a.domainId === resolved ? await url(resolved, a.path) : null, platform: 'meta',
           campaignId: c.id, adGroupId: g, adId: a.id, country: (r.country ?? 'ZZ').toUpperCase(),
-          spendUsd, ivaUsd: spendUsd * iva, trafficImpressions: Number(r.impressions ?? 0), trafficClicks: clicks,
+          spendBrl, ivaBrl: spendBrl * iva, trafficImpressions: Number(r.impressions ?? 0), trafficClicks: clicks,
           metaLinkClicks: action(r, META_ACTIONS.linkClicks), metaResults: action(r, META_ACTIONS.results), metaLeads: action(r, META_ACTIONS.leads),
         }));
       }
@@ -276,11 +276,11 @@ export async function runMeta(kind: 'structure' | 'metrics', w: { from: string; 
   return { status: 'success', message: `${ok}/${accs.length - skippedInactive} contas · ${kind === 'structure' ? 'estrutura atualizada' : rowsTotal + ' linhas'}${notes.length ? ' · ' + notes.join(' · ') : ''}`.slice(0, 500) };
 }
 
-const usd = (n: number) => `US$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const brl = (n: number) => `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 /** Aviso da conta: quanto ficou de fora e em quais campanhas (as 3 de maior custo). */
-function lostMessage(l: { rows: number; spendUsd: number; clicks: number; campaigns: Map<string, number> }) {
+function lostMessage(l: { rows: number; spendBrl: number; clicks: number; campaigns: Map<string, number> }) {
   const top = [...l.campaigns].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n);
   const more = l.campaigns.size > 3 ? ` e mais ${l.campaigns.size - 3}` : '';
-  return `${l.rows} linhas sem domínio gravadas em "Sem domínio" (${usd(l.spendUsd)} de custo · ${l.clicks} cliques) em ${top.join(', ')}${more}. `
+  return `${l.rows} linhas sem domínio gravadas em "Sem domínio" (${brl(l.spendBrl)} de custo · ${l.clicks} cliques) em ${top.join(', ')}${more}. `
     + 'Defina o domínio dessas campanhas em Integrações → Meta Ads ("Campanhas sem domínio") ou na tela Meta Ads';
 }

@@ -41,12 +41,12 @@ type Kind = 'money' | 'money3' | 'profit' | 'chip' | 'pct' | 'pct0' | 'pct2' | '
 /** label = cabeçalho da coluna · hint = explicação curta no seletor. */
 export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind; hint?: string }> = {
   // Resultados
-  revenue: { label: 'Receita', kind: 'money', hint: 'Ad Manager, já sem o revShare do domínio' },
-  spend: { label: 'Despesas', kind: 'money', hint: 'Google Ads + Meta Ads + IVA' },
+  revenue: { label: 'Receita', kind: 'money', hint: 'Ad Manager, já sem o revShare do domínio (US$)' },
+  spend: { label: 'Despesas', kind: 'money', hint: 'Google Ads + Meta Ads + IVA (R$)' },
   iva: { label: 'IVA', kind: 'money', hint: '13,83% sobre o custo da Meta' },
-  profit: { label: 'ROI', kind: 'profit', hint: 'Receita − (Google Ads + Meta Ads + IVA)' },
-  roi: { label: 'ROI %', kind: 'chip', hint: '(Receita − Despesas) ÷ Despesas' },
-  margin: { label: 'Margem', kind: 'pct', hint: 'ROI ÷ Receita' },
+  profit: { label: 'ROI', kind: 'profit', hint: 'Receita (US$) × cotação USD/BRL − Despesas (R$)' },
+  roi: { label: 'ROI %', kind: 'chip', hint: 'ROI (R$) ÷ Despesas' },
+  margin: { label: 'Margem', kind: 'pct', hint: 'ROI ÷ Receita em R$' },
   unattributedRevenue: { label: 'RNA', kind: 'money', hint: 'Receita não atribuída a campanha' },
   attributionRate: { label: 'Atribuição', kind: 'pct', hint: 'Receita atribuída ÷ Receita' },
   // Despesas
@@ -152,9 +152,19 @@ export function metricValue(m: Metrics, roiDays: RoiDays | undefined, k: MetricK
   return (m as unknown as Record<string, number | null>)[k] ?? null;
 }
 
+/**
+ * Moeda fixa de cada métrica de dinheiro (0.18.6): sem conversão nos relatórios.
+ * Receita do Ad Manager e o que deriva dela em USD · despesas, ROI (R$) e custos por ação em BRL.
+ */
+export const REVENUE_CUR: Currency = 'USD';
+export const COST_CUR: Currency = 'BRL';
+const USD_KEYS = new Set<MetricKey>(['revenue', 'unattributedRevenue', 'rps', 'sessionRpm', 'ecpm', 'cpcAdx', 'retentionRevenue', 'pushRevenue', 'whatsappRevenue']);
+export const metricCurrency = (k: MetricKey): Currency => (USD_KEYS.has(k) ? REVENUE_CUR : COST_CUR);
+
 /** Formata como texto simples (para células sem cor). Chips e profit colorido ficam nos componentes. */
-export function formatMetric(k: MetricKey, v: number | null, cur: Currency): string {
+export function formatMetric(k: MetricKey, v: number | null): string {
   const kind = METRIC_DEFS[k].kind;
+  const cur = metricCurrency(k);
   if (kind === 'money' || kind === 'profit') return money(v, cur);
   if (kind === 'money3') return money(v, cur, 3);
   if (kind === 'pct0') return pct0(v);

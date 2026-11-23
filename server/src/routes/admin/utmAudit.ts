@@ -25,7 +25,7 @@ utmAuditRouter.get('/utm-audit/meta', async (req, res) => {
   const rows = await q<{ id: string; name: string; status: string | null; link: string | null; urlTags: string | null; adset: string; campaignId: string; campaignName: string;
     accountId: string; accountName: string; managers: string | null; domain: string | null; spend: number }>(`
     WITH s AS (
-      SELECT m.ad_id, sum(m.spend_usd + m.iva_usd)::float AS spend
+      SELECT m.ad_id, sum(m.spend_brl + m.iva_brl)::float AS spend
         FROM daily_metrics m WHERE m.source = 'meta' AND m.date >= $2 AND m.ad_id IS NOT NULL GROUP BY m.ad_id),
     mg AS (
       SELECT ma.account_id, string_agg(DISTINCT u.name, ', ' ORDER BY u.name) AS names

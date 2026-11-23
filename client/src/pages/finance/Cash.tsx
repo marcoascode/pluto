@@ -14,7 +14,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useFilters } from '@/context/FiltersContext';
-import { useFinanceMutation } from '@/hooks/queries';
+import { FINANCE_CURRENCY, useFinanceMutation } from '@/hooks/queries';
 import { ApiError } from '@/lib/api/client';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton } from '@/components/ui/States';
 import { money, pct0 } from '@/lib/format';
@@ -38,7 +38,8 @@ const PRESETS: { key: string; label: string; from: (now: string) => string }[] =
 
 /** Caixa + fechamento. Chave ['finance', …]: salvar um custo ou um lançamento atualiza esta tela. */
 function useCash(from: string, to: string) {
-  const { company, currency } = useFilters();
+  const { company } = useFilters();
+  const currency = FINANCE_CURRENCY;
   const q = { company: company || undefined, from, to, currency };
   return useQuery({ queryKey: ['finance', 'cash', q], queryFn: () => cashApi.overview(q), placeholderData: keepPreviousData, staleTime: 60_000 });
 }
@@ -48,7 +49,6 @@ function useCash(from: string, to: string) {
  * os custos da aba Custos entram sozinhos no dia do pagamento. Nada vem do sync das campanhas.
  */
 export default function CashPage() {
-  const f = useFilters();
   const [preset, setPreset] = useState('2');
   const [range, setRange] = useState({ from: shiftMonth(NOW, -1), to: NOW });
   const { data, error, refetch } = useCash(range.from, range.to);
@@ -62,7 +62,7 @@ export default function CashPage() {
   const add = (kind: EntryKind) => setEdit({ kind });
   return (
     <>
-      <PageHead title="Caixa Empresa" sub={`${coName ?? 'Todas as Empresas'} · valores em ${f.currency} · lançamentos manuais`}
+      <PageHead title="Caixa Empresa" sub={`${coName ?? 'Todas as Empresas'} · valores em ${FINANCE_CURRENCY} · lançamentos manuais`}
         right={data.companies.length > 0 && (
           <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <Button size="small" variant="contained" color="success" startIcon={<AddCircleOutlineRoundedIcon />} onClick={() => add('income')}>Receita recebida</Button>
@@ -150,7 +150,7 @@ function MonthSelect({ label, value, onChange, max }: { label: string; value: st
 /** Caixa de hoje com a conta que leva até ele. */
 function CashCard({ data, onBalance }: { data: CashOverview; onBalance: () => void }) {
   const { pluto: p } = useTheme();
-  const { currency } = useFilters();
+  const currency = FINANCE_CURRENCY;
   const cos = data.cash.companies;
   const one = cos.length === 1 ? cos[0] : null;
   const total = data.cash.total ?? 0;
@@ -204,7 +204,7 @@ function CashCard({ data, onBalance }: { data: CashOverview; onBalance: () => vo
 /** Mês atual até hoje, comparado com o resultado do mês anterior. */
 function MonthNow({ m, prev }: { m: CashMonth | null; prev: CashMonth | null }) {
   const { pluto: p } = useTheme();
-  const { currency } = useFilters();
+  const currency = FINANCE_CURRENCY;
   if (!m) return <Card sx={{ p: 2.25, height: '100%' }}><Typography variant="overline">Este mês</Typography><Typography variant="body2" color="text.secondary">Inclua o mês atual no período para ver o parcial.</Typography></Card>;
   const items: [string, number, string][] = [['Receitas recebidas', m.income, p.pos], ['Gastos pagos', -m.expenses, p.spend], ['Custos fixos', -m.costs, p.warn]];
   const max = Math.max(m.income, m.expenses, m.costs, 1);
@@ -236,7 +236,7 @@ function MonthNow({ m, prev }: { m: CashMonth | null; prev: CashMonth | null }) 
 /** Linha automática do custo fixo no caixa (vem da aba Custos; edita-se lá). */
 function CostLine({ c, showCo, coName }: { c: CostItem; showCo: boolean; coName?: string }) {
   const { pluto: p } = useTheme();
-  const { currency } = useFilters();
+  const currency = FINANCE_CURRENCY;
   const tone = CATEGORY[c.category]?.color ?? p.warn;
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 0.5, borderBottom: `1px dashed ${p.line}`, opacity: c.paid ? 1 : 0.6 }}>
@@ -263,7 +263,7 @@ const signed = (e: CashEntry, cur: Currency) => `${KIND[e.kind].sign === '=' ? '
 /** Fechamento: um mês por linha; abre os lançamentos do mês e os custos fixos por categoria. */
 function CloseTable({ data, onEdit, onAttach }: { data: CashOverview; onEdit: (e: CashEntry) => void; onAttach: (e: CashEntry) => void }) {
   const { pluto: p } = useTheme();
-  const { currency } = useFilters();
+  const currency = FINANCE_CURRENCY;
   const [open, setOpen] = useState<Set<string>>(new Set([NOW]));
   const months = data.months.slice().reverse();
   const cos = new Map(data.companies.map((c) => [c.id, c.name]));
@@ -384,7 +384,7 @@ const FILTERS: { key: Filter; label: string; kinds: EntryKind[] }[] = [
 /** Todos os lançamentos manuais (últimos 50 por Empresa), com filtro, editar e excluir. */
 function Entries({ data, onEdit, onAttach }: { data: CashOverview; onEdit: (e: CashEntry) => void; onAttach: (e: CashEntry) => void }) {
   const { pluto: p } = useTheme();
-  const { currency } = useFilters();
+  const currency = FINANCE_CURRENCY;
   const [filter, setFilter] = useState<Filter>('all');
   const [del, setDel] = useState<CashEntry | null>(null);
   const remove = useFinanceMutation(cashApi.remove);
@@ -460,11 +460,10 @@ const parseMoney = (s: string) => Number(s.trim().replace(/\s/g, '').replace(/\.
 /** Lançar ou editar: receita recebida, gasto pago, aporte, retirada ou saldo conferido.
  *  0.15: receita/gasto novo pode ser dividido em vários sites (um lançamento por site, salvos juntos). */
 function EntryDialog({ initialKind, entry, data, onClose }: { initialKind: EntryKind; entry?: CashEntry; data: CashOverview; onClose: () => void }) {
-  const { currency } = useFilters();
   const { pluto: p } = useTheme();
   const [f, setF] = useState<CashEntryInput>(entry
     ? { id: entry.id, companyId: entry.companyId, date: entry.date, kind: entry.kind, category: entry.category, amount: entry.amount, currency: entry.currency, note: entry.note ?? '', site: entry.site ?? '', competence: entry.competence ?? null }
-    : { companyId: data.selected ?? data.companies[0]?.id ?? '', date: todayISO(), kind: initialKind, category: initialKind === 'income' ? 'adx' : initialKind === 'expense' ? 'google_ads' : null, amount: 0, currency: currency === 'EUR' ? 'EUR' : 'BRL', note: '', site: '',
+    : { companyId: data.selected ?? data.companies[0]?.id ?? '', date: todayISO(), kind: initialKind, category: initialKind === 'income' ? 'adx' : initialKind === 'expense' ? 'google_ads' : null, amount: 0, currency: 'BRL', note: '', site: '',
         // receita do AdX costuma cair no mês seguinte: já sugere "referente ao mês passado"
         competence: initialKind === 'income' ? shiftMonth(todayISO().slice(0, 7), -1) : null });
   const sitesQ = useQuery({ queryKey: ['finance', 'sites'], queryFn: () => sitesApi.list({}) });

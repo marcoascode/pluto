@@ -14,7 +14,7 @@ type K = 'name' | 'spend' | 'revenue' | 'profit' | 'roi' | 'ecpm';
 export function CountryDrawer({ c, onClose }: { c: CampaignRow; onClose: () => void }) {
   const theme = useTheme(); const p = theme.pluto;
   const mobile = useMediaQuery(theme.breakpoints.down('md'));
-  const { from, to, currency } = useFilters();
+  const { from, to } = useFilters();
   const { data, error, refetch } = useCampaignCountries(c.platform, c.id);
   const [sort, setSort] = useState<{ k: K; d: 'asc' | 'desc' }>({ k: 'profit', d: 'desc' });
   const rows = useMemo(() => (data?.countries ?? []).slice().sort((a, b) => {
@@ -39,21 +39,21 @@ export function CountryDrawer({ c, onClose }: { c: CampaignRow; onClose: () => v
         {data && tot && (
           <>
             <Grid container spacing={1.25}>
-              {([['Despesas', <Money key="s" v={tot.spend} />], ['Receita', <Money key="r" v={tot.revenue} />], ['ROI', <Profit key="p" v={tot.profit} />], ['ROI %', <RoiChip key="o" v={tot.roi} />]] as const).map(([l, v]) => (
+              {([['Despesas', <Money key="s" v={tot.spend} cur="BRL" />], ['Receita', <Money key="r" v={tot.revenue} cur="USD" />], ['ROI', <Profit key="p" v={tot.profit} />], ['ROI %', <RoiChip key="o" v={tot.roi} />]] as const).map(([l, v]) => (
                 <Grid key={l} size={{ xs: 6, md: 3 }}><Card sx={{ p: 1.5, bgcolor: p.panel2, background: p.panel2 }}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600, fontSize: 16 }}>{v}</Typography></Card></Grid>
               ))}
             </Grid>
             {loss.length ? (
               <Alert severity="warning" variant="outlined">
-                <b>{loss.length} {loss.length > 1 ? 'países' : 'país'} com prejuízo: {loss.map((x) => x.country).join(', ')}</b> ({money(lossSum, currency)}).
-                <Typography variant="body2" color="text.secondary">Sem eles, o lucro do período seria {money(tot.profit - lossSum, currency)}. Considere tirar da segmentação se o padrão se repetir em D-1 a D-3.</Typography>
+                <b>{loss.length} {loss.length > 1 ? 'países' : 'país'} com prejuízo: {loss.map((x) => x.country).join(', ')}</b> ({money(lossSum, 'BRL')}).
+                <Typography variant="body2" color="text.secondary">Sem eles, o lucro do período seria {money(tot.profit - lossSum, 'BRL')}. Considere tirar da segmentação se o padrão se repetir em D-1 a D-3.</Typography>
               </Alert>
             ) : <Alert severity="success" variant="outlined">Todos os países da campanha deram lucro no período.</Alert>}
             {mobile ? (
               <Card>{rows.map((x) => (
                 <Box key={x.country} sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', boxShadow: x.metrics.profit < 0 ? `inset 3px 0 0 ${p.neg}` : 'none' }}>
                   <Stack direction="row" sx={{ justifyContent: 'space-between' }} ><Box><CountryCode c={x.country} />{x.name}<Typography variant="caption" component="div">{share(x)} do spend</Typography></Box><RoiChip v={x.metrics.roi} /></Stack>
-                  <Grid container spacing={1} sx={{ mt: 1 }}>{([['Despesas', <Money key="s" v={x.metrics.spend} />], ['Receita', <Money key="r" v={x.metrics.revenue} />], ['ROI', <Profit key="p" v={x.metrics.profit} />], ['eCPM', <Money key="q" v={x.metrics.ecpm} />]] as const).map(([l, v]) => <Grid key={l} size={6}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600 }}>{v}</Typography></Grid>)}</Grid>
+                  <Grid container spacing={1} sx={{ mt: 1 }}>{([['Despesas', <Money key="s" v={x.metrics.spend} cur="BRL" />], ['Receita', <Money key="r" v={x.metrics.revenue} cur="USD" />], ['ROI', <Profit key="p" v={x.metrics.profit} />], ['eCPM', <Money key="q" v={x.metrics.ecpm} cur="USD" />]] as const).map(([l, v]) => <Grid key={l} size={6}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600 }}>{v}</Typography></Grid>)}</Grid>
                 </Box>
               ))}</Card>
             ) : (
@@ -64,12 +64,12 @@ export function CountryDrawer({ c, onClose }: { c: CampaignRow; onClose: () => v
                     {rows.map((x) => (
                       <TableRow key={x.country}>
                         <TableCell sx={{ boxShadow: `inset 3px 0 0 ${x.metrics.profit < 0 ? p.neg : p.pos}` }}><CountryCode c={x.country} />{x.name}<Typography variant="caption" component="div">{share(x)} do spend</Typography></TableCell>
-                        <TableCell align="right"><Money v={x.metrics.spend} /></TableCell><TableCell align="right"><Money v={x.metrics.revenue} /></TableCell>
+                        <TableCell align="right"><Money v={x.metrics.spend} cur="BRL" /></TableCell><TableCell align="right"><Money v={x.metrics.revenue} cur="USD" /></TableCell>
                         <TableCell align="right"><Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }} ><Profit v={x.metrics.profit} /><LinearProgress variant="determinate" value={(Math.abs(x.metrics.profit) / mxP) * 100} color={x.metrics.profit < 0 ? 'error' : 'success'} sx={{ width: 40, bgcolor: 'transparent' }} /></Stack></TableCell>
-                        <TableCell align="right"><Money v={x.metrics.ecpm} /></TableCell><TableCell align="right"><RoiChip v={x.metrics.roi} /></TableCell>
+                        <TableCell align="right"><Money v={x.metrics.ecpm} cur="USD" /></TableCell><TableCell align="right"><RoiChip v={x.metrics.roi} /></TableCell>
                       </TableRow>
                     ))}
-                    <TableRow sx={{ '& td': { bgcolor: p.panel2, fontWeight: 600 } }}><TableCell>Total · {rows.length} países</TableCell><TableCell align="right"><Money v={tot.spend} /></TableCell><TableCell align="right"><Money v={tot.revenue} /></TableCell><TableCell align="right"><Profit v={tot.profit} /></TableCell><TableCell align="right"><Money v={tot.ecpm} /></TableCell><TableCell align="right"><RoiChip v={tot.roi} /></TableCell></TableRow>
+                    <TableRow sx={{ '& td': { bgcolor: p.panel2, fontWeight: 600 } }}><TableCell>Total · {rows.length} países</TableCell><TableCell align="right"><Money v={tot.spend} cur="BRL" /></TableCell><TableCell align="right"><Money v={tot.revenue} cur="USD" /></TableCell><TableCell align="right"><Profit v={tot.profit} /></TableCell><TableCell align="right"><Money v={tot.ecpm} cur="USD" /></TableCell><TableCell align="right"><RoiChip v={tot.roi} /></TableCell></TableRow>
                   </TableBody>
                 </Table>
               </TableContainer>

@@ -18,7 +18,7 @@ import { ErrorBox, PageHead, PageSkeleton, Provisional, Tag } from '@/components
 import { MetricValue, Profit, RoiChip } from '@/components/ui/Values';
 import { PlacementDrawer } from '@/components/placements/PlacementDrawer';
 import { longDate, money, pct0 } from '@/lib/format';
-import { marginClass, METRIC_DEFS, metricValue, type MetricKey } from '@/lib/metrics';
+import { marginClass, METRIC_DEFS, metricCurrency, metricValue, type MetricKey } from '@/lib/metrics';
 import { addDays, todayISO } from '@/lib/period';
 import type { Metrics, PlacementGroup, PlacementRow, PlacementsResponse, PlacementType } from '@/types/api';
 
@@ -193,7 +193,6 @@ const multi = (g: PlacementGroup) => g.children.length > 1 || (g.children[0] && 
 function Results({ data, sel }: { data: PlacementsResponse; sel: PlacementSel }) {
   const theme = useTheme(); const p = theme.pluto;
   const mobile = useMediaQuery(theme.breakpoints.down('md'));
-  const { currency } = useFilters();
   const ms = usePicked('placements');
   const [q, setQ] = useState('');
   const [mode, setMode] = useState<Mode>('all');
@@ -237,7 +236,7 @@ function Results({ data, sel }: { data: PlacementsResponse; sel: PlacementSel })
   const anyOpen = page.some((g) => multi(g) && open.has(g.key));
   const expandAll = () => setOpen(anyOpen ? new Set() : new Set(groups.filter(multi).map((g) => g.key)));
   const unit = CRIT.find((c) => c.k === crit.k)!.unit;
-  const unitTxt = unit === '$' ? { USD: '$', BRL: 'R$', EUR: '€' }[currency] : unit;
+  const unitTxt = unit === '$' ? (metricCurrency(crit.k as MetricKey) === 'USD' ? 'US$' : 'R$') : unit;
   const s = data.selection;
   const scopeTxt = `${data.domain} · ${s.accounts ? `${s.accounts} conta${s.accounts > 1 ? 's' : ''}` : 'todas as contas'} · ${s.campaigns === s.campaignsTotal ? (s.campaignsTotal === 1 ? '1 campanha' : `todas as ${s.campaignsTotal} campanhas`) : `${s.campaigns} de ${s.campaignsTotal} campanhas`}`;
   const nPl = groups.reduce((a, g) => a + g.children.length, 0);
@@ -264,9 +263,9 @@ function Results({ data, sel }: { data: PlacementsResponse; sel: PlacementSel })
     <Card sx={{ mb: 1.75 }}>
       <Grid container>
         {[
-          ['Dão ROI', <><Box component="span" sx={{ color: p.pos }}>{win.length}</Box> <Typography component="span" variant="caption">de {all.length}</Typography></>, <>lucro somado {money(winP, currency)}</>],
+          ['Dão ROI', <><Box component="span" sx={{ color: p.pos }}>{win.length}</Box> <Typography component="span" variant="caption">de {all.length}</Typography></>, <>lucro somado {money(winP, 'BRL')}</>],
           ['Com prejuízo', <Box key="l" component="span" sx={{ color: loss.length ? p.neg : undefined }}>{loss.length}</Box>, <>prejuízo somado <Profit v={lossP} /></>],
-          ['Lucro sem os de prejuízo', <Box key="x" component="span" sx={{ color: data.totals.profit - lossP > 0 ? p.pos : undefined }}>{money(data.totals.profit - lossP, currency)}</Box>, <>lucro atual <Profit v={data.totals.profit} /></>],
+          ['Lucro sem os de prejuízo', <Box key="x" component="span" sx={{ color: data.totals.profit - lossP > 0 ? p.pos : undefined }}>{money(data.totals.profit - lossP, 'BRL')}</Box>, <>lucro atual <Profit v={data.totals.profit} /></>],
         ].map(([l, v, foot], i) => (
           <Grid key={i} size={{ xs: 6, md: 2.6 }} sx={{ p: 2, borderRight: { md: 1 }, borderBottom: { xs: 1, md: 0 }, borderColor: 'divider' }}>
             <Typography sx={{ fontSize: 12, color: 'text.secondary' }}>{l}</Typography>
@@ -275,7 +274,7 @@ function Results({ data, sel }: { data: PlacementsResponse; sel: PlacementSel })
           </Grid>
         ))}
         <Grid size={{ xs: 12, md: 4.2 }} sx={{ p: 2 }}>
-          <Typography variant="caption" component="div" sx={{ mb: 0.75 }}>Melhor ROI · mín. {money(minSp, currency, 0)} de spend</Typography>
+          <Typography variant="caption" component="div" sx={{ mb: 0.75 }}>Melhor ROI · mín. {money(minSp, 'BRL', 0)} de spend</Typography>
           <Stack spacing={0.75}>
             {best.map((g, i) => (
               <Stack key={g.key} direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
@@ -437,11 +436,12 @@ function sumGroups(gs: PlacementGroup[]): { metrics: Metrics; roiDays: Placement
   const add = (k: keyof Metrics) => gs.reduce((a, g) => a + ((g.metrics[k] as number) || 0), 0);
   const spend = add('spend'), revenue = add('revenue'), sessions = add('sessions'), impressions = add('impressions'), rsv = add('responsesServed');
   const clk = add('trafficClicks'), ti = add('trafficImpressions'), ar = add('adRequests'), ac = add('adClicks');
-  const profit = revenue - spend;
+  const revenueBrl = add('revenueBrl');
+  const profit = revenueBrl - spend;   // ROI (R$) = receita × cotação − despesas
   const vw = gs.reduce((a, g) => a + (g.metrics.viewability ?? 0) * g.metrics.impressions / 100, 0);
   const m: Metrics = {
-    revenue, grossRevenue: add('grossRevenue'), spend, googleSpend: add('googleSpend'), metaSpend: 0, iva: 0, googleShare: spend ? 100 : null, metaShare: spend ? 0 : null,
-    profit, roi: spend > 0 ? (profit / spend) * 100 : null, margin: revenue > 0 ? (profit / revenue) * 100 : null,
+    revenue, revenueBrl, fxRate: revenue ? revenueBrl / revenue : null, grossRevenue: add('grossRevenue'), spend, googleSpend: add('googleSpend'), metaSpend: 0, iva: 0, googleShare: spend ? 100 : null, metaShare: spend ? 0 : null,
+    profit, roi: spend > 0 ? (profit / spend) * 100 : null, margin: revenueBrl > 0 ? (profit / revenueBrl) * 100 : null,
     rps: sessions ? revenue / sessions : null, sessionRpm: sessions ? (revenue / sessions) * 1000 : null, ecpm: impressions ? (revenue / impressions) * 1000 : null, cpcAdx: ac ? revenue / ac : null,
     impressions, adRequests: ar, responsesServed: rsv, dropOffRate: rsv ? ((rsv - impressions) / rsv) * 100 : null, fillRate: ar ? (impressions / ar) * 100 : null,
     ctr: impressions ? (ac / impressions) * 100 : null, adClicks: ac, viewability: impressions ? (vw / impressions) * 100 : null, sessions,

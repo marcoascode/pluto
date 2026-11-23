@@ -7,7 +7,6 @@ import MailOutlineRoundedIcon from '@mui/icons-material/MailOutlineRounded';
 import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import LayersRoundedIcon from '@mui/icons-material/LayersRounded';
-import { useFilters } from '@/context/FiltersContext';
 import { money, pct0 } from '@/lib/format';
 import { RoiChip } from '@/components/ui/Values';
 import type { UrlOrigin } from '@/types/api';
@@ -21,7 +20,6 @@ const RET_COLORS = ['#f5b84a', '#34d399', '#f472b6', '#22d3ee', '#a78bfa', '#fb9
  */
 export function OriginCard({ origins, value, onChange }: { origins: UrlOrigin[]; value: string; onChange: (k: string) => void }) {
   const { pluto: p } = useTheme();
-  const { currency } = useFilters();
   const total = origins.reduce((a, o) => a + o.metrics.revenue, 0);
   let ri = 0;
   const look = origins.map((o) => {
@@ -44,7 +42,7 @@ export function OriginCard({ origins, value, onChange }: { origins: UrlOrigin[];
     <Card>
       <CardHeader title="Origem da receita"
         subheader={retention.length
-          ? `${money(retRev, currency)} (${pct0(total ? (retRev / total) * 100 : null)}) veio de retenção por utm_source · clique numa origem para filtrar as URLs`
+          ? `${money(retRev, 'USD')} (${pct0(total ? (retRev / total) * 100 : null)}) veio de retenção por utm_source · clique numa origem para filtrar as URLs`
           : 'Sem receita com utm_source de retenção no período. Use ?utm_source=push, ?utm_source=whatsapp… nos links de retenção.'} />
       <Box sx={{ px: 2, pb: 2 }}>
         {/* barra com a participação de cada origem na receita */}
@@ -55,7 +53,7 @@ export function OriginCard({ origins, value, onChange }: { origins: UrlOrigin[];
           {tile('', !value, (
             <Stack spacing={0.4}>
               <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}><LayersRoundedIcon sx={{ fontSize: 17, color: p.fg2 }} /><Typography sx={{ fontWeight: 600, fontSize: 13 }}>Todas</Typography></Stack>
-              <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 18 }}>{money(total, currency)}</Typography>
+              <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 18 }}>{money(total, 'USD')}</Typography>
               <Typography variant="caption">{origins.length} origens</Typography>
             </Stack>
           ), p.accent)}
@@ -66,10 +64,10 @@ export function OriginCard({ origins, value, onChange }: { origins: UrlOrigin[];
                 <Typography noWrap sx={{ fontWeight: 600, fontSize: 13 }}>{o.kind === 'retention' ? o.label.replace(/^./, (c) => c.toUpperCase()) : o.label}</Typography>
                 {o.kind === 'retention' && <Typography variant="caption" sx={{ color, fontWeight: 600 }}>retenção</Typography>}
               </Stack>
-              <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 18 }}>{money(o.metrics.revenue, currency)}</Typography>
+              <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 18 }}>{money(o.metrics.revenue, 'USD')}</Typography>
               <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', flexWrap: 'wrap' }} useFlexGap>
                 <Typography variant="caption">{pct0(share)} da receita</Typography>
-                {o.metrics.spend > 0 && <><Typography variant="caption">· custo {money(o.metrics.spend, currency)}</Typography><RoiChip v={o.metrics.roi} /></>}
+                {o.metrics.spend > 0 && <><Typography variant="caption">· custo {money(o.metrics.spend, 'BRL')}</Typography><RoiChip v={o.metrics.roi} /></>}
                 {o.kind === 'none' && <Typography variant="caption">· direto / sem utm</Typography>}
               </Stack>
             </Stack>

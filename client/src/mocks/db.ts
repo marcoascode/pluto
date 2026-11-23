@@ -178,16 +178,21 @@ for (const r of ROWS) { if (r.src !== 'unatt' || r.domain === UNKNOWN_DOMAIN) co
 export const originOf = (r: Row) => (r.utm ? 'utm:' + r.utm : r.src === 'google' || r.src === 'meta' ? r.src : 'none');
 
 /** Mesma agregação que o servidor faz em SQL (SUM + fórmulas). */
-export function agg(rows: Row[], cur: Currency): Metrics {
+/** Cotações travadas por mês (YYYY-MM → R$/US$) do modo mock. */
+export const FX_LOCKS = new Map<string, { rate: number; note: string | null; createdAt: string }>();
+/** Cotação do ROI no mock: travada no mês ou a atual (dia 0) − deságio. */
+export const roiRate = (di: number) => FX_LOCKS.get(DATES[di].slice(0, 7))?.rate ?? Math.max(0.0001, (FX.BRL[0] ?? 5) - discountAt(0));
+// 0.18.6: despesas em BRL, receita em USD; o parâmetro de moeda ficou só por compatibilidade das chamadas
+export function agg(rows: Row[], _cur?: Currency): Metrics {
   // spend = Google + Meta + IVA (13,83% sobre a Meta) · revenue = bruta × (1 − revShare do domínio)
-  const s = { rt: 0, rp: 0, rw: 0, spend: 0, gs: 0, ms: 0, iva: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0, mi: 0, mlc: 0, mres: 0, mlead: 0 };
-  for (const r of rows) { const f = FX[cur][r.di] ?? 1; const fr = cur === 'BRL' ? Math.max(0.0001, f - discountAt(r.di)) : f; const sp = r.spendUSD * f, rv = r.revUSD * fr, iv = r.src === 'meta' ? sp * META_IVA : 0; s.spend += sp + iv; s.iva += iv; if (r.src === 'google') s.gs += sp; else if (r.src === 'meta') s.ms += sp;
+  const s = { rb: 0, rt: 0, rp: 0, rw: 0, spend: 0, gs: 0, ms: 0, iva: 0, rev: 0, gross: 0, att: 0, un: 0, sess: 0, ai: 0, ar: 0, rsv: 0, ac: 0, vw: 0, clk: 0, ti: 0, mi: 0, mlc: 0, mres: 0, mlead: 0 };
+  for (const r of rows) { const f = FX.BRL[r.di] ?? 5; const fr = 1; const sp = r.spendUSD * f, rv = r.revUSD * fr, iv = r.src === 'meta' ? sp * META_IVA : 0; s.spend += sp + iv; s.iva += iv; if (r.src === 'google') s.gs += sp; else if (r.src === 'meta') s.ms += sp;
     if (r.utm) { s.rt += rv; if (/^pushalert|push$/.test(r.utm)) s.rp += rv; else if (/(wpp|whatsapp)$/.test(r.utm)) s.rw += rv; }
-    s.rev += rv; s.gross += r.grossUSD * fr; s.rsv += r.rsv; if (r.src === 'unatt') s.un += rv; else s.att += rv; s.sess += r.sess; s.ai += r.adImps; s.ar += r.adReq; s.ac += r.adClk; s.vw += r.view; s.clk += r.clk; s.ti += r.tImps;
+    s.rev += rv; s.rb += rv * roiRate(r.di); s.gross += r.grossUSD * fr; s.rsv += r.rsv; if (r.src === 'unatt') s.un += rv; else s.att += rv; s.sess += r.sess; s.ai += r.adImps; s.ar += r.adReq; s.ac += r.adClk; s.vw += r.view; s.clk += r.clk; s.ti += r.tImps;
     if (r.src === 'meta') { s.mi += r.tImps; s.mlc += r.mlc ?? 0; s.mres += r.mres ?? 0; s.mlead += r.mlead ?? 0; } }
-  const profit = s.rev - s.spend;
-  return { revenue: s.rev, grossRevenue: s.gross, spend: s.spend, googleSpend: s.gs, metaSpend: s.ms, iva: s.iva,
-    googleShare: s.spend > 0 ? (s.gs / s.spend) * 100 : null, metaShare: s.spend > 0 ? (s.ms / s.spend) * 100 : null, profit, roi: s.spend > 0 ? (profit / s.spend) * 100 : null, margin: s.rev > 0 ? (profit / s.rev) * 100 : null,
+  const profit = s.rb - s.spend;
+  return { revenue: s.rev, revenueBrl: s.rb, fxRate: s.rev ? s.rb / s.rev : null, grossRevenue: s.gross, spend: s.spend, googleSpend: s.gs, metaSpend: s.ms, iva: s.iva,
+    googleShare: s.spend > 0 ? (s.gs / s.spend) * 100 : null, metaShare: s.spend > 0 ? (s.ms / s.spend) * 100 : null, profit, roi: s.spend > 0 ? (profit / s.spend) * 100 : null, margin: s.rb > 0 ? (profit / s.rb) * 100 : null,
     rps: s.sess ? s.rev / s.sess : null, sessionRpm: s.sess ? (s.rev / s.sess) * 1000 : null, ecpm: s.ai ? (s.rev / s.ai) * 1000 : null, cpcAdx: s.ac ? s.rev / s.ac : null, impressions: s.ai, adRequests: s.ar, responsesServed: s.rsv, dropOffRate: s.rsv ? ((s.rsv - s.ai) / s.rsv) * 100 : null, fillRate: s.ar ? (s.ai / s.ar) * 100 : null,
     ctr: s.ai ? (s.ac / s.ai) * 100 : null, adClicks: s.ac, viewability: s.ai ? (s.vw / s.ai) * 100 : null, sessions: s.sess, trafficClicks: s.clk, trafficImpressions: s.ti,
     trafficCtr: s.ti ? (s.clk / s.ti) * 100 : null, cpc: s.clk ? s.spend / s.clk : null, attributedRevenue: s.att, unattributedRevenue: s.un, attributionRate: s.rev ? (s.att / s.rev) * 100 : null,

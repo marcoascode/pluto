@@ -54,7 +54,7 @@ export function MetaTagAuditCard() {
     <Card sx={{ mt: 1.75, borderColor: problems ? 'warning.main' : undefined }}>
       <CardHeader
         title={<Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><span>Anúncios Meta fora do padrão de UTM</span>{problems > 0 && <Tag tone="neg">{problems}</Tag>}</Stack>}
-        subheader={`${int(t.ok)} ok · ${int(t.missing)} sem sufixo · ${int(t.different)} fora do padrão · ${int(t.unread)} ainda não lidos pelo sync. ${t.spendAtRisk > 0 ? `${money(t.spendAtRisk, 'USD')} de custo (com IVA) nos últimos ${data.days} dias em anúncios cuja receita não pode ser atribuída. ` : ''}Corrija em "Parâmetros de URL" de cada anúncio no Gerenciador de Anúncios.`} />
+        subheader={`${int(t.ok)} ok · ${int(t.missing)} sem sufixo · ${int(t.different)} fora do padrão · ${int(t.unread)} ainda não lidos pelo sync. ${t.spendAtRisk > 0 ? `${money(t.spendAtRisk, 'BRL')} de custo (com IVA) nos últimos ${data.days} dias em anúncios cuja receita não pode ser atribuída. ` : ''}Corrija em "Parâmetros de URL" de cada anúncio no Gerenciador de Anúncios.`} />
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} useFlexGap sx={{ px: 2, pb: 1.5, alignItems: { sm: 'center' }, flexWrap: 'wrap' }}>
         <TextField size="small" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar anúncio, campanha ou ID" sx={{ flex: 1, minWidth: 220, maxWidth: { sm: 320 } }}
           slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }, htmlInput: { 'aria-label': 'Buscar anúncio, campanha ou ID' } }} />
@@ -83,7 +83,7 @@ export function MetaTagAuditCard() {
                 <Typography variant="caption" component="div" sx={{ fontFamily: 'IBM Plex Mono' }}>ad {a.id}</Typography></TableCell>
               <TableCell sx={{ whiteSpace: 'normal' }}>{a.accountName}{a.managers && <Typography variant="caption" component="div">{a.managers}</Typography>}</TableCell>
               <TableCell>{a.domain ?? 'Sem domínio'}</TableCell>
-              <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{a.spend ? money(a.spend, 'USD') : '—'}</TableCell>
+              <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{a.spend ? money(a.spend, 'BRL') : '—'}</TableCell>
               <TableCell sx={{ fontFamily: 'IBM Plex Mono', fontSize: 12, whiteSpace: 'normal', overflowWrap: 'anywhere', maxWidth: 320 }}>
                 {Object.keys(a.params).length ? Object.entries(a.params).map(([k, v]) => `${k}=${v}`).join('&') : <Typography variant="caption">nenhum utm_*</Typography>}</TableCell>
               <TableCell><StatusTag ad={a} /></TableCell>

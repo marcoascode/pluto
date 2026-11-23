@@ -27,7 +27,7 @@ export default function AdManagerPage() {
           <TableBody>{data.domains.map((d) => (
             <TableRow key={d.domain}><TableCell><Link component={RouterLink} to={`/dominios/${encodeURIComponent(d.domain)}`} color="inherit" underline="hover">{d.domain}</Link></TableCell>
               {ms.map((k) => <TableCell key={k} align="right"><MetricValue k={k} v={metricValue(d.metrics, undefined, k)} /></TableCell>)}
-              <TableCell align="right" sx={{ color: 'warning.main' }}><Money v={d.metrics.unattributedRevenue} /></TableCell></TableRow>
+              <TableCell align="right" sx={{ color: 'warning.main' }}><Money v={d.metrics.unattributedRevenue} cur="USD" /></TableCell></TableRow>
           ))}</TableBody>
         </Table></TableContainer>
       </Card>

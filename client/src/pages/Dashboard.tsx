@@ -41,8 +41,9 @@ export default function DashboardPage() {
   const dm = (prefs.dailyMetric as keyof Metrics) ?? 'profit';
   const dml = DAILY.find((x) => x[0] === dm)?.[1] ?? 'ROI';
   const isMoney = ['profit', 'revenue', 'sessionRpm', 'ecpm'].includes(dm);
-  const yM = (v: number) => compactMoney(v, f.currency);
-  const fullTip = (i: number): [string, ReactNode][] => { const x = win[i].metrics; return [['Receita', money(x.revenue, f.currency)], ['Despesas (c/ IVA)', money(x.spend, f.currency)], ['IVA', money(x.iva, f.currency)], ['ROI', money(x.profit, f.currency)], ['ROI %', pct(x.roi)], ['Margem', pct(x.margin)], ['RPM de Sessão', money(x.sessionRpm, f.currency)], ['eCPM', money(x.ecpm, f.currency)], ['Viewability', pct(x.viewability)], ['CPC', money(x.cpc, f.currency)], ['CTR', pct(x.trafficCtr, 2)], ['Fill Rate', pct(x.fillRate)], ['Drop-off', pct(x.dropOffRate)]]; };
+  const yB = (v: number) => compactMoney(v, 'BRL');
+  const yM = (v: number) => compactMoney(v, dm === 'profit' ? 'BRL' : 'USD');
+  const fullTip = (i: number): [string, ReactNode][] => { const x = win[i].metrics; return [['Receita', money(x.revenue, 'USD')], ['Despesas (c/ IVA)', money(x.spend, 'BRL')], ['IVA', money(x.iva, 'BRL')], ['ROI', money(x.profit, 'BRL')], ['ROI %', pct(x.roi)], ['Margem', pct(x.margin)], ['RPM de Sessão', money(x.sessionRpm, 'USD')], ['eCPM', money(x.ecpm, 'USD')], ['Viewability', pct(x.viewability)], ['CPC', money(x.cpc, 'BRL')], ['CTR', pct(x.trafficCtr, 2)], ['Fill Rate', pct(x.fillRate)], ['Drop-off', pct(x.dropOffRate)]]; };
   const sub = mobile ? (f.from === f.to ? 'Dia selecionado e os 3 anteriores' : 'Mesmo período da data selecionada') + ' · hoje (parcial) fica fora' : 'Por dia · hoje (parcial) fica fora';
   return (
     <>
@@ -54,8 +55,8 @@ export default function DashboardPage() {
       <Grid container spacing={1.75} sx={{ mt: 0.25 }}>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card><CardHeader title="Despesas vs Receita" subheader={sub} />
-            <CardContent><SpendRevenueChart height={h} labels={labels} yfmt={yM} revenue={win.map((d) => d.metrics.revenue)} spend={win.map((d) => d.metrics.spend)}
-              tip={(i) => [['Receita', money(win[i].metrics.revenue, f.currency), '#3d8fec'], ['Despesas', money(win[i].metrics.spend, f.currency), '#cf7a2e'], ['ROI', money(win[i].metrics.profit, f.currency)], ['ROI %', pct(win[i].metrics.roi)]]} /></CardContent></Card>
+            <CardContent><SpendRevenueChart height={h} labels={labels} yfmt={yB} revenue={win.map((d) => d.metrics.revenueBrl)} spend={win.map((d) => d.metrics.spend)}
+              tip={(i) => [['Receita', `${money(win[i].metrics.revenue, 'USD')} · ${money(win[i].metrics.revenueBrl, 'BRL')}`, '#3d8fec'], ['Despesas', money(win[i].metrics.spend, 'BRL'), '#cf7a2e'], ['ROI', money(win[i].metrics.profit, 'BRL')], ['ROI %', pct(win[i].metrics.roi)]]} /></CardContent></Card>
         </Grid>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card><CardHeader title={dm === 'profit' ? 'Lucro diário' : `${dml} por dia`} subheader={mobile ? sub : 'Passe o mouse para ver todas as métricas do dia'}
