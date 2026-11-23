@@ -3,7 +3,8 @@
  *
  * Moedas (0.18.6): nada é convertido nos relatórios.
  *   Receita (Ad Manager) fica em USD · Despesas (Google Ads + Meta Ads + IVA) ficam em BRL (gravadas em BRL pelo sync).
- *   A conversão acontece só no ROI:  ROI (R$) = Receita (US$) × cotação USD/BRL − Despesas (R$)
+ *   A conversão acontece só no ROI:
+ *     ROI (R$) = ((Receita − Receita × revShare) × cotação c/ deságio) − Despesas Google Ads − Despesas Meta Ads − IVA
  *   Cotação do ROI = a travada para o mês (fx_month_locks, Relatórios → Resultados mensais) ou, sem trava,
  *   a cotação atual com deságio (a mesma "USD/BRL c/ deságio" do topo). Período com vários meses: cada mês com a sua.
  *

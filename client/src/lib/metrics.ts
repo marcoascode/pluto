@@ -44,7 +44,7 @@ export const METRIC_DEFS: Record<MetricKey, { label: string; kind: Kind; hint?: 
   revenue: { label: 'Receita', kind: 'money', hint: 'Ad Manager, já sem o revShare do domínio (US$)' },
   spend: { label: 'Despesas', kind: 'money', hint: 'Google Ads + Meta Ads + IVA (R$)' },
   iva: { label: 'IVA', kind: 'money', hint: '13,83% sobre o custo da Meta' },
-  profit: { label: 'ROI', kind: 'profit', hint: 'Receita (US$) × cotação USD/BRL − Despesas (R$)' },
+  profit: { label: 'ROI', kind: 'profit', hint: '(Receita − Receita × revShare) × cotação c/ deságio − Google Ads − Meta Ads − IVA' },
   roi: { label: 'ROI %', kind: 'chip', hint: 'ROI (R$) ÷ Despesas' },
   margin: { label: 'Margem', kind: 'pct', hint: 'ROI ÷ Receita em R$' },
   unattributedRevenue: { label: 'RNA', kind: 'money', hint: 'Receita não atribuída a campanha' },
