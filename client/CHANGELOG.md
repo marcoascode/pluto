@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.7
+- **ROI conferido em todos os relatórios**: ROI (R$) = ((Receita − Receita × revShare) × cotação c/ deságio) − Despesas Google Ads − Despesas Meta Ads − IVA (mês com cotação travada usa a travada). Textos de ajuda e rodapé de Relatórios mostram a fórmula completa.
+- **Placements**: corrigido o ROI das linhas de subdomínio com receita estimada (distribuída a partir do domínio principal), que subtraía a despesa em R$ da receita em US$ sem converter.
+
 ## 0.18.6
 - **Moedas sem conversão nos relatórios**: receita (Google Ad Manager) fica sempre em **US$** e despesas (Google Ads + Meta Ads + IVA da Meta) sempre em **R$**, em todas as telas, para "Todos os domínios" e para domínio específico. O sync passou a gravar o custo das contas em BRL (moeda em que pagam; migration `019` converte o histórico gravado em USD pela mesma taxa do dia e renomeia `spend_usd`/`iva_usd` → `spend_brl`/`iva_brl`).
 - **ROI com a cotação só no cálculo**: ROI (R$) = Receita (US$) × cotação USD/BRL − Despesas (R$). ROI %, Margem e o resultado por site do Finance usam o mesmo cálculo. Saiu o seletor de moeda do topo (USD/BRL/EUR); ficou só a cotação atual "USD/BRL c/ deságio".

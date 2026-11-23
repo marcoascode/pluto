@@ -216,7 +216,7 @@ export default function ReportsPage() {
       {lock && fxOf.get(lock) && <LockDialog month={lock} fx={fxOf.get(lock)!} current={monthly.data?.currentRate ?? null} onClose={() => setLock(null)} />}
       <Typography variant="caption" component="p" sx={{ mt: 1.25 }}>
         Receita (US$) = Ad Manager já sem a parte da Network (revShare do domínio) · Despesas (R$) = Google Ads + Meta Ads + IVA · IVA = 13,83% sobre o custo da Meta ·
-        ROI (R$) = Receita × cotação USD/BRL − Despesas (cotação travada do mês ou, sem trava, a atual c/ deságio) · ROI % = ROI ÷ Despesas · Margem = ROI ÷ (Receita × cotação) · RNA = receita não atribuída · CPC-L, CPR e CPL = custo Meta (sem IVA) ÷ cliques no link, conversas iniciadas e leads ·
+        ROI (R$) = (Receita − Receita × revShare) × cotação c/ deságio − Despesas Google Ads − Despesas Meta Ads − IVA (mês com cotação travada usa a travada) · ROI % = ROI ÷ Despesas · Margem = ROI ÷ (Receita × cotação) · RNA = receita não atribuída · CPC-L, CPR e CPL = custo Meta (sem IVA) ÷ cliques no link, conversas iniciadas e leads ·
         eCPM = Receita ÷ Impressões × 1000 · Drop-off = respostas servidas que não viraram impressão.
       </Typography>
     </>

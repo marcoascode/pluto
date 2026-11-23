@@ -68,10 +68,11 @@ export function spreadRootRevenue<T extends HostRow>(root: string, hosts: T[]): 
   if (!own || !subs.length || own.metrics.revenue <= 0 || subs.some((h) => h.metrics.revenue > 0)) return hosts;
   const spend = hosts.reduce((a, h) => a + h.metrics.spend, 0);
   if (spend <= 0) return hosts;
-  const rev = own.metrics.revenue, gross = own.metrics.grossRevenue;
-  const fix = (m: Metrics, r: number, g: number): Metrics => {
-    const profit = r - m.spend;
-    return { ...m, revenue: r, grossRevenue: g, profit, roi: m.spend > 0 ? (profit / m.spend) * 100 : null, margin: r > 0 ? (profit / r) * 100 : null, ecpm: null, cpcAdx: null };
+  const rev = own.metrics.revenue, gross = own.metrics.grossRevenue, revBrl = own.metrics.revenueBrl;
+  // ROI (R$) = receita líquida (US$) × cotação c/ deságio (ou travada no mês) − despesas (R$): usa a receita já convertida (revenueBrl)
+  const fix = (m: Metrics, r: number, g: number, rb: number): Metrics => {
+    const profit = rb - m.spend;
+    return { ...m, revenue: r, grossRevenue: g, revenueBrl: rb, fxRate: r > 0 ? rb / r : null, profit, roi: m.spend > 0 ? (profit / m.spend) * 100 : null, margin: rb > 0 ? (profit / rb) * 100 : null, ecpm: null, cpcAdx: null };
   };
   // ROI D-x: mesma divisão, pelo custo de cada dia
   const dayTot = [0, 1, 2, 3].map((i) => hosts.reduce((a, h) => a + (h.recent?.[i]?.[0] ?? 0), 0));
@@ -80,7 +81,7 @@ export function spreadRootRevenue<T extends HostRow>(root: string, hosts: T[]): 
     const sh = h.metrics.spend / spend;
     const recent = h.recent?.map(([sp], i): [number, number] => [sp, dayTot[i] > 0 ? dayRev[i] * (sp / dayTot[i]) : 0]);
     const roi = (i: number) => (recent && recent[i][0] > 0 ? ((recent[i][1] - recent[i][0]) / recent[i][0]) * 100 : null);
-    return { ...h, metrics: fix(h.metrics, rev * sh, gross * sh), ...(recent ? { recent, roiDays: { today: roi(0), d1: roi(1), d2: roi(2), d3: roi(3) } } : {}), estimated: true };
+    return { ...h, metrics: fix(h.metrics, rev * sh, gross * sh, revBrl * sh), ...(recent ? { recent, roiDays: { today: roi(0), d1: roi(1), d2: roi(2), d3: roi(3) } } : {}), estimated: true };
   }).filter((h) => h.key !== root || h.metrics.spend > 0);   // o principal sem custo próprio some (a receita dele foi para os subdomínios)
 }
 
