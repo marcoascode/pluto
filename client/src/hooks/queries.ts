@@ -32,8 +32,8 @@ export function useCampaignCountries(platform: Platform, id: string | null) {
 /** Placements: o domínio vem do filtro da própria tela (não do topo). sel = pesquisa aplicada; null = ainda não pesquisou. */
 export interface PlacementSel { domain: string; accounts: string[]; campaigns: string[] }
 function usePlacementQuery(sel: PlacementSel | null): PlacementQuery | null {
-  const { from, to, currency, company } = useFilters();
-  return sel ? { from, to, currency, company: company || undefined, domain: sel.domain, accounts: sel.accounts.join(',') || undefined, campaigns: sel.campaigns.join(',') || undefined } : null;
+  const { from, to, company } = useFilters();
+  return sel ? { from, to, company: company || undefined, domain: sel.domain, accounts: sel.accounts.join(',') || undefined, campaigns: sel.campaigns.join(',') || undefined } : null;
 }
 export function usePlacementFilters(domain: string) { return useQuery({ queryKey: qk.placementFilters(domain), queryFn: () => placementsApi.filters(domain), enabled: !!domain, staleTime: 5 * 60_000 }); }
 export function usePlacements(sel: PlacementSel | null) {
@@ -46,8 +46,8 @@ export function usePlacementCampaigns(sel: PlacementSel | null, placement: strin
 }
 export function useUrls(domain: string, origin = '') { const { query } = useFilters(); const q = { ...query, domain: domain || undefined, origin: origin || undefined }; return useQuery({ queryKey: qk.urls(q), queryFn: () => urlsApi.list(q), ...opts }); }
 export function useGam() { const { query } = useFilters(); return useQuery({ queryKey: qk.gam(query), queryFn: () => gamApi.summary(query), ...opts }); }
-/** Relatórios usam só Domínio e Moeda do topo (o mês é escolhido na própria tela). */
-function useReportQuery() { const { domain, currency, company } = useFilters(); return { domain: domain || undefined, currency, company: company || undefined }; }
+/** Relatórios usam só o Domínio do topo (o mês é escolhido na própria tela). */
+function useReportQuery() { const { domain, company } = useFilters(); return { domain: domain || undefined, company: company || undefined }; }
 export function useDailyReport(month: string) { const q = useReportQuery(); return useQuery({ queryKey: qk.reportDaily(month, q), queryFn: () => reportsApi.daily({ ...q, month }), ...opts }); }
 export function useMonthlyReport(months: number) { const q = useReportQuery(); return useQuery({ queryKey: qk.reportMonthly(months, q), queryFn: () => reportsApi.monthly({ ...q, months }), ...opts }); }
 export function useHealth() { const { query } = useFilters(); return useQuery({ queryKey: qk.health(query), queryFn: () => attributionApi.health(query), ...opts }); }
@@ -81,14 +81,16 @@ export function useAdminMutation<A, R>(fn: (a: A) => Promise<R>, invalidate: rea
 }
 
 /* ---- Finance ---- */
+/** Finance (caixa, custos, comissões) é sempre em R$ (0.18.6: sem seletor de moeda no topo). */
+export const FINANCE_CURRENCY = 'BRL' as const;
 export function useFinanceOverview(from: string, to: string) {
-  const { company, currency } = useFilters();
-  const q = { company: company || undefined, from, to, currency };
+  const { company } = useFilters();
+  const q = { company: company || undefined, from, to, currency: FINANCE_CURRENCY };
   return useQuery({ queryKey: qk.finance(q), queryFn: () => financeApi.overview(q), ...opts });
 }
 export function useFinanceCosts(month: string) {
-  const { company, currency } = useFilters();
-  const q = { company: company || undefined, month, currency };
+  const { company } = useFilters();
+  const q = { company: company || undefined, month, currency: FINANCE_CURRENCY };
   return useQuery({ queryKey: qk.financeCosts(q), queryFn: () => financeApi.costs(q), ...opts });
 }
 /** Salvar/excluir custo ou lançamento de caixa atualiza as duas telas do Finance. */

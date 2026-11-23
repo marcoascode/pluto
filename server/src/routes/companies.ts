@@ -1,7 +1,7 @@
 /**
  * Empresas para quem está vendo o painel (seletor "Empresa" do topo e tela da Empresa).
  *   GET /me/companies                      Empresas visíveis com sócios, Squads e domínios (só os domínios que o usuário vê)
- *   GET /companies/:id/overview?from&to&currency   totais, comparação, série diária e Squads → domínios → gestores
+ *   GET /companies/:id/overview?from&to   totais, comparação, série diária e Squads → domínios → gestores
  */
 import { Router } from 'express';
 import { z } from 'zod';
@@ -49,7 +49,7 @@ companiesReadRouter.get('/companies/:id/overview', async (req, res) => {
   const sc = await companyScope(req, id);   // 403 se a Empresa não for visível
   const [co] = await structure([id], new Set(sc.ids));
   if (!co) throw notFound('Empresa não encontrada.');
-  const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency };
+  const base = { domainIds: sc.ids, filter: sc.filter };
   const prev = previous(p.from, p.to, p.today);
   const dailyFrom = p.from < addDays(p.to, -13) ? p.from : addDays(p.to, -13);
   const [tot, cmp, byDom, daily] = await Promise.all([
@@ -60,8 +60,8 @@ companiesReadRouter.get('/companies/:id/overview', async (req, res) => {
   ]);
   const sum = (ms: Metrics[]) => {   // soma dos domínios do Squad (mesmas fórmulas: soma as bases e recalcula)
     const k = (f: keyof Metrics) => ms.reduce((a, m) => a + ((m[f] as number) || 0), 0);
-    return toMetrics({ spend: k('spend'), gs: k('googleSpend'), ms: k('metaSpend'), iva: k('iva'), rev: k('revenue'), gross: k('grossRevenue'), un: k('unattributedRevenue'), rt: k('retentionRevenue'), rp: k('pushRevenue'), rw: k('whatsappRevenue'), sess: k('sessions'), ai: k('impressions'), ar: k('adRequests'), rsv: k('responsesServed'), ac: k('adClicks'),
-      vw: ms.reduce((a, m) => a + (m.viewability ?? 0) * m.impressions / 100, 0), clk: k('trafficClicks'), ti: k('trafficImpressions'), n: ms.length });
+    return toMetrics({ spend: k('spend'), gs: k('googleSpend'), ms: k('metaSpend'), iva: k('iva'), rev: k('revenue'), rb: k('revenueBrl'), gross: k('grossRevenue'), un: k('unattributedRevenue'), rt: k('retentionRevenue'), rp: k('pushRevenue'), rw: k('whatsappRevenue'), sess: k('sessions'), ai: k('impressions'), ar: k('adRequests'), rsv: k('responsesServed'), ac: k('adClicks'),
+      vw: ms.reduce((a, m) => a + (m.viewability ?? 0) * m.impressions / 100, 0), clk: k('trafficClicks'), ti: k('trafficImpressions'), mi: k('metaImpressions'), mlc: k('metaLinkClicks'), mres: k('metaResults'), mlead: k('metaLeads'), n: ms.length });
   };
   const days: { date: string; partial: boolean; metrics: Metrics }[] = [];
   for (let d = p.to; d >= dailyFrom; d = addDays(d, -1)) days.push({ date: d, partial: d === p.today, metrics: daily.get(d) ?? toMetrics() });

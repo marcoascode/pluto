@@ -27,6 +27,7 @@ const UsersSquads = lazy(() => import('@/pages/admin/UsersSquads'));
 const IntegrationGoogle = lazy(() => import('@/pages/admin/IntegrationGoogle'));
 const IntegrationMeta = lazy(() => import('@/pages/admin/IntegrationMeta'));
 const IntegrationGam = lazy(() => import('@/pages/admin/IntegrationGam'));
+const AdminReports = lazy(() => import('@/pages/admin/AdminReports'));
 const MetaProfiles = lazy(() => import('@/pages/meta/MetaProfiles'));
 const MetaCampaignWizard = lazy(() => import('@/pages/meta/MetaCampaignWizard'));
 const FinanceCash = lazy(() => import('@/pages/finance/Cash'));
@@ -96,6 +97,10 @@ export default function App() {
           <Route path="integracoes/google-ads" element={A(<IntegrationGoogle />)} />
           <Route path="integracoes/meta-ads" element={A(<IntegrationMeta />)} />
           <Route path="integracoes/ad-manager" element={A(<IntegrationGam />)} />
+          {/* 0.18.6 · Relatórios de todas as contas (só Admin/SuperAdmin) */}
+          <Route path="relatorios/meta-ads" element={A(<AdminReports key="meta" platform="meta" />)} />
+          <Route path="relatorios/google-ads" element={A(<AdminReports key="google-ads" platform="google-ads" />)} />
+          <Route path="relatorios/ad-manager" element={A(<AdminReports key="gam" platform="gam" />)} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -36,7 +36,7 @@ campaignsAdminRouter.get('/campaigns/unmapped', async (req, res) => {
   const rows = await q<{ id: string; name: string; platform: string; status: string; accountId: string; accountName: string; spend: number; clicks: number; rows: number; firstDate: string | null; lastDate: string | null }>(`
     WITH tech AS (SELECT id FROM domains WHERE is_technical LIMIT 1),
     lost AS (
-      SELECT m.campaign_id, sum(m.spend_usd + m.iva_usd)::float AS spend, sum(m.traffic_clicks)::bigint AS clicks,
+      SELECT m.campaign_id, sum(m.spend_brl + m.iva_brl)::float AS spend, sum(m.traffic_clicks)::bigint AS clicks,
              count(*)::int AS rows, min(m.date)::text AS "firstDate", max(m.date)::text AS "lastDate"
         FROM daily_metrics m WHERE m.domain_id = (SELECT id FROM tech) AND m.source = $2 AND m.date >= $3 GROUP BY m.campaign_id)
     SELECT c.external_id AS id, c.name, c.platform, c.status, a.id::text AS "accountId", a.name AS "accountName",

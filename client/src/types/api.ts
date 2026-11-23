@@ -1,7 +1,8 @@
 /**
  * Contrato entre o front (React + Vite) e o servidor Node.js.
- * Todo valor monetário já vem CONVERTIDO para a moeda pedida em `currency`
- * (o servidor guarda original_value + exchange_rate no MySQL e converte na consulta).
+ * Moedas (0.18.6): nada é convertido nos relatórios. Receita do Ad Manager e derivados (eCPM, RPS, CPC ADX…) em USD;
+ * despesas (Google Ads + Meta Ads + IVA), ROI em R$ (profit) e custos por ação em BRL.
+ * ROI (R$) = Receita (US$) × cotação USD/BRL (travada no mês ou a atual c/ deságio) − Despesas (R$).
  * Percentuais vêm em pontos (ex.: 38.7 = 38,7%). Campos sem dado vêm como null.
  * Datas no formato YYYY-MM-DD, já normalizadas para o timezone da organização.
  */
@@ -17,23 +18,24 @@ export interface PeriodQuery {
   from: string; // YYYY-MM-DD
   to: string; // YYYY-MM-DD (inclusive)
   domain?: string; // hostname; vazio = todos os domínios do usuário
-  currency: Currency;
   company?: string; // id da Empresa (seletor do topo); vazio = todas as Empresas que o usuário vê
 }
 
 /* ---------- métricas ---------- */
 export interface Metrics {
-  revenue: number; // receita líquida = receita bruta do Ad Manager × (1 − revShare do domínio). É a que aparece nas telas.
+  revenue: number; // USD · receita líquida = receita bruta do Ad Manager × (1 − revShare do domínio). É a que aparece nas telas.
+  revenueBrl: number; // receita em R$ pela cotação do ROI (travada no mês ou atual c/ deságio)
+  fxRate: number | null; // cotação média usada no ROI (revenueBrl ÷ revenue)
   grossRevenue: number; // receita bruta do Ad Manager (uso interno; não aparece nos relatórios)
-  spend: number; // despesa total = googleSpend + metaSpend + iva
+  spend: number; // BRL · despesa total = googleSpend + metaSpend + iva
   googleSpend: number;
   metaSpend: number; // sem IVA
   iva: number; // IVA sobre a Meta = metaSpend × 13,83%
   googleShare: number | null; // googleSpend / spend × 100
   metaShare: number | null; // metaSpend / spend × 100
-  profit: number;
+  profit: number; // BRL · ROI (R$) = revenueBrl − spend
   roi: number | null; // Profit / Spend × 100
-  margin: number | null; // Profit / Revenue × 100
+  margin: number | null; // Profit / revenueBrl × 100
   rps: number | null; // Receita / Sessões
   sessionRpm: number | null; // RPM de Sessão = Receita / Sessões × 1000
   ecpm: number | null;
@@ -314,7 +316,6 @@ export interface GamSummaryResponse {
 /* ---------- relatórios (dia e mês) ---------- */
 export interface ReportQuery {
   domain?: string;
-  currency: Currency;
   company?: string;
 }
 export interface ReportRow {
@@ -327,10 +328,15 @@ export interface DailyReportResponse {
   total: Metrics; // total do mês
   days: ReportRow[]; // mais recente primeiro
 }
+/** Cotação do ROI do mês: travada (câmbio fechado) ou a atual c/ deságio. */
+export interface MonthFx { rate: number | null; locked: boolean; note: string | null; lockedAt: string | null; lockedBy: string | null }
 export interface MonthlyReportResponse {
   total: Metrics; // total de todos os meses devolvidos
-  months: ReportRow[]; // mais recente primeiro
+  months: (ReportRow & { fx: MonthFx })[]; // mais recente primeiro
+  currentRate: number | null; // USD/BRL c/ deságio (meses sem trava)
+  canLock: boolean; // Admin/SuperAdmin
 }
+export interface FxMonthLock { month: string; rate: number; note: string | null; createdAt: string; createdBy: string | null }
 
 /* ---------- atribuição / UTM ---------- */
 export type IssueType =
@@ -497,7 +503,7 @@ export interface FxLatest {
   source: string;
   brlDiscount: number; // deságio vigente (R$)
   brlDiscountFrom: string | null;
-  brlRevenueRate: number | null; // USD/BRL usado na receita do Ad Manager = cotação − deságio
+  brlRevenueRate: number | null; // USD/BRL c/ deságio = cotação − deságio (usado no ROI dos meses sem cotação travada)
 }
 export interface FxDiscountResponse {
   current: { amount: number; validFrom: string } | null;
@@ -670,3 +676,15 @@ export interface MetaDraftSave { name: string; profileId?: string | null; adAcco
 
 /** Permissões obrigatórias do System User Token (o servidor confere o mesmo conjunto). */
 export const META_REQUIRED_SCOPES = ['ads_management', 'ads_read', 'business_management', 'pages_show_list', 'pages_read_engagement', 'public_profile'] as const;
+
+/* ---------- 0.18.6 · Administração → Relatórios (só Admin/SuperAdmin) ---------- */
+export type AdminReportPlatform = 'meta' | 'google-ads' | 'gam';
+export interface AdminReportAccount { id: string; name: string; externalId: string; currency: string; imported: boolean; status: string }
+export interface AdminReportAccountsResponse { platform: AdminReportPlatform; currency: Currency; accounts: AdminReportAccount[] }
+/** Métricas por plataforma: Meta e Google Ads em BRL, Ad Manager em USD (sem conversão). */
+export type AdminReportMetrics = Record<string, number | null>;
+export interface AdminReportRow { date: string | null; accountId: string; accountName: string; externalId: string; metrics: AdminReportMetrics }
+export interface AdminReportResponse {
+  platform: AdminReportPlatform; mode: 'account' | 'period'; from: string; to: string; currency: Currency;
+  accounts: AdminReportAccount[]; rows: AdminReportRow[]; total: AdminReportMetrics;
+}

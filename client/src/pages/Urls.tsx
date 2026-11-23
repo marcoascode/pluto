@@ -10,7 +10,7 @@ import { DropOff, MetricValue, RoiChip } from '@/components/ui/Values';
 import { NO_URL, UrlLink } from '@/components/ui/UrlLink';
 import { OriginCard } from '@/components/urls/OriginCard';
 import { domainLabel, int, longDate, money, pct0 } from '@/lib/format';
-import { DROP_MIN_RESPONSES, METRIC_DEFS, metricValue, type MetricKey } from '@/lib/metrics';
+import { DROP_MIN_RESPONSES, METRIC_DEFS, metricCurrency, metricValue, type MetricKey } from '@/lib/metrics';
 import { addDays, todayISO } from '@/lib/period';
 
 const RANK: [MetricKey, string][] = [['roi', 'ROI %'], ['profit', 'ROI'], ['revenue', 'Receita'], ['ecpm', 'eCPM'], ['dropOffRate', 'Drop-off (maior)']];
@@ -83,7 +83,7 @@ export default function UrlsPage() {
                 </Box>
                 <Box sx={{ ...cell, borderRight: 1 }}>
                   <Typography variant="caption" sx={{ color: 'text.secondary' }}>Receita estimada perdida</Typography>
-                  <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 22, my: 0.5, color: drop.lost > 0 ? p.warn : 'inherit' }}>{money(drop.lost, f.currency)}</Typography>
+                  <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 22, my: 0.5, color: drop.lost > 0 ? p.warn : 'inherit' }}>{money(drop.lost, 'USD')}</Typography>
                   <Typography variant="caption">nas URLs acima de 20%, pelo eCPM da própria URL</Typography>
                 </Box>
                 <Stack spacing={0.75} sx={{ ...cell, justifyContent: 'center' }}>
@@ -136,7 +136,7 @@ export default function UrlsPage() {
                   <Stack key={u.domain + u.path} direction="row" spacing={1.25} sx={{ alignItems: 'center', py: 1.1, borderBottom: i < top.length - 1 ? 1 : 0, borderColor: 'divider' }}>
                     <Avatar sx={{ width: 26, height: 26, fontSize: 12, fontWeight: 700, ...(isDrop ? { bgcolor: alpha(p.neg, 0.15), color: p.neg } : { bgcolor: MEDAL[i] ?? 'action.selected', color: i < 3 ? '#1a1300' : 'text.secondary' }) }}>{i + 1}</Avatar>
                     <Box sx={{ flex: 1, minWidth: 0 }}><UrlLink domain={u.domain} path={u.path} />{!dom && <Typography variant="caption" component="div">{u.domain}</Typography>}</Box>
-                    <b>{rk === 'roi' ? <RoiChip v={u.metrics.roi} /> : isDrop ? <DropOff v={u.metrics.dropOffRate} /> : money(metricValue(u.metrics, undefined, rk), f.currency)}</b>
+                    <b>{rk === 'roi' ? <RoiChip v={u.metrics.roi} /> : isDrop ? <DropOff v={u.metrics.dropOffRate} /> : money(metricValue(u.metrics, undefined, rk), metricCurrency(rk))}</b>
                   </Stack>
                 ))}
                 {!top.length && <Typography variant="caption">Sem dados suficientes.</Typography>}

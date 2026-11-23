@@ -130,6 +130,12 @@ export const adminApi = {
   saveFxDiscount: (b: { amount: number; validFrom?: string }) => api.put<T.FxDiscountResponse>('/admin/fx-discount', b),
   /** Força buscar a cotação agora na API de câmbio (o servidor também faz isso sozinho). */
   refreshFx: () => api.post<T.FxLatest>('/admin/fx/refresh'),
+  /** 0.18.6 · cotação travada por mês (YYYY-MM) para o ROI. */
+  lockFx: (b: { month: string; rate: number; note?: string | null }) => api.put<{ locks: T.FxMonthLock[] }>(`/admin/fx-locks/${b.month}`, { rate: b.rate, note: b.note ?? null }),
+  unlockFx: (month: string) => api.del<{ locks: T.FxMonthLock[] }>(`/admin/fx-locks/${month}`),
+  /** 0.18.6 · Administração → Relatórios (Meta Ads, Google Ads, Ad Manager). */
+  reportAccounts: (p: T.AdminReportPlatform) => api.get<T.AdminReportAccountsResponse>(`/admin/reports/${p}/accounts`),
+  report: (p: T.AdminReportPlatform, q: { mode: 'account' | 'period'; from: string; to: string; accounts?: string }) => api.get<T.AdminReportResponse>(`/admin/reports/${p}`, { ...q }),
 };
 
 export const financeApi = {

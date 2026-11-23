@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.6
+- **Moedas sem conversão nos relatórios**: receita (Google Ad Manager) fica sempre em **US$** e despesas (Google Ads + Meta Ads + IVA da Meta) sempre em **R$**, em todas as telas, para "Todos os domínios" e para domínio específico. O sync passou a gravar o custo das contas em BRL (moeda em que pagam; migration `019` converte o histórico gravado em USD pela mesma taxa do dia e renomeia `spend_usd`/`iva_usd` → `spend_brl`/`iva_brl`).
+- **ROI com a cotação só no cálculo**: ROI (R$) = Receita (US$) × cotação USD/BRL − Despesas (R$). ROI %, Margem e o resultado por site do Finance usam o mesmo cálculo. Saiu o seletor de moeda do topo (USD/BRL/EUR); ficou só a cotação atual "USD/BRL c/ deságio".
+- **Travar cotação** (Relatórios → Resultados mensais, coluna Cotação, só Admin/SuperAdmin): grava a cotação do câmbio do mês (`fx_month_locks`), que passa a valer para o ROI daquele mês e não flutua mais. Meses sem trava usam a cotação atual c/ deságio.
+- **Integrações → Meta Ads**: card "Campanhas sem domínio" movido para o fim da página, abaixo de Sincronização.
+- **Administração → Relatórios** (só Admin/SuperAdmin): Meta Ads, Google Ads e Google Ad Manager com as métricas de todas as contas conectadas. **Por conta** (escolha as contas; linhas data × conta) ou **Por período** (todas as contas com o total do período). Usa a Data do topo e exporta CSV.
+
 ## 0.18.5
 - **Criação de campanhas Meta · Etapa 3 (Configuração)**: novo bloco **Posicionamentos** do Conjunto de Anúncios. Padrão: automáticos (Advantage+). Em **Manuais**, dá para marcar/desmarcar plataformas inteiras (Facebook, Instagram, Audience Network, Messenger), cada posição (Feed, Stories, Reels, Explorar, Marketplace, Coluna da direita…) e os dispositivos (celular/computador). A seleção vai para `targeting.publisher_platforms`, `<plataforma>_positions` e `device_platforms`, é salva nas campanhas pendentes e aparece no resumo da revisão.
 - Validação no assistente e no servidor: ao menos um posicionamento e um dispositivo; Audience Network e Messenger só junto com o Facebook; posição só para plataforma escolhida.

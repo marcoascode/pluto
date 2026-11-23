@@ -1,7 +1,7 @@
 import { Box, Chip, Tooltip, alpha, useTheme } from '@mui/material';
-import { useFilters } from '@/context/FiltersContext';
 import { money, pct, pct0 } from '@/lib/format';
-import { dropClass, formatMetric, METRIC_DEFS, roiClass, type MetricKey, type RoiClass } from '@/lib/metrics';
+import { COST_CUR, dropClass, formatMetric, METRIC_DEFS, roiClass, type MetricKey, type RoiClass } from '@/lib/metrics';
+import type { Currency } from '@/types/api';
 
 /** Cores do ROI: <0 vermelho · 0 cinza · 0–20 neutro · 20–30 verde claro · 30%+ verde forte */
 export function useRoiColors() {
@@ -34,23 +34,22 @@ export function RoiText0({ v }: { v: number | null | undefined }) {
   const col = useRoiColors()(roiClass(v));
   return <Box component="span" sx={{ color: col.text }}>{pct0(v)}</Box>;
 }
+/** ROI em R$ (Receita × cotação − Despesas), colorido. */
 export function Profit({ v }: { v: number | null | undefined }) {
-  const { currency } = useFilters();
   const { pluto: p } = useTheme();
   if (v == null) return <>—</>;
-  return <Box component="span" sx={{ color: v > 0.005 ? p.pos : v < -0.005 ? p.neg : 'inherit' }}>{money(v, currency)}</Box>;
+  return <Box component="span" sx={{ color: v > 0.005 ? p.pos : v < -0.005 ? p.neg : 'inherit' }}>{money(v, COST_CUR)}</Box>;
 }
-export function Money({ v, d = 2 }: { v: number | null | undefined; d?: number }) {
-  const { currency } = useFilters();
-  return <>{money(v, currency, d)}</>;
+/** Valor em dinheiro na moeda de origem: cur = 'USD' (receita do Ad Manager) ou 'BRL' (despesas). Use REVENUE_CUR / COST_CUR / metricCurrency(k). */
+export function Money({ v, cur, d = 2 }: { v: number | null | undefined; cur: Currency; d?: number }) {
+  return <>{money(v, cur, d)}</>;
 }
 export function MetricValue({ k, v }: { k: MetricKey; v: number | null }) {
-  const { currency } = useFilters();
   const kind = METRIC_DEFS[k].kind;
   if (kind === 'chip') return <RoiChip v={v} />;
   if (kind === 'profit') return <Profit v={v} />;
   if (kind === 'drop') return <DropOff v={v} />;
-  return <>{formatMetric(k, v, currency)}</>;
+  return <>{formatMetric(k, v)}</>;
 }
 /** ▲/▼ vs período anterior. pp = pontos percentuais (ROI, Margem). neutral = sem cor (Spend). */
 export function Delta({ cur, prev, pp, neutral, title }: { cur: number | null; prev: number | null | undefined; pp?: boolean; neutral?: boolean; title?: string }) {

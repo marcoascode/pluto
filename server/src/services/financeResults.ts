@@ -4,7 +4,7 @@
  * Resultado do site no mês (em R$) = receita líquida do dash − despesas de anúncio do dash − outros gastos do Caixa
  *   com o site − custos do site (aba Custos).
  *   Receita e despesa de anúncio são os MESMOS números da Home (daily_metrics: receita do Ad Manager já sem o revshare,
- *   cotação do dia com deságio; Google + Meta + IVA). Assim a comissão não depende de lançar a receita por site no Caixa
+ *   convertida pela cotação do ROI do mês (travada ou atual c/ deságio); Google + Meta + IVA em R$). Assim a comissão não depende de lançar a receita por site no Caixa
  *   e não conta a fatura do Google/Meta duas vezes (gastos Google Ads/Meta Ads lançados no Caixa ficam fora daqui).
  *   "Mês" dos lançamentos do Caixa = mês de referência (competence) ou, sem ele, o mês da data.
  * Gestor do site = vínculo manual em "Gestores e sites" (com rateio e datas) ou, sem vínculo manual no mês,
@@ -54,7 +54,7 @@ export async function siteResults(companyIds: string[], month: string): Promise<
     fxTable(`${month}-01`, t),
     // mês fechado inteiro (ou até hoje, no mês corrente), em R$: mesmos números da Home
     month > t.slice(0, 7) ? Promise.resolve(new Map()) :
-      aggregate({ from: `${month}-01`, to: rateDay, domainIds: doms.map((d) => d.id), filter: null, currency: 'BRL', groupBy: 'm.domain_id' }),
+      aggregate({ from: `${month}-01`, to: rateDay, domainIds: doms.map((d) => d.id), filter: null, groupBy: 'm.domain_id' }),
   ]);
   const map = new Map<string, SiteMonth>();
   const get = (c: string, s: string) => {
@@ -65,7 +65,7 @@ export async function siteResults(companyIds: string[], month: string): Promise<
   for (const d of doms) {
     const m = dash.get(d.id);
     const x = get(d.company_id, d.site);
-    if (m) { x.revenue += m.revenue; x.ads += m.spend; }
+    if (m) { x.revenue += m.revenueBrl; x.ads += m.spend; }   // receita em R$ pela cotação do ROI (travada no mês ou atual c/ deságio)
   }
   for (const e of entries) get(e.company_id, e.site).otherExpenses += conv(e.amount, e.currency, 'BRL', e.date);
   for (const c of costs) if (c.site && appliesIn(c, month)) get(c.company_id, c.site).siteCosts += conv(amountIn(c, month), c.currency, 'BRL', rateDay);

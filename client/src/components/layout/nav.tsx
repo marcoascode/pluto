@@ -22,6 +22,7 @@ import EmojiEventsOutlinedIcon from '@mui/icons-material/EmojiEventsOutlined';
 import ManageAccountsOutlinedIcon from '@mui/icons-material/ManageAccountsOutlined';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
+import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined';
 
 export interface NavItem { to: string; label: string; icon: ReactElement; cap?: Capability; manager?: boolean; metaCampaigns?: boolean }
 export const NAV_MAIN: { title: string | null; items: NavItem[] }[] = [
@@ -40,6 +41,7 @@ export const NAV_FINANCE: NavItem[] = [
 /** Só Admin e SuperAdmin veem. O servidor também bloqueia /admin/* com 403. */
 export const NAV_ADMIN: { title: string; items: NavItem[] }[] = [
   { title: 'Integrações', items: [{ to: '/admin/integracoes/google-ads', label: 'Google Ads', icon: <PowerOutlinedIcon /> }, { to: '/admin/integracoes/meta-ads', label: 'Meta Ads', icon: <PowerOutlinedIcon /> }, { to: '/admin/integracoes/ad-manager', label: 'Google Ad Manager', icon: <PowerOutlinedIcon /> }] },
+  { title: 'Relatórios', items: [{ to: '/admin/relatorios/meta-ads', label: 'Meta Ads', icon: <AssessmentOutlinedIcon /> }, { to: '/admin/relatorios/google-ads', label: 'Google Ads', icon: <AssessmentOutlinedIcon /> }, { to: '/admin/relatorios/ad-manager', label: 'Google Ad Manager', icon: <AssessmentOutlinedIcon /> }] },
   { title: 'Configurações', items: [{ to: '/admin/contas', label: 'Contas', icon: <AccountBalanceWalletOutlinedIcon /> }, { to: '/admin/dominios', label: 'Domínios', icon: <PublicOutlinedIcon /> }, { to: '/admin/utms', label: 'Attribution / UTMs', icon: <SellOutlinedIcon /> }, { to: '/admin/moedas', label: 'Moedas', icon: <CurrencyExchangeOutlinedIcon /> }, { to: '/admin/usuarios', label: 'Usuários & Squads', icon: <GroupsOutlinedIcon /> }] },
 ];
 export const isActive = (path: string, to: string) => (to === '/' ? path === '/' : path === to || path.startsWith(to + '/'));

@@ -114,7 +114,7 @@ export async function latest() {
   return {
     base: 'USD' as const,
     rates: { USD: 1, BRL: by.BRL?.rate_per_usd ?? null, EUR: by.EUR?.rate_per_usd ?? null },
-    /** Deságio (R$) e a cotação USD/BRL usada na receita do Ad Manager (cotação − deságio). */
+    /** Deságio (R$) e a cotação USD/BRL usada no ROI dos meses sem cotação travada (cotação − deságio). */
     brlDiscount: disc?.amount ?? 0,
     brlDiscountFrom: disc?.validFrom ?? null,
     brlRevenueRate: brl != null ? Math.max(0.0001, brl - (disc?.amount ?? 0)) : null,
@@ -128,6 +128,34 @@ export async function history(days: number) {
     `SELECT date::text, max(rate_per_usd) FILTER (WHERE currency = 'BRL') AS "BRL", max(rate_per_usd) FILTER (WHERE currency = 'EUR') AS "EUR"
        FROM currency_rates WHERE date > $1::date - $2::int GROUP BY date ORDER BY date DESC`, [today(), days]);
   return { rows };
+}
+
+/* ---------------- cotação do ROI (0.18.6) ---------------- */
+let rrCache: { at: number; v: number | null } | null = null;
+/** Cotação USD/BRL atual com deságio (a do topo das telas). Usada no ROI dos meses sem cotação travada. Cache de 60 s. */
+export async function revenueRateNow(): Promise<number | null> {
+  if (rrCache && Date.now() - rrCache.at < 60_000) return rrCache.v;
+  const r = await one<{ rate: string | null }>(`SELECT rate_per_usd AS rate FROM currency_rates WHERE currency = 'BRL' ORDER BY date DESC LIMIT 1`);
+  const disc = await currentDiscount();
+  const v = r?.rate != null ? Math.max(0.0001, Number(r.rate) - (disc?.amount ?? 0)) : null;
+  rrCache = { at: Date.now(), v };
+  return v;
+}
+export const clearRevenueRateCache = () => { rrCache = null; };
+
+/* ---------------- cotação travada por mês ---------------- */
+export interface MonthLock { month: string; rate: number; note: string | null; createdAt: string; createdBy: string | null }
+export async function monthLocks(): Promise<MonthLock[]> {
+  return (await q<{ month: string; rate: string; note: string | null; createdAt: string; createdBy: string | null }>(`
+    SELECT to_char(l.month, 'YYYY-MM') AS month, l.rate, l.note, l.created_at AS "createdAt", u.name AS "createdBy"
+      FROM fx_month_locks l LEFT JOIN users u ON u.id = l.created_by ORDER BY l.month DESC`)).map((r) => ({ ...r, rate: Number(r.rate) }));
+}
+export async function setMonthLock(month: string, rate: number, note: string | null, userId: string) {
+  await q(`INSERT INTO fx_month_locks (month, rate, note, created_by) VALUES ($1::date, $2, $3, $4)
+           ON CONFLICT (month) DO UPDATE SET rate = EXCLUDED.rate, note = EXCLUDED.note, created_by = EXCLUDED.created_by, created_at = now()`, [`${month}-01`, rate, note, userId]);
+}
+export async function removeMonthLock(month: string) {
+  await q(`DELETE FROM fx_month_locks WHERE month = $1::date`, [`${month}-01`]);
 }
 
 /* ---------------- deságio ---------------- */

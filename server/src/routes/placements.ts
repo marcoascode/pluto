@@ -2,7 +2,7 @@
  * Placements do Google Ads × receita do Ad Manager.
  * Fluxo da tela: 1) domínio (obrigatório) → 2) contas Google Ads do domínio → 3) campanhas → pesquisa.
  *   GET /placements/filters?domain=            contas e campanhas Google do domínio (para os seletores)
- *   GET /placements?domain=&accounts=&campaigns=&from&to&currency
+ *   GET /placements?domain=&accounts=&campaigns=&from&to
  *                                              placements agrupados pelo domínio principal + totais + comparação
  *   GET /placements/campaigns?…&placement=&level=root|host   campanhas que gastaram naquele placement
  * Escopo: scope() + canSeeCampaign (Gestor só as campanhas das contas dele) + permissão de Google Ads.
@@ -87,7 +87,7 @@ export function spreadRootRevenue<T extends HostRow>(root: string, hosts: T[]): 
 placementsRouter.get('/', async (req, res) => {
   const p = period(req);
   const s = await selection(req);
-  const base = { currency: p.currency, domainId: s.domainId, campaignIds: s.use.map((c) => c.db_id) };
+  const base = { domainId: s.domainId, campaignIds: s.use.map((c) => c.db_id) };
   const prev = previous(p.from, p.to, p.today);
   const SEP = `m.placement_root || '|' || m.placement`;
   const [totals, cmp, trd, byHost, hostRd, rootRd] = await Promise.all([
@@ -120,7 +120,7 @@ placementsRouter.get('/campaigns', async (req, res) => {
   const s = await selection(req);
   const placement = parse(z.string().min(1).max(200), req.query.placement);
   const level = req.query.level === 'host' ? 'host' : 'root';
-  const base = { currency: p.currency, domainId: s.domainId, campaignIds: s.use.map((c) => c.db_id), where: `m.${level === 'host' ? 'placement' : 'placement_root'} = $6`, params: [placement] };
+  const base = { domainId: s.domainId, campaignIds: s.use.map((c) => c.db_id), where: `m.${level === 'host' ? 'placement' : 'placement_root'} = $6`, params: [placement] };
   const [totals, byCamp, byHost] = await Promise.all([
     aggregatePlacements({ ...base, from: p.from, to: p.to }).then((m) => m.get('') ?? toMetrics()),
     aggregatePlacements({ ...base, from: p.from, to: p.to, groupBy: 'm.campaign_id' }),

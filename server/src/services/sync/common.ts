@@ -34,19 +34,25 @@ export async function windowFor(source: Source, kind: 'recent' | 'close', table:
   return { from: addDays(t, -clamp(st?.days ?? 3)), to: t, backfill: false };
 }
 
-/* ---------------- câmbio: valor na moeda da conta → USD pela taxa do dia ---------------- */
-export async function fxToUsd(from: string, to: string) {
+/* ---------------- câmbio: valor na moeda da conta → BRL (0.18.6) ----------------
+   Custos de anúncio ficam em BRL (moeda das contas Google Ads / Meta Ads). Conta em BRL: valor exato, sem conversão.
+   Conta em outra moeda (raro): converte para BRL pela taxa do dia. A receita do Ad Manager continua em USD. */
+export async function fxToBrl(from: string, to: string) {
   const rows = await q<{ date: string; currency: string; rate_per_usd: number }>(
     `SELECT date::text, currency, rate_per_usd FROM currency_rates WHERE date BETWEEN ($1::date - 10) AND $2::date ORDER BY date`, [from, to]);
   const by = new Map<string, Map<string, number>>();
-  for (const r of rows) { if (!by.has(r.currency)) by.set(r.currency, new Map()); by.get(r.currency)!.set(r.date, r.rate_per_usd); }
-  return (amount: number, currency: string, date: string): number => {
-    const cur = currency.toUpperCase();
-    if (cur === 'USD' || !amount) return amount;
+  for (const r of rows) { if (!by.has(r.currency)) by.set(r.currency, new Map()); by.get(r.currency)!.set(r.date, Number(r.rate_per_usd)); }
+  const rate = (cur: string, date: string): number => {
+    if (cur === 'USD') return 1;
     const m = by.get(cur);
     if (!m) throw new SyncError('fx_missing', `Sem cotação USD/${cur} no banco para converter o custo. Rode a atualização de câmbio.`);
-    for (let d = date, i = 0; i < 11; d = addDays(d, -1), i++) { const r = m.get(d); if (r) return amount / r; }
+    for (let d = date, i = 0; i < 11; d = addDays(d, -1), i++) { const r = m.get(d); if (r) return r; }
     throw new SyncError('fx_missing', `Sem cotação USD/${cur} perto de ${date}.`);
+  };
+  return (amount: number, currency: string, date: string): number => {
+    const cur = currency.toUpperCase();
+    if (cur === 'BRL' || !amount) return amount;
+    return (amount / rate(cur, date)) * rate('BRL', date);
   };
 }
 
@@ -156,7 +162,8 @@ export async function upsertAd(adGroupId: string, extId: string, name: string, f
 export interface Fact {
   date: string; domainId: string; urlId: string | null; platform: Platform;
   campaignId: string | null; adGroupId: string | null; adId: string | null; country: string; reason: string | null;
-  spendUsd: number; ivaUsd: number; revenueUsd: number; sessions: number; impressions: number; adRequests: number;
+  /** Custo e IVA em BRL (0.18.6) · receita do Ad Manager em USD. */
+  spendBrl: number; ivaBrl: number; revenueUsd: number; sessions: number; impressions: number; adRequests: number;
   responsesServed: number; adClicks: number; viewable: number; trafficClicks: number; trafficImpressions: number;
   /** Meta (actions): cliques no link, conversas por mensagem iniciadas (7d) e leads. */
   metaLinkClicks: number; metaResults: number; metaLeads: number;
@@ -165,9 +172,9 @@ export interface Fact {
 }
 export const emptyFact = (p: Partial<Fact> & Pick<Fact, 'date' | 'domainId' | 'platform'>): Fact => ({
   urlId: null, campaignId: null, adGroupId: null, adId: null, country: 'ZZ', reason: null, utmSource: null,
-  spendUsd: 0, ivaUsd: 0, revenueUsd: 0, sessions: 0, impressions: 0, adRequests: 0, responsesServed: 0, adClicks: 0, viewable: 0, trafficClicks: 0, trafficImpressions: 0, metaLinkClicks: 0, metaResults: 0, metaLeads: 0, ...p,
+  spendBrl: 0, ivaBrl: 0, revenueUsd: 0, sessions: 0, impressions: 0, adRequests: 0, responsesServed: 0, adClicks: 0, viewable: 0, trafficClicks: 0, trafficImpressions: 0, metaLinkClicks: 0, metaResults: 0, metaLeads: 0, ...p,
 });
-const NUM: (keyof Fact)[] = ['spendUsd', 'ivaUsd', 'revenueUsd', 'sessions', 'impressions', 'adRequests', 'responsesServed', 'adClicks', 'viewable', 'trafficClicks', 'trafficImpressions', 'metaLinkClicks', 'metaResults', 'metaLeads'];
+const NUM: (keyof Fact)[] = ['spendBrl', 'ivaBrl', 'revenueUsd', 'sessions', 'impressions', 'adRequests', 'responsesServed', 'adClicks', 'viewable', 'trafficClicks', 'trafficImpressions', 'metaLinkClicks', 'metaResults', 'metaLeads'];
 
 /** Soma linhas que caem no mesmo grão (a chave única da tabela). */
 export function mergeFacts(rows: Fact[]): Fact[] {
@@ -188,7 +195,7 @@ const ISO2 = /^[A-Z]{2}$/;
  */
 /** scope: ids de campanhas · 'all' (a origem inteira) · { domains } (Ad Manager: só os domínios daquela rede). */
 /** Colunas somáveis de daily_metrics e o alvo ON CONFLICT do índice de grão (daily_metrics_grain_uq). */
-export const METRIC_SUMS = ['spend_usd', 'iva_usd', 'revenue_usd', 'impressions', 'ad_requests', 'responses_served', 'ad_clicks', 'viewable', 'traffic_clicks', 'traffic_impressions', 'meta_link_clicks', 'meta_results', 'meta_leads'];
+export const METRIC_SUMS = ['spend_brl', 'iva_brl', 'revenue_usd', 'impressions', 'ad_requests', 'responses_served', 'ad_clicks', 'viewable', 'traffic_clicks', 'traffic_impressions', 'meta_link_clicks', 'meta_results', 'meta_leads'];
 export const GRAIN_CONFLICT = `(source, date, domain_id, (COALESCE(url_id, 0)), platform, (COALESCE(campaign_id, 0)), (COALESCE(ad_group_id, 0)), (COALESCE(ad_id, 0)), country, (COALESCE(unattributed_reason, '')), (COALESCE(utm_source, '')))`;
 /** Colunas de chave (fora as somáveis) usadas ao regravar/somar linhas. */
 export const GRAIN_COLS = 'source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason, utm_source';
@@ -204,7 +211,7 @@ export async function replaceFacts(source: Source, from: string, to: string, sco
       const col = <K extends keyof Fact>(k: K) => ch.map((f) => f[k]);
       await c.query(`
         INSERT INTO daily_metrics (source, date, domain_id, url_id, platform, campaign_id, ad_group_id, ad_id, country, unattributed_reason,
-          spend_usd, iva_usd, revenue_usd, sessions, impressions, ad_requests, responses_served, ad_clicks, viewable, traffic_clicks, traffic_impressions, is_final, updated_at,
+          spend_brl, iva_brl, revenue_usd, sessions, impressions, ad_requests, responses_served, ad_clicks, viewable, traffic_clicks, traffic_impressions, is_final, updated_at,
           meta_link_clicks, meta_results, meta_leads, utm_source)
         SELECT $1, d, dom, u, p, c, g, a, co, re, sp, iv, rv, se, im, ar, rs, ac, vw, tc, ti, $22, now(), lc, rr, ld, us
           FROM unnest($2::date[], $3::bigint[], $4::bigint[], $5::text[], $6::bigint[], $7::bigint[], $8::bigint[], $9::text[], $10::text[],
@@ -213,7 +220,7 @@ export async function replaceFacts(source: Source, from: string, to: string, sco
             AS t(d, dom, u, p, c, g, a, co, re, sp, iv, rv, se, im, ar, rs, ac, vw, tc, ti, lc, rr, ld, us)`,
         [source, col('date'), col('domainId'), col('urlId'), col('platform'), col('campaignId'), col('adGroupId'), col('adId'),
           ch.map((f) => (ISO2.test(f.country) ? f.country : 'ZZ')), col('reason'),
-          ch.map((f) => round4(f.spendUsd)), ch.map((f) => round4(f.ivaUsd)), ch.map((f) => round4(f.revenueUsd)),
+          ch.map((f) => round4(f.spendBrl)), ch.map((f) => round4(f.ivaBrl)), ch.map((f) => round4(f.revenueUsd)),
           ch.map((f) => Math.round(f.sessions)), ch.map((f) => Math.round(f.impressions)), ch.map((f) => Math.round(f.adRequests)), ch.map((f) => Math.round(f.responsesServed)),
           ch.map((f) => Math.round(f.adClicks)), ch.map((f) => Math.round(f.viewable)), ch.map((f) => Math.round(f.trafficClicks)), ch.map((f) => Math.round(f.trafficImpressions)), isFinal,
           ch.map((f) => Math.round(f.metaLinkClicks)), ch.map((f) => Math.round(f.metaResults)), ch.map((f) => Math.round(f.metaLeads)), col('utmSource')]);

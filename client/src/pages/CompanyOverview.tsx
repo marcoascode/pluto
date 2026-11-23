@@ -29,7 +29,7 @@ export default function CompanyOverviewPage() {
   if (!data) return null;
   const days = data.daily.filter((d) => !d.partial).sort((a, b) => a.date.localeCompare(b.date)).slice(-14);
   const labels = days.map((d) => ddmm(d.date));
-  const yM = (v: number) => compactMoney(v, f.currency);
+  const yM = (v: number) => compactMoney(v, 'BRL');
   const nDom = data.squads.reduce((a, s) => a + s.domains.length, 0);
   const filtered = f.company === data.company.id;
   return (
@@ -59,13 +59,13 @@ export default function CompanyOverviewPage() {
       <Grid container spacing={1.75} sx={{ mt: 0.25 }}>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card><CardHeader title="Despesas vs Receita" subheader="Por dia · hoje (parcial) fica fora" />
-            <CardContent><SpendRevenueChart height={h} labels={labels} yfmt={yM} revenue={days.map((d) => d.metrics.revenue)} spend={days.map((d) => d.metrics.spend)}
-              tip={(i) => [['Receita', money(days[i].metrics.revenue, f.currency), '#3d8fec'], ['Despesas', money(days[i].metrics.spend, f.currency), '#cf7a2e'], ['ROI', money(days[i].metrics.profit, f.currency)], ['ROI %', pct(days[i].metrics.roi)]]} /></CardContent></Card>
+            <CardContent><SpendRevenueChart height={h} labels={labels} yfmt={yM} revenue={days.map((d) => d.metrics.revenueBrl)} spend={days.map((d) => d.metrics.spend)}
+              tip={(i) => [['Receita', `${money(days[i].metrics.revenue, 'USD')} · ${money(days[i].metrics.revenueBrl, 'BRL')}`, '#3d8fec'], ['Despesas', money(days[i].metrics.spend, 'BRL'), '#cf7a2e'], ['ROI', money(days[i].metrics.profit, 'BRL')], ['ROI %', pct(days[i].metrics.roi)]]} /></CardContent></Card>
         </Grid>
         <Grid size={{ xs: 12, md: 6 }}>
           <Card><CardHeader title="Lucro diário" subheader="Soma de todos os Squads da Empresa" />
             <CardContent><DailyChart height={h} labels={labels} name="Lucro" bars yfmt={yM} values={days.map((d) => d.metrics.profit)}
-              tip={(i) => [['ROI', money(days[i].metrics.profit, f.currency)], ['ROI %', pct(days[i].metrics.roi)], ['Margem', pct(days[i].metrics.margin)]]} /></CardContent></Card>
+              tip={(i) => [['ROI', money(days[i].metrics.profit, 'BRL')], ['ROI %', pct(days[i].metrics.roi)], ['Margem', pct(days[i].metrics.margin)]]} /></CardContent></Card>
         </Grid>
       </Grid>
       <Stack direction="row" sx={{ alignItems: 'baseline', justifyContent: 'space-between', mt: 3, mb: 1.25 }}>
@@ -100,14 +100,14 @@ function SquadCard({ s }: { s: Sq }) {
     <Card>
       <CardHeader title={s.name} subheader={`${s.domains.length} domínio${s.domains.length === 1 ? '' : 's'}`}
         action={<Stack direction="row" spacing={2} sx={{ alignItems: 'center', pr: 1, display: { xs: 'none', sm: 'flex' } }}>
-          {([['Receita', <Money key="r" v={m.revenue} />], ['Despesas', <Money key="s" v={m.spend} />], ['ROI', <Profit key="p" v={m.profit} />]] as const).map(([l, v]) => <Box key={l} sx={{ textAlign: 'right' }}><Typography variant="caption" component="div">{l}</Typography><Typography sx={{ fontWeight: 600 }} component="div">{v}</Typography></Box>)}
+          {([['Receita', <Money key="r" v={m.revenue} cur="USD" />], ['Despesas', <Money key="s" v={m.spend} cur="BRL" />], ['ROI', <Profit key="p" v={m.profit} />]] as const).map(([l, v]) => <Box key={l} sx={{ textAlign: 'right' }}><Typography variant="caption" component="div">{l}</Typography><Typography sx={{ fontWeight: 600 }} component="div">{v}</Typography></Box>)}
           <RoiChip v={m.roi} />
         </Stack>} />
       {mobile ? (
         <Box>{rows.map((d) => (
           <Box key={d.domain} sx={{ p: 1.5, borderTop: 1, borderColor: 'divider', boxShadow: d.metrics.profit < 0 && d.metrics.spend > 0 ? `inset 3px 0 0 ${p.neg}` : 'none' }}>
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}><Box><Link component={RouterLink} to={`/dominios/${encodeURIComponent(d.domain)}`} underline="hover" sx={{ fontWeight: 600 }}>{d.domain}</Link>{gest(d.gestores)}</Box><RoiChip v={d.metrics.roi} /></Stack>
-            <Grid container spacing={1} sx={{ mt: 1 }}>{([['Receita', <Money key="r" v={d.metrics.revenue} />], ['Despesas', <Money key="s" v={d.metrics.spend} />], ['ROI', <Profit key="p" v={d.metrics.profit} />]] as const).map(([l, v]) => <Grid key={l} size={4}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600 }}>{v}</Typography></Grid>)}</Grid>
+            <Grid container spacing={1} sx={{ mt: 1 }}>{([['Receita', <Money key="r" v={d.metrics.revenue} cur="USD" />], ['Despesas', <Money key="s" v={d.metrics.spend} cur="BRL" />], ['ROI', <Profit key="p" v={d.metrics.profit} />]] as const).map(([l, v]) => <Grid key={l} size={4}><Typography variant="caption">{l}</Typography><Typography component="div" sx={{ fontWeight: 600 }}>{v}</Typography></Grid>)}</Grid>
           </Box>
         ))}</Box>
       ) : (
@@ -121,15 +121,15 @@ function SquadCard({ s }: { s: Sq }) {
                     <Link component={RouterLink} to={`/dominios/${encodeURIComponent(d.domain)}`} underline="hover" sx={{ fontWeight: 600 }}>{d.domain}</Link>
                     <Tooltip title="Gestores do domínio"><Box>{gest(d.gestores)}</Box></Tooltip>
                   </TableCell>
-                  <TableCell align="right"><Money v={d.metrics.revenue} /></TableCell>
-                  <TableCell align="right"><Money v={d.metrics.spend} /></TableCell>
+                  <TableCell align="right"><Money v={d.metrics.revenue} cur="USD" /></TableCell>
+                  <TableCell align="right"><Money v={d.metrics.spend} cur="BRL" /></TableCell>
                   <TableCell align="right"><Profit v={d.metrics.profit} /></TableCell>
                   <TableCell align="right">{d.metrics.margin == null ? '—' : <Tag tone={d.metrics.margin < 0 ? 'neg' : d.metrics.margin < 30 ? 'warn' : 'pos'}>{pct0(d.metrics.margin)}</Tag>}</TableCell>
                   <TableCell align="right"><RoiChip v={d.metrics.roi} /></TableCell>
                 </TableRow>
               ))}
               <TableRow sx={{ '& td': { bgcolor: p.panel2, fontWeight: 600 } }}>
-                <TableCell>Total · {s.name}</TableCell><TableCell align="right"><Money v={m.revenue} /></TableCell><TableCell align="right"><Money v={m.spend} /></TableCell>
+                <TableCell>Total · {s.name}</TableCell><TableCell align="right"><Money v={m.revenue} cur="USD" /></TableCell><TableCell align="right"><Money v={m.spend} cur="BRL" /></TableCell>
                 <TableCell align="right"><Profit v={m.profit} /></TableCell><TableCell align="right">{pct0(m.margin)}</TableCell><TableCell align="right"><RoiChip v={m.roi} /></TableCell>
               </TableRow>
             </TableBody>

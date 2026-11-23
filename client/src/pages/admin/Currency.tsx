@@ -19,7 +19,7 @@ export default function CurrencyPage() {
   if (!fx) return <PageSkeleton />;
   return (
     <>
-      <PageHead title="Moedas" sub="USD é a moeda principal. Valores em moedas diferentes nunca são somados direto." />
+      <PageHead title="Moedas" sub="Receita do Ad Manager em USD · despesas (Google Ads, Meta Ads e IVA) em BRL. A conversão só acontece no ROI: Receita × cotação − Despesas." />
       <Grid container spacing={1.75}>
         <Grid size={{ xs: 12, md: 6 }}><Card sx={{ height: '100%' }}><CardHeader title="Cotação atual" subheader={`${fx.source} · atualizada ${relTime(fx.fetchedAt)}`}
           action={<Button size="small" variant="outlined" startIcon={<RefreshRoundedIcon />} disabled={refresh.isPending} onClick={() => refresh.mutate(undefined, { onSuccess: () => setMsg('Cotação atualizada.'), onError: (e) => setMsg(e instanceof ApiError ? e.message : 'A API de câmbio não respondeu.') })}>{refresh.isPending ? 'Buscando…' : 'Atualizar agora'}</Button>} />
@@ -41,7 +41,7 @@ export default function CurrencyPage() {
 const n4 = (v: number) => v.toFixed(4).replace('.', ',');
 /**
  * Deságio: R$ descontado da cotação USD/BRL na receita do Google Ad Manager (o que o banco paga a menos ao converter).
- * Ex.: cotação 4,9881 − deságio 0,06 = 4,9281. Só a receita do Ad Manager em BRL usa a cotação com deságio; o custo usa a cheia.
+ * Ex.: cotação 4,9881 − deságio 0,06 = 4,9281. 0.18.6: é a cotação do ROI dos meses sem cotação travada (Relatórios → Resultados mensais).
  */
 function DiscountCard({ brl, onSaved }: { brl: number; onSaved: (m: string) => void }) {
   const { data } = useFxDiscount();
@@ -63,7 +63,7 @@ function DiscountCard({ brl, onSaved }: { brl: number; onSaved: (m: string) => v
   };
   return (
     <Card sx={{ mt: 1.75 }}>
-      <CardHeader title="Deságio (USD/BRL)" subheader="Reduz a cotação usada para calcular a receita do Google Ad Manager em reais" />
+      <CardHeader title="Deságio (USD/BRL)" subheader="Reduz a cotação usada no ROI (Receita do Ad Manager × cotação − Despesas) dos meses sem cotação travada" />
       <CardContent>
         <Grid container spacing={2.5}>
           <Grid size={{ xs: 12, md: 6 }}>

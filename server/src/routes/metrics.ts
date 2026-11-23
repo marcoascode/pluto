@@ -8,8 +8,9 @@ import { one, q } from '../db.js';
 import { HttpError, notFound, parse } from '../lib/http.js';
 import { addDays, isIsoDate, lastMonths, monthBounds, today } from '../lib/dates.js';
 import { requireCap } from '../auth/session.js';
+import { isAdminRole } from '../auth/permissions.js';
 import { allowedDomains, canSeeCampaign, scope, type RowFilter, type Scope } from '../auth/scope.js';
-import { AD_SOURCES, aggregate, retentionChannel, roiDays, total, toMetrics, type Currency, type Metrics } from '../services/metrics.js';
+import { AD_SOURCES, aggregate, retentionChannel, roiDays, total, toMetrics, type Metrics } from '../services/metrics.js';
 import * as fx from '../services/fx.js';
 import { utmTemplates } from '../services/utm.js';
 
@@ -23,8 +24,7 @@ export function period(req: Request) {
   const to = isIsoDate(req.query.to) ? req.query.to : t;
   if (from > to) throw new HttpError(422, 'invalid_period', '"from" depois de "to".');
   if (Date.parse(to) - Date.parse(from) > MAX_DAYS * 864e5) throw new HttpError(422, 'period_too_long', `Período máximo de ${MAX_DAYS} dias.`);
-  const cur = (['USD', 'BRL', 'EUR'].includes(String(req.query.currency)) ? req.query.currency : 'USD') as Currency;
-  return { from, to, currency: cur, today: t };
+  return { from, to, today: t };
 }
 /** Período anterior de mesmo tamanho. Se inclui hoje (e tem mais de 1 dia), compara sem hoje. Só hoje → null. */
 export function previous(from: string, to: string, t: string) {
@@ -39,7 +39,7 @@ export const d3 = (t: string) => addDays(t, -3);
 metricsRouter.get('/dashboard', async (req, res) => {
   const p = period(req);
   const sc = await scope(req, req.query.domain);
-  const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency };
+  const base = { domainIds: sc.ids, filter: sc.filter };
   const prev = previous(p.from, p.to, p.today);
   const dailyFrom = p.from < addDays(p.to, -13) ? p.from : addDays(p.to, -13);
   const [metrics, cmp, daily, byDom, sync] = await Promise.all([
@@ -65,7 +65,7 @@ metricsRouter.get('/dashboard', async (req, res) => {
 metricsRouter.get('/domains/summary', async (req, res) => {
   const p = period(req);
   const sc = await scope(req);
-  const by = await aggregate({ domainIds: sc.ids, filter: sc.filter, currency: p.currency, from: p.from, to: p.to, groupBy: 'm.domain_id' });
+  const by = await aggregate({ domainIds: sc.ids, filter: sc.filter, from: p.from, to: p.to, groupBy: 'm.domain_id' });
   res.json({ domains: sc.ids.map((id, i) => ({ domain: sc.hosts[i], metrics: by.get(id) ?? toMetrics() })) });
 });
 
@@ -89,7 +89,7 @@ const hasActivity = (m: Metrics) => m.spend > 0 || m.revenue > 0;
 /** Só as campanhas liberadas no escopo (Gestor: contas dele em cada domínio). */
 const visible = (sc: Scope, camps: CampRow[]) => camps.filter((c) => canSeeCampaign(sc, c.db_id, c.domain_id));
 
-async function campaignRows(camps: CampRow[], base: { domainIds: string[]; filter: RowFilter | null; currency: Currency }, from: string, to: string, t: string) {
+async function campaignRows(camps: CampRow[], base: { domainIds: string[]; filter: RowFilter | null }, from: string, to: string, t: string) {
   const ids = camps.map((c) => c.db_id);
   if (!ids.length) return [];
   const [by, rd] = await Promise.all([
@@ -102,7 +102,7 @@ async function campaignRows(camps: CampRow[], base: { domainIds: string[]; filte
 metricsRouter.get('/domains/:hostname', async (req, res) => {
   const p = period(req);
   const sc = await scope(req, req.params.hostname);
-  const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency };
+  const base = { domainIds: sc.ids, filter: sc.filter };
   const prev = previous(p.from, p.to, p.today);
   const attributed = `m.platform <> 'none'`;
   const camps = visible(sc, await q<CampRow>(CAMP_LIVE_SQL + ' ORDER BY c.name', [sc.ids]));
@@ -122,7 +122,7 @@ metricsRouter.get('/campaigns', async (req, res) => {
   if (!req.user!.permissions.includes(platform === 'google' ? 'campaigns.google.view' : 'campaigns.meta.view')) throw new HttpError(403, 'forbidden_module', 'Este módulo não está liberado para o seu usuário.');
   const p = period(req);
   const sc = await scope(req, req.query.domain);
-  const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency };
+  const base = { domainIds: sc.ids, filter: sc.filter };
   const includePaused = req.query.includePaused === 'true';
   const accountId = typeof req.query.accountId === 'string' && /^\d+$/.test(req.query.accountId) ? req.query.accountId : null;
   const all = visible(sc, await q<CampRow>(`${CAMP_SQL} AND c.platform = $2 ORDER BY c.name`, [sc.ids, platform]));
@@ -155,7 +155,7 @@ async function findCampaign(req: Request) {
 metricsRouter.get('/campaigns/:platform/:id/children', async (req, res) => {
   const p = period(req);
   const { c, ids, filter } = await findCampaign(req);
-  const base = { domainIds: ids, filter, currency: p.currency, where: 'm.campaign_id = $5', params: [c.db_id] };
+  const base = { domainIds: ids, filter, where: 'm.campaign_id = $5', params: [c.db_id] };
   const groups = await q<{ id: string; ext: string; name: string }>('SELECT id::text, external_id AS ext, name FROM ad_groups WHERE campaign_id = $1 ORDER BY name', [c.db_id]);
   const ads = await q<{ id: string; ext: string; name: string; gid: string }>('SELECT a.id::text, a.external_id AS ext, a.name, a.ad_group_id::text AS gid FROM ads a JOIN ad_groups g ON g.id = a.ad_group_id WHERE g.campaign_id = $1 ORDER BY a.name', [c.db_id]);
   const [gm, am, grd, ard] = await Promise.all([
@@ -174,7 +174,7 @@ const countryName = (cc: string) => { if (cc === 'ZZ') return 'Desconhecido'; tr
 metricsRouter.get('/campaigns/:platform/:id/countries', async (req, res) => {
   const p = period(req);
   const { c, ids, filter } = await findCampaign(req);
-  const base = { domainIds: ids, filter, currency: p.currency, from: p.from, to: p.to, where: 'm.campaign_id = $5', params: [c.db_id] };
+  const base = { domainIds: ids, filter, from: p.from, to: p.to, where: 'm.campaign_id = $5', params: [c.db_id] };
   const [tot, by] = await Promise.all([total(base), aggregate({ ...base, groupBy: 'm.country' })]);
   res.json({ campaign: { id: c.id, name: c.name, platform: c.platform, domain: c.domain }, totals: tot,
     countries: [...by].map(([k, m]) => ({ country: k, name: countryName(k), metrics: m })).sort((a, b) => b.metrics.spend - a.metrics.spend) });
@@ -197,7 +197,7 @@ metricsRouter.get('/urls', requireCap('urls.view'), async (req, res) => {
   const p = period(req);
   const sc = await scope(req, req.query.domain);
   const origin = req.query.origin ? parse(ORIGIN, req.query.origin) : null;
-  const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency, from: p.from, to: p.to };
+  const base = { domainIds: sc.ids, filter: sc.filter, from: p.from, to: p.to };
   const [by, orig] = await Promise.all([
     aggregate({ ...base, groupBy: `d.hostname || '|' || COALESCE(u.path, '(sem URL)')`,
       joins: 'JOIN domains d ON d.id = m.domain_id LEFT JOIN urls u ON u.id = m.url_id',
@@ -218,25 +218,24 @@ metricsRouter.get('/urls', requireCap('urls.view'), async (req, res) => {
 metricsRouter.get('/gam/summary', requireCap('gam.view'), async (req, res) => {
   const p = period(req);
   const sc = await scope(req, req.query.domain);
-  const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency, from: p.from, to: p.to };
+  const base = { domainIds: sc.ids, filter: sc.filter, from: p.from, to: p.to };
   const [metrics, by, net] = await Promise.all([
     total(base), aggregate({ ...base, groupBy: 'm.domain_id' }),
-    one<{ name: string; code: string; currency: Currency }>(`SELECT name, external_id AS code, currency FROM integration_accounts WHERE provider = 'gam' ORDER BY imported DESC, id LIMIT 1`),
+    one<{ name: string; code: string; currency: string }>(`SELECT name, external_id AS code, currency FROM integration_accounts WHERE provider = 'gam' ORDER BY imported DESC, id LIMIT 1`),
   ]);
   res.json({ network: net ?? { name: 'Ad Manager não conectado', code: '—', currency: 'USD' }, metrics, domains: sc.ids.filter((id) => by.has(id)).map((id) => ({ domain: sc.hosts[sc.ids.indexOf(id)], metrics: by.get(id)! })) });
 });
 
 /* ---------- relatórios ---------- */
-const reportQuery = (req: Request) => ({ currency: (['USD', 'BRL', 'EUR'].includes(String(req.query.currency)) ? req.query.currency : 'USD') as Currency, t: today() });
 
 metricsRouter.get('/reports/daily', requireCap('reports.view'), async (req, res) => {
-  const { currency, t } = reportQuery(req);
+  const t = today();
   const month = parse(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'use YYYY-MM').default(t.slice(0, 7)), req.query.month);
   const sc = await scope(req, req.query.domain);
   const [first, last0] = monthBounds(month);
   const last = last0 > t ? t : last0;
   if (first > t) return res.json({ month, total: toMetrics(), days: [] });
-  const base = { domainIds: sc.ids, filter: sc.filter, currency, from: first, to: last };
+  const base = { domainIds: sc.ids, filter: sc.filter, from: first, to: last };
   const [tot, by] = await Promise.all([total(base), aggregate({ ...base, groupBy: 'm.date' })]);
   const days = [];
   for (let d = last; d >= first; d = addDays(d, -1)) days.push({ key: d, partial: d >= d3(t), metrics: by.get(d) ?? toMetrics() });
@@ -244,13 +243,21 @@ metricsRouter.get('/reports/daily', requireCap('reports.view'), async (req, res)
 });
 
 metricsRouter.get('/reports/monthly', requireCap('reports.view'), async (req, res) => {
-  const { currency, t } = reportQuery(req);
+  const t = today();
   const n = Math.min(Math.max(1, Number(req.query.months) || 14), 36);
   const sc = await scope(req, req.query.domain);
   const months = lastMonths(n, t);
-  const base = { domainIds: sc.ids, filter: sc.filter, currency, from: monthBounds(months[n - 1])[0], to: t };
-  const [tot, by] = await Promise.all([total(base), aggregate({ ...base, groupBy: `to_char(m.date, 'YYYY-MM')` })]);
-  res.json({ total: tot, months: months.map((m) => ({ key: m, partial: m >= d3(t).slice(0, 7), metrics: by.get(m) ?? toMetrics() })) });
+  const base = { domainIds: sc.ids, filter: sc.filter, from: monthBounds(months[n - 1])[0], to: t };
+  const [tot, by, locks, current] = await Promise.all([total(base), aggregate({ ...base, groupBy: `to_char(m.date, 'YYYY-MM')` }), fx.monthLocks(), fx.revenueRateNow()]);
+  const lockOf = new Map(locks.map((l) => [l.month, l]));
+  // fx: cotação usada no ROI do mês (travada ou a atual c/ deságio) · canLock: só Admin/SuperAdmin trava/destrava
+  res.json({
+    total: tot, currentRate: current, canLock: isAdminRole(req.user!.role),
+    months: months.map((m) => {
+      const l = lockOf.get(m);
+      return { key: m, partial: m >= d3(t).slice(0, 7), metrics: by.get(m) ?? toMetrics(), fx: { rate: l?.rate ?? current, locked: !!l, note: l?.note ?? null, lockedAt: l?.createdAt ?? null, lockedBy: l?.createdBy ?? null } };
+    }),
+  });
 });
 
 /* ---------- Attribution Health ---------- */
@@ -268,7 +275,7 @@ const ISSUES: Record<string, [string, string, string]> = {
 metricsRouter.get('/attribution/health', requireCap('attribution.view'), async (req, res) => {
   const p = period(req);
   const sc = await scope(req, req.query.domain);
-  const base = { domainIds: sc.ids, filter: sc.filter, currency: p.currency, from: p.from, to: p.to };
+  const base = { domainIds: sc.ids, filter: sc.filter, from: p.from, to: p.to };
   const winFrom = p.from < addDays(p.to, -13) ? p.from : addDays(p.to, -13);
   const [metrics, issues, issueDoms, daily, by] = await Promise.all([
     total(base),

@@ -18,7 +18,7 @@
  */
 import { config } from '../../config.js';
 import { q, tx } from '../../db.js';
-import { domainResolver, fxToUsd, setAccountStatus, statusFromError } from './common.js';
+import { domainResolver, fxToBrl, setAccountStatus, statusFromError } from './common.js';
 import { loadTimeline, siteForDay } from '../accountLinks.js';
 import { ALL, attributeContent, ekvKnown, fetchUnitMap, isConstraint, unitsToSites, attributionIndex, attributionMode, EMPTY, isLegacyUtm, isoDate, kvValue, num, resolveKeys, runKvReport, runReport, str } from './gam.js';
 import { ctx, gaql } from './googleAds.js';
@@ -57,10 +57,10 @@ export function placementType(key: string): PlacementType {
 
 interface PFact {
   date: string; domainId: string; campaignId: string | null; placement: string;
-  spendUsd: number; clicks: number; trafficImpressions: number;
+  spendBrl: number; clicks: number; trafficImpressions: number;
   revenueUsd: number; impressions: number; adRequests: number; responsesServed: number; adClicks: number; viewable: number;
 }
-const zero = { spendUsd: 0, clicks: 0, trafficImpressions: 0, revenueUsd: 0, impressions: 0, adRequests: 0, responsesServed: 0, adClicks: 0, viewable: 0 };
+const zero = { spendBrl: 0, clicks: 0, trafficImpressions: 0, revenueUsd: 0, impressions: 0, adRequests: 0, responsesServed: 0, adClicks: 0, viewable: 0 };
 const NUMS = Object.keys(zero) as (keyof typeof zero)[];
 const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
 
@@ -84,14 +84,14 @@ async function replacePlacements(source: 'google-ads' | 'gam', from: string, to:
       const col = <K extends keyof PFact>(k: K) => ch.map((f) => f[k]);
       const int = (k: keyof typeof zero) => ch.map((f) => Math.round(f[k]));
       await c.query(`
-        INSERT INTO placement_metrics (source, date, domain_id, campaign_id, placement, placement_root, spend_usd, traffic_clicks, traffic_impressions,
+        INSERT INTO placement_metrics (source, date, domain_id, campaign_id, placement, placement_root, spend_brl, traffic_clicks, traffic_impressions,
           revenue_usd, impressions, ad_requests, responses_served, ad_clicks, viewable, is_final, updated_at)
         SELECT $1, d, dom, c, p, pr, sp, tc, ti, rv, im, ar, rs, ac, vw, $16, now()
           FROM unnest($2::date[], $3::bigint[], $4::bigint[], $5::text[], $6::text[], $7::numeric[], $8::bigint[], $9::bigint[],
                       $10::numeric[], $11::bigint[], $12::bigint[], $13::bigint[], $14::bigint[], $15::bigint[])
             AS t(d, dom, c, p, pr, sp, tc, ti, rv, im, ar, rs, ac, vw)`,
         [source, col('date'), col('domainId'), col('campaignId'), col('placement'), ch.map((f) => placementRoot(f.placement)),
-          ch.map((f) => r4(f.spendUsd)), int('clicks'), int('trafficImpressions'), ch.map((f) => r4(f.revenueUsd)),
+          ch.map((f) => r4(f.spendBrl)), int('clicks'), int('trafficImpressions'), ch.map((f) => r4(f.revenueUsd)),
           int('impressions'), int('adRequests'), int('responsesServed'), int('adClicks'), int('viewable'), isFinal]);
     }
   });
@@ -117,7 +117,7 @@ export async function runGoogleAdsPlacements(w: { from: string; to: string }): P
   try { c = await ctx(); } catch (e) { return { status: 'skipped', message: (e as Error).message }; }
   const accs = await q<{ id: string; external_id: string; name: string; currency: string }>(`SELECT id::text, external_id, name, currency FROM integration_accounts WHERE provider = 'google-ads' AND imported AND COALESCE(platform_status, 'ENABLED') = 'ENABLED' ORDER BY id`);
   if (!accs.length) return { status: 'skipped', message: 'nenhuma conta Google Ads ativa marcada para importar' };
-  const toUsd = await fxToUsd(w.from, w.to);
+  const toBrl = await fxToBrl(w.from, w.to);
   const tl = await loadTimeline(accs.map((a) => a.id));   // 0.17: site da conta em cada dia
   const labels = new Map<string, { label: string; type: PlacementType }>();
   const notes: string[] = [];
@@ -143,7 +143,7 @@ export async function runGoogleAdsPlacements(w: { from: string; to: string }): P
         if (!camp || !site) { noCamp++; continue; }
         if ((p.type === 'app' || p.type === 'youtube') && !labels.has(p.key)) labels.set(p.key, { label: p.type === 'youtube' ? 'YouTube' : v.displayName || p.key, type: p.type });
         facts.push({ ...zero, date: r.segments.date, domainId: site, campaignId: camp.id, placement: p.key,
-          spendUsd: toUsd(Number(r.metrics.costMicros ?? 0) / 1e6, acc.currency, r.segments.date), clicks: Number(r.metrics.clicks ?? 0), trafficImpressions: Number(r.metrics.impressions ?? 0) });
+          spendBrl: toBrl(Number(r.metrics.costMicros ?? 0) / 1e6, acc.currency, r.segments.date), clicks: Number(r.metrics.clicks ?? 0), trafficImpressions: Number(r.metrics.impressions ?? 0) });
       }
       total += await replacePlacements('google-ads', w.from, w.to, camps.map((x) => x.id), facts);
       if (noCamp) notes.push(`${acc.name}: ${noCamp} linhas de campanhas sem domínio (rode a estrutura)`);

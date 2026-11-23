@@ -23,9 +23,9 @@ export default function DomainsPage() {
           <TableBody>{list.map(({ domain, metrics: m }) => (
             <TableRow key={domain}>
               <TableCell><Link component={RouterLink} to={`/dominios/${encodeURIComponent(domain)}`} color="inherit" underline="hover" sx={{ fontWeight: 600 }}>{domainLabel(domain)}</Link></TableCell>
-              <TableCell align="right"><Money v={m.revenue} /></TableCell><TableCell align="right"><Money v={m.spend} /></TableCell><TableCell align="right"><Profit v={m.profit} /></TableCell>
+              <TableCell align="right"><Money v={m.revenue} cur="USD" /></TableCell><TableCell align="right"><Money v={m.spend} cur="BRL" /></TableCell><TableCell align="right"><Profit v={m.profit} /></TableCell>
               <TableCell align="right"><RoiChip v={m.roi} /></TableCell><TableCell align="right">{pct(m.margin)}</TableCell>
-              <TableCell align="right"><Money v={m.ecpm} /></TableCell><TableCell align="right">{int(m.impressions)}</TableCell><TableCell align="right">{pct(m.attributionRate)}</TableCell>
+              <TableCell align="right"><Money v={m.ecpm} cur="USD" /></TableCell><TableCell align="right">{int(m.impressions)}</TableCell><TableCell align="right">{pct(m.attributionRate)}</TableCell>
             </TableRow>
           ))}</TableBody>
         </Table>

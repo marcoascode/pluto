@@ -8,7 +8,7 @@
 import { config } from '../../config.js';
 import { one, q } from '../../db.js';
 import { loadTimeline, siteForDay } from '../accountLinks.js';
-import { accountDomains, domainResolver, emptyFact, fxToUsd, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
+import { accountDomains, domainResolver, emptyFact, fxToBrl, parseUrl, replaceFacts, setAccountStatus, statusFromError, upsertAd, upsertAdGroup, upsertCampaign, urlCache, type Fact } from './common.js';
 import { requestJson, SyncError } from './http.js';
 import { googleAccessToken } from './tokens.js';
 import type { JobResult } from './index.js';
@@ -78,7 +78,7 @@ export async function runGoogleAds(kind: 'structure' | 'metrics', w: { from: str
   const accs = await q<{ id: string; external_id: string; name: string; currency: string }>(`SELECT id::text, external_id, name, currency FROM integration_accounts WHERE provider = 'google-ads' AND imported AND COALESCE(platform_status, 'ENABLED') = 'ENABLED' ORDER BY id`);
   if (!accs.length) return { status: kind === 'structure' ? 'success' : 'skipped', message: 'nenhuma conta Google Ads ativa marcada para importar' };
   const dom = await domainResolver();
-  const toUsd = kind === 'metrics' ? await fxToUsd(w.from, w.to) : null;
+  const toBrl = kind === 'metrics' ? await fxToBrl(w.from, w.to) : null;
   // 0.17: site da conta em cada dia (vínculo com data). A despesa de um dia vai para o site que a conta pagava nele.
   const tl = await loadTimeline(accs.map((a) => a.id));
   const url = urlCache();
@@ -130,8 +130,8 @@ export async function runGoogleAds(kind: 'structure' | 'metrics', w: { from: str
       const used = new Map<string, { cost: number; clicks: number; imp: number }>();
       let noDomain = 0;
       const push = (date: string, domainId: string, cp: { id: string }, ext: string, gid: string | null, adId: string | null, urlId: string | null, costCur: number, clicks: number, imp: number) => {
-        const usd = toUsd!(costCur, acc.currency, date);
-        for (const [country, s] of split(date, ext)) facts.push(emptyFact({ date, domainId, urlId, platform: 'google', campaignId: cp.id, adGroupId: gid, adId, country, spendUsd: usd * s, trafficClicks: clicks * s, trafficImpressions: imp * s }));
+        const brl = toBrl!(costCur, acc.currency, date);
+        for (const [country, s] of split(date, ext)) facts.push(emptyFact({ date, domainId, urlId, platform: 'google', campaignId: cp.id, adGroupId: gid, adId, country, spendBrl: brl * s, trafficClicks: clicks * s, trafficImpressions: imp * s }));
       };
       for (const r of adRows) {
         const date = r.segments!.date, cp = await camp(r.campaign);
