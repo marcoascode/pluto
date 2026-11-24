@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.12
+- **Usuários visíveis ao Admin**: o Admin vê (e edita, exclui, reenvia convite, atribui domínios) só ele mesmo, os usuários que **ele cadastrou** e os que pertencem a um **Squad das Empresas em que é sócio** (Gerente do Squad, gestor de domínio do Squad ou sócio da Empresa). Vale também para a lista de gestores, sócios das Empresas e "Gestores e sites". SuperAdmin continua vendo todos. Migration `023` grava quem cadastrou cada usuário a partir de agora (usuários antigos ficam sem autor).
+- **Menu lateral reorganizado**: Dashboard, Relatórios · **Campanhas** (Google Ads, Placements, Meta Ads, Perfis & BMs, Criar campanhas Meta) · **Domínios** (Domínios / Sites, Contas × Sites, URLs) · **Monetização** (Google Ad Manager) · **Atribuição** (Diagnóstico da atribuição, UTM Debugger) · **Administração** → Finanças (Caixa Empresa, Custos, Comissões), Relatórios (Google Ads, Meta Ads, Google Ad Manager), Integrações (Google Ads, Meta Ads, Google Ad Manager), Configurações (Contas, Domínios, Usuários & Squads, Atribuição / UTMs, Moedas).
+- A seção Finance saiu do menu e virou o grupo **Finanças** dentro de Administração (sócios veem só Finanças; o gestor, só Comissões).
+- Renomes: "Attribution Health" → **Diagnóstico da atribuição**; "Attribution / UTMs" → **Atribuição / UTMs** (menu e título das telas).
+
 ## 0.18.11
 - **Permissão Admin restrita às Empresas em que é sócio**: antes o Admin via todos os domínios (igual ao SuperAdmin). Agora vê e edita só os domínios dos Squads das Empresas das quais é sócio, em todo o painel: Dashboard, Relatórios, URLs, campanhas, seletor "Empresa", Finance (Caixa, Custos, Comissões), Administração → Domínios, Squads, Empresas, Relatórios por conta, Campanhas sem domínio e Contas × Sites. O domínio técnico "Sem domínio" fica só para o SuperAdmin. O servidor confere tudo (403 fora do alcance).
 - **Usuários & Squads (Admin)**: vincula gestores, Gerentes (Squads) e sócios só dentro das Empresas dele; vínculos do usuário em outras Empresas ficam como estão e não aparecem. Não pode se tirar da própria sociedade.

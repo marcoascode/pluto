@@ -72,7 +72,7 @@ export default function CashPage() {
           </Stack>
         )} />
       {!data.companies.length ? (
-        <Alert severity="info" variant="outlined">Nenhuma Empresa cadastrada. O Finance é por Empresa: cadastre em Usuários &amp; Squads → Empresas.</Alert>
+        <Alert severity="info" variant="outlined">Nenhuma Empresa cadastrada. Finanças é por Empresa: cadastre em Usuários &amp; Squads → Empresas.</Alert>
       ) : (
         <>
           <HowItWorks />

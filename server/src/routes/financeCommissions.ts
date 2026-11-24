@@ -24,6 +24,7 @@ import { HttpError, notFound, parse } from '../lib/http.js';
 import { today } from '../lib/dates.js';
 import { isAdminRole } from '../auth/permissions.js';
 import { listSites, normSite } from '../services/financeSources.js';
+import { adminVisibleUserIds } from '../auth/scope.js';
 import { audit, commissionsFor, loadAssignments, r2 } from '../services/financeResults.js';
 
 export const financeCommissionsRouter = Router();
@@ -163,7 +164,8 @@ financeCommissionsRouter.get('/assignments', async (req, res) => {
   const ids = sel.map((c) => c.id);
   const who = typeof req.query.user === 'string' && /^\d+$/.test(req.query.user) ? req.query.user : undefined;
   const [asg, sites] = await Promise.all([loadAssignments(ids, who), sitesOf(ids)]);
-  const managers = v.role === 'admin' ? await q<{ id: string; name: string; role: string }>(`SELECT id::text, name, role FROM users WHERE role = 'gestor' ORDER BY name`) : [];
+  const vis = await adminVisibleUserIds(req);   // 0.18.12
+  const managers = v.role === 'admin' ? (await q<{ id: string; name: string; role: string }>(`SELECT id::text, name, role FROM users WHERE role = 'gestor' ORDER BY name`)).filter((m) => !vis || vis.has(m.id)) : [];
   res.json({
     viewer: { role: v.role }, companies: v.companies, sites: sites.sites, managers,
     assignments: asg.map((a) => ({ id: a.id, userId: a.user_id, userName: a.user_name, companyId: a.company_id, site: a.site, startDate: a.start_date, endDate: a.end_date, sharePct: a.share_pct, note: a.note })),

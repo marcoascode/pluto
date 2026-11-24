@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { one, q, tx } from '../db.js';
 import { conflict, HttpError, notFound, parse } from '../lib/http.js';
 import { isAdminRole } from '../auth/permissions.js';
-import { adminScope, allowedDomains } from '../auth/scope.js';
+import { adminScope, adminVisibleUserIds, allowedDomains, assertAdminUser } from '../auth/scope.js';
 import { USER_SQL } from '../auth/session.js';
 import { resyncAccounts, saveGestorLinks, type LinkScope } from '../services/gestorLinks.js';
 
@@ -47,7 +47,8 @@ teamRouter.get('/', async (req, res) => {
   ]);
   const hosts = new Set(domains.map((d) => d.hostname));
   // Gerente: gestores sem domínio ou com algum domínio do alcance dele; vê só os vínculos desses domínios
-  const list = users.filter((g) => !sc || !g.domains.length || g.domains.some((d) => hosts.has(d.domain)));
+  const vis = await adminVisibleUserIds(req);   // 0.18.12: Admin só os usuários que cadastrou ou dos Squads das Empresas dele
+  const list = users.filter((g) => (!vis || vis.has(g.id)) && (!sc || !g.domains.length || g.domains.some((d) => hosts.has(d.domain))));
   res.json({
     viewer: { role: req.user!.role },
     gestores: list.map((g) => ({ id: g.id, name: g.name, email: g.email, status: g.status,
@@ -63,6 +64,7 @@ teamRouter.put('/gestores/:id', async (req, res) => {
   const sc = await scopeOf(req);
   const uid = parse(z.string().regex(/^\d+$/, 'id inválido'), req.params.id);
   const b = parse(body, req.body);
+  await assertAdminUser(req, uid);
   const g = await one<{ role: string }>('SELECT role FROM users WHERE id = $1', [uid]);
   if (!g) throw notFound('Usuário não encontrado.');
   if (g.role !== 'gestor') throw conflict('not_gestor', 'Só Gestores recebem domínios e contas.');

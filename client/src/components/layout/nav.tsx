@@ -25,23 +25,54 @@ import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
 import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined';
 
 export interface NavItem { to: string; label: string; icon: ReactElement; cap?: Capability; manager?: boolean; metaCampaigns?: boolean; /** 0.18.9: só para o Gerente (o Admin acessa pelo menu Administração) */ gerente?: boolean }
+/* 0.18.12 · ordem do menu: Dashboard, Relatórios · Campanhas · Domínios · Monetização · Atribuição · Administração */
 export const NAV_MAIN: { title: string | null; items: NavItem[] }[] = [
   { title: null, items: [{ to: '/', label: 'Dashboard', icon: <SpaceDashboardOutlinedIcon /> }, { to: '/relatorios', label: 'Relatórios', icon: <TableChartOutlinedIcon />, cap: 'reports.view' }] },
-  { title: 'Domínios', items: [{ to: '/dominios', label: 'Domínios / Sites', icon: <LanguageOutlinedIcon /> }, { to: '/urls', label: 'URLs', icon: <LinkRoundedIcon />, cap: 'urls.view' }, { to: '/vinculos', label: 'Contas × Sites', icon: <HubOutlinedIcon /> }, { to: '/admin/usuarios', label: 'Gestores', icon: <GroupsOutlinedIcon />, gerente: true }] },
-  { title: 'Campanhas', items: [{ to: '/google-ads', label: 'Google Ads', icon: <GoogleIcon />, cap: 'campaigns.google.view' }, { to: '/meta-ads', label: 'Meta Ads', icon: <FacebookRoundedIcon />, cap: 'campaigns.meta.view' }, { to: '/criar-campanha-meta', label: 'Criar campanhas Meta', icon: <AutoAwesomeOutlinedIcon />, metaCampaigns: true }, { to: '/perfis-meta', label: 'Perfis & BMs', icon: <ManageAccountsOutlinedIcon />, metaCampaigns: true }, { to: '/placements', label: 'Placements', icon: <TrackChangesRoundedIcon />, cap: 'campaigns.google.view' }] },
+  { title: 'Campanhas', items: [
+    { to: '/google-ads', label: 'Google Ads', icon: <GoogleIcon />, cap: 'campaigns.google.view' },
+    { to: '/placements', label: 'Placements', icon: <TrackChangesRoundedIcon />, cap: 'campaigns.google.view' },
+    { to: '/meta-ads', label: 'Meta Ads', icon: <FacebookRoundedIcon />, cap: 'campaigns.meta.view' },
+    { to: '/perfis-meta', label: 'Perfis & BMs', icon: <ManageAccountsOutlinedIcon />, metaCampaigns: true },
+    { to: '/criar-campanha-meta', label: 'Criar campanhas Meta', icon: <AutoAwesomeOutlinedIcon />, metaCampaigns: true },
+  ] },
+  { title: 'Domínios', items: [
+    { to: '/dominios', label: 'Domínios / Sites', icon: <LanguageOutlinedIcon /> },
+    { to: '/vinculos', label: 'Contas × Sites', icon: <HubOutlinedIcon /> },
+    { to: '/urls', label: 'URLs', icon: <LinkRoundedIcon />, cap: 'urls.view' },
+    { to: '/admin/usuarios', label: 'Gestores', icon: <GroupsOutlinedIcon />, gerente: true },
+  ] },
   { title: 'Monetização', items: [{ to: '/ad-manager', label: 'Google Ad Manager', icon: <PaidOutlinedIcon />, cap: 'gam.view' }] },
-  { title: 'Atribuição', items: [{ to: '/atribuicao', label: 'Attribution Health', icon: <MonitorHeartOutlinedIcon />, cap: 'attribution.view' }, { to: '/utm-debugger', label: 'UTM Debugger', icon: <BugReportOutlinedIcon />, cap: 'utm.debug' }] },
+  { title: 'Atribuição', items: [
+    { to: '/atribuicao', label: 'Diagnóstico da atribuição', icon: <MonitorHeartOutlinedIcon />, cap: 'attribution.view' },
+    { to: '/utm-debugger', label: 'UTM Debugger', icon: <BugReportOutlinedIcon />, cap: 'utm.debug' },
+  ] },
 ];
-/** Finance: Admin/SuperAdmin e sócios das Empresas. `manager`: também para o Gestor (só os próprios sites; o servidor filtra). */
-export const NAV_FINANCE: NavItem[] = [
-  { to: '/finance/caixa', label: 'Caixa Empresa', icon: <AccountBalanceOutlinedIcon /> },
-  { to: '/finance/custos', label: 'Custos', icon: <ReceiptLongOutlinedIcon /> },
-  { to: '/finance/comissoes', label: 'Comissões', icon: <EmojiEventsOutlinedIcon />, manager: true },
-];
-/** Só Admin e SuperAdmin veem. O servidor também bloqueia /admin/* com 403. */
-export const NAV_ADMIN: { title: string; items: NavItem[] }[] = [
-  { title: 'Integrações', items: [{ to: '/admin/integracoes/google-ads', label: 'Google Ads', icon: <PowerOutlinedIcon /> }, { to: '/admin/integracoes/meta-ads', label: 'Meta Ads', icon: <PowerOutlinedIcon /> }, { to: '/admin/integracoes/ad-manager', label: 'Google Ad Manager', icon: <PowerOutlinedIcon /> }] },
-  { title: 'Relatórios', items: [{ to: '/admin/relatorios/meta-ads', label: 'Meta Ads', icon: <AssessmentOutlinedIcon /> }, { to: '/admin/relatorios/google-ads', label: 'Google Ads', icon: <AssessmentOutlinedIcon /> }, { to: '/admin/relatorios/ad-manager', label: 'Google Ad Manager', icon: <AssessmentOutlinedIcon /> }] },
-  { title: 'Configurações', items: [{ to: '/admin/contas', label: 'Contas', icon: <AccountBalanceWalletOutlinedIcon /> }, { to: '/admin/dominios', label: 'Domínios', icon: <PublicOutlinedIcon /> }, { to: '/admin/utms', label: 'Attribution / UTMs', icon: <SellOutlinedIcon /> }, { to: '/admin/moedas', label: 'Moedas', icon: <CurrencyExchangeOutlinedIcon /> }, { to: '/admin/usuarios', label: 'Usuários & Squads', icon: <GroupsOutlinedIcon /> }] },
+/**
+ * Administração. `finance`: grupo Finanças — Admin/SuperAdmin e sócios das Empresas (`manager`: também o Gestor com
+ * site vinculado, só a própria comissão). Os demais grupos: só Admin e SuperAdmin (o servidor também bloqueia /admin/* com 403).
+ */
+export const NAV_ADMIN: { title: string; finance?: boolean; items: NavItem[] }[] = [
+  { title: 'Finanças', finance: true, items: [
+    { to: '/finance/caixa', label: 'Caixa Empresa', icon: <AccountBalanceOutlinedIcon /> },
+    { to: '/finance/custos', label: 'Custos', icon: <ReceiptLongOutlinedIcon /> },
+    { to: '/finance/comissoes', label: 'Comissões', icon: <EmojiEventsOutlinedIcon />, manager: true },
+  ] },
+  { title: 'Relatórios', items: [
+    { to: '/admin/relatorios/google-ads', label: 'Google Ads', icon: <AssessmentOutlinedIcon /> },
+    { to: '/admin/relatorios/meta-ads', label: 'Meta Ads', icon: <AssessmentOutlinedIcon /> },
+    { to: '/admin/relatorios/ad-manager', label: 'Google Ad Manager', icon: <AssessmentOutlinedIcon /> },
+  ] },
+  { title: 'Integrações', items: [
+    { to: '/admin/integracoes/google-ads', label: 'Google Ads', icon: <PowerOutlinedIcon /> },
+    { to: '/admin/integracoes/meta-ads', label: 'Meta Ads', icon: <PowerOutlinedIcon /> },
+    { to: '/admin/integracoes/ad-manager', label: 'Google Ad Manager', icon: <PowerOutlinedIcon /> },
+  ] },
+  { title: 'Configurações', items: [
+    { to: '/admin/contas', label: 'Contas', icon: <AccountBalanceWalletOutlinedIcon /> },
+    { to: '/admin/dominios', label: 'Domínios', icon: <PublicOutlinedIcon /> },
+    { to: '/admin/usuarios', label: 'Usuários & Squads', icon: <GroupsOutlinedIcon /> },
+    { to: '/admin/utms', label: 'Atribuição / UTMs', icon: <SellOutlinedIcon /> },
+    { to: '/admin/moedas', label: 'Moedas', icon: <CurrencyExchangeOutlinedIcon /> },
+  ] },
 ];
 export const isActive = (path: string, to: string) => (to === '/' ? path === '/' : path === to || path.startsWith(to + '/'));

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
-import { adminScope } from '../../auth/scope.js';
+import { adminScope, adminVisibleUserIds } from '../../auth/scope.js';
 import { requireSuperAdmin } from '../../auth/session.js';
 
 /**
@@ -52,6 +52,10 @@ companiesRouter.put('/companies/:id', async (req, res) => {
     if (!sc.companyIds.includes(id)) throw new HttpError(403, 'forbidden_company', 'Você só edita as Empresas em que é sócio.');
     if (!b.partnerIds.includes(req.user!.id)) throw conflict('self_partner', 'Você não pode se tirar da sociedade (perderia o acesso à Empresa). Peça a um SuperAdmin.');
     const free = (await q<{ id: string }>('SELECT id::text FROM squads WHERE id = ANY($1::bigint[]) AND company_id = ANY($2::bigint[])', [b.squadIds, sc.companyIds])).map((r) => r.id);
+    // 0.18.12: sócios só entre os usuários que ele enxerga (quem já é sócio pode continuar)
+    const vis = (await adminVisibleUserIds(req))!;
+    const cur = (await q<{ id: string }>('SELECT user_id::text AS id FROM company_users WHERE company_id = $1', [id])).map((r) => r.id);
+    if (b.partnerIds.some((u) => !vis.has(u) && !cur.includes(u))) throw notFound('Algum sócio não existe.');
     if (free.length !== new Set(b.squadIds).size) throw new HttpError(403, 'forbidden_squad', 'Algum Squad pertence a uma Empresa da qual você não é sócio.');
   }
   res.json(await save(id, b));

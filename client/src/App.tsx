@@ -52,7 +52,7 @@ function RequireMetaCampaigns({ children }: { children: ReactNode }) {
 /** Finance: Admin/SuperAdmin e sócios das Empresas. O servidor também responde 403. */
 function RequireFinance({ children }: { children: ReactNode }) {
   const { canFinance } = useAuth();
-  return canFinance ? <>{children}</> : <NoAccess msg="O Finance é só para Admin e sócios das Empresas." />;
+  return canFinance ? <>{children}</> : <NoAccess msg="Finanças é só para Admin e sócios das Empresas." />;
 }
 /** 0.18.9: Usuários & Squads — o Gerente entra só na lista de gestores (atribui domínios e contas do alcance dele). */
 function RequireAdminOrGerente({ children }: { children: ReactNode }) {

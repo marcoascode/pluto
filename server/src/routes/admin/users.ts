@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { accountsOf, clearGestorLinks, resyncAccounts, saveGestorLinks } from '../../services/gestorLinks.js';
 import { deriveAccounts } from '../../services/accountLinks.js';
 import { DEFAULT_FIXED_PCT, DEFAULT_TIERS } from '../../services/financeResults.js';
-import { adminScope, type AdminScope } from '../../auth/scope.js';
+import { adminScope, adminVisibleUserIds, assertAdminUser, type AdminScope } from '../../auth/scope.js';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { tempPassword } from '../../lib/crypto.js';
@@ -101,9 +101,11 @@ usersRouter.get('/users', async (req, res) => {
   const users = await q<{ domains: { domain: string }[]; companyIds: string[]; squadIds: string[] }>(`${USER_SQL} ORDER BY u.is_main_admin DESC, u.name`);
   const sc = await adminScope(req);
   if (!sc) return res.json({ users });
+  // 0.18.12: só os usuários que ele cadastrou ou que pertencem a um Squad das Empresas dele
+  const vis = (await adminVisibleUserIds(req))!;
   // 0.18.11: o Admin só enxerga os domínios, Squads e Empresas das sociedades dele
   const hosts = new Set((await q<{ hostname: string }>('SELECT hostname FROM domains WHERE id = ANY($1::bigint[])', [sc.domainIds])).map((r) => r.hostname));
-  res.json({ users: users.map((u) => ({ ...u, domains: u.domains.filter((d) => hosts.has(d.domain)), companyIds: u.companyIds.filter((x) => sc.companyIds.includes(x)), squadIds: u.squadIds.filter((x) => sc.squadIds.includes(x)) })) });
+  res.json({ users: users.filter((u) => vis.has((u as unknown as { id: string }).id)).map((u) => ({ ...u, domains: u.domains.filter((d) => hosts.has(d.domain)), companyIds: u.companyIds.filter((x) => sc.companyIds.includes(x)), squadIds: u.squadIds.filter((x) => sc.squadIds.includes(x)) })) });
 });
 
 /** Cria com senha temporária (hash argon2id) e envia o convite por e-mail. A senha nunca volta na resposta. */
@@ -116,7 +118,7 @@ usersRouter.post('/users', async (req, res) => {
   let moved: string[] = [];
   const sc = await adminScope(req);
   const uid = await tx(async (c) => {
-    const r = await one<{ id: string }>(`INSERT INTO users (name, email, password_hash, role, status, must_change_password) VALUES ($1, $2, $3, $4, 'invited', true) RETURNING id::text`, [b.name, b.email, hash, b.role], c);
+    const r = await one<{ id: string }>(`INSERT INTO users (name, email, password_hash, role, status, must_change_password, created_by) VALUES ($1, $2, $3, $4, 'invited', true, $5) RETURNING id::text`, [b.name, b.email, hash, b.role, req.user!.id], c);
     moved = await saveLinks(c, r!.id, b.role, b, false, req.user!.id, sc);
     await saveCommission(c, r!.id, b.role, b, true);
     return r!.id;
@@ -130,6 +132,7 @@ usersRouter.post('/users', async (req, res) => {
 usersRouter.patch('/users/:id', async (req, res) => {
   const uid = parse(id, req.params.id);
   const b = parse(z.object({ name: z.string().trim().min(2).max(120).optional(), role: role.optional(), status: z.enum(['active', 'disabled']).optional(), ...links, ...commission }), req.body);
+  await assertAdminUser(req, uid);   // 0.18.12: Admin só mexe nos usuários que enxerga
   const t = await loadUser(uid);
   if (!t) throw notFound('Usuário não encontrado.');
   guardSuper(req.user!, t, b.role);
@@ -152,6 +155,7 @@ usersRouter.patch('/users/:id', async (req, res) => {
 
 usersRouter.delete('/users/:id', async (req, res) => {
   const uid = parse(id, req.params.id);
+  await assertAdminUser(req, uid);   // 0.18.12: Admin só mexe nos usuários que enxerga
   const t = await loadUser(uid);
   if (!t) throw notFound('Usuário não encontrado.');
   guardSuper(req.user!, t);
@@ -169,6 +173,7 @@ usersRouter.delete('/users/:id', async (req, res) => {
 /** Gera nova senha temporária e reenvia o convite (só para quem ainda não ativou). */
 usersRouter.post('/users/:id/resend-invite', async (req, res) => {
   const uid = parse(id, req.params.id);
+  await assertAdminUser(req, uid);   // 0.18.12: Admin só mexe nos usuários que enxerga
   const t = await loadUser(uid);
   if (!t) throw notFound('Usuário não encontrado.');
   guardSuper(req.user!, t);
@@ -184,6 +189,7 @@ usersRouter.post('/users/:id/resend-invite', async (req, res) => {
 usersRouter.put('/users/:id/meta-campaigns', requireSuperAdmin, async (req, res) => {
   const uid = parse(id, req.params.id);
   const b = parse(z.object({ enabled: z.boolean() }), req.body);
+  await assertAdminUser(req, uid);   // 0.18.12: Admin só mexe nos usuários que enxerga
   const t = await loadUser(uid);
   if (!t) throw notFound('Usuário não encontrado.');
   if (b.enabled && t.status === 'disabled') throw conflict('disabled', 'Usuário desativado não pode receber essa permissão.');

@@ -41,6 +41,28 @@ export async function adminScope(req: Request): Promise<AdminScope | null> {
   })();
   return r._adminScope;
 }
+/**
+ * 0.18.12 · Usuários que o Admin enxerga: ele mesmo, os que ele cadastrou e os que pertencem a um Squad das Empresas
+ * em que é sócio (Gerente do Squad, gestor de domínio do Squad ou sócio da Empresa). SuperAdmin → null (todos).
+ */
+export async function adminVisibleUserIds(req: Request): Promise<Set<string> | null> {
+  const sc = await adminScope(req);
+  if (!sc) return null;
+  const r = req as Request & { _adminUsers?: Promise<Set<string>> };
+  r._adminUsers ??= (async () => new Set((await q<{ id: string }>(`
+    SELECT u.id::text FROM users u
+     WHERE u.id = $1 OR u.created_by = $1
+        OR u.id IN (SELECT user_id FROM squad_users WHERE squad_id = ANY($2::bigint[]))
+        OR u.id IN (SELECT dm.user_id FROM domain_managers dm JOIN squad_domains sd ON sd.domain_id = dm.domain_id WHERE sd.squad_id = ANY($2::bigint[]))
+        OR u.id IN (SELECT user_id FROM company_users WHERE company_id = ANY($3::bigint[]))`, [req.user!.id, sc.squadIds, sc.companyIds])).map((x) => x.id)))();
+  return r._adminUsers;
+}
+/** 404 quando o usuário está fora da lista do Admin (não revela que existe). */
+export async function assertAdminUser(req: Request, userId: string) {
+  const vis = await adminVisibleUserIds(req);
+  if (vis && !vis.has(userId)) throw new HttpError(404, 'not_found', 'Usuário não encontrado.');
+}
+
 /** 403 quando o domínio está fora das Empresas do Admin. */
 export async function assertAdminDomain(req: Request, domainId: string) {
   const sc = await adminScope(req);

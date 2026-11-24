@@ -25,7 +25,7 @@ const CAPS: T.CapabilityDef[] = [
   { key: 'campaigns.google.view', label: 'Google Ads', group: 'Visualização', adminOnly: false, superAdminOnly: false },
   { key: 'campaigns.meta.view', label: 'Meta Ads', group: 'Visualização', adminOnly: false, superAdminOnly: false },
   { key: 'gam.view', label: 'Google Ad Manager', group: 'Visualização', adminOnly: false, superAdminOnly: false },
-  { key: 'attribution.view', label: 'Attribution Health', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'attribution.view', label: 'Diagnóstico da atribuição', group: 'Visualização', adminOnly: false, superAdminOnly: false },
   { key: 'utm.debug', label: 'UTM Debugger', group: 'Visualização', adminOnly: false, superAdminOnly: false },
   { key: 'admin.integrations', label: 'Contas das integrações (cadastrar, editar, importar, excluir)', group: 'Administração', adminOnly: true, superAdminOnly: false },
   { key: 'admin.integrations.connect', label: 'Conectar integrações (OAuth) e editar a frequência do sync', group: 'Administração', adminOnly: true, superAdminOnly: true },
