@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Card, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, ListItemText, MenuItem, Select, Snackbar, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Box, Button, Card, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, MenuItem, Select, Snackbar, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
@@ -6,7 +6,7 @@ import PowerOutlinedIcon from '@mui/icons-material/PowerOutlined';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
-import { useAdminDomains, useAdminMutation, useIntegrationAccounts, useSyncSettings } from '@/hooks/queries';
+import { useAdminMutation, useIntegrationAccounts, useSyncSettings } from '@/hooks/queries';
 import { integrationsApi } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
@@ -50,13 +50,12 @@ const ID_INFO: Record<Provider, { label: string; placeholder: string; pattern: R
   gam: { label: 'Network code', placeholder: '12345678', pattern: /^\d{3,12}$/, hint: 'Só números (Admin → Global settings no Ad Manager)' },
 };
 const TIMEZONES = ['America/Sao_Paulo', 'America/New_York', 'America/Los_Angeles', 'America/Mexico_City', 'Europe/Lisbon', 'Europe/Madrid', 'UTC'];
-const EMPTY: IntegrationAccountInput = { name: '', externalId: '', currency: 'USD', timezone: 'America/Sao_Paulo', imported: true, domains: [] };
+const EMPTY: IntegrationAccountInput = { name: '', externalId: '', currency: 'USD', timezone: 'America/Sao_Paulo', imported: true };
 
 function AccountDialog({ provider, initial, onClose }: { provider: Provider; initial: IntegrationAccount | null | 'new'; onClose: () => void }) {
   const isNew = initial === 'new';
-  const [f, setF] = useState<IntegrationAccountInput>(initial && initial !== 'new' ? { name: initial.name, externalId: initial.externalId, currency: initial.currency, timezone: initial.timezone, imported: initial.imported, domains: initial.domains } : EMPTY);
+  const [f, setF] = useState<IntegrationAccountInput>(initial && initial !== 'new' ? { name: initial.name, externalId: initial.externalId, currency: initial.currency, timezone: initial.timezone, imported: initial.imported } : EMPTY);
   const [err, setErr] = useState('');
-  const { data: doms } = useAdminDomains();
   const inv = [qk.accounts(provider), qk.integrations, qk.adminDomains];
   const create = useAdminMutation((b: IntegrationAccountInput) => integrationsApi.createAccount(provider, b), inv);
   const update = useAdminMutation((b: IntegrationAccountInput) => integrationsApi.updateAccount(provider, (initial as IntegrationAccount).id, b), inv);
@@ -80,11 +79,14 @@ function AccountDialog({ provider, initial, onClose }: { provider: Provider; ini
             <TextField select label="Moeda da conta" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value as Currency })} sx={{ flex: 1 }}>{(['USD', 'BRL', 'EUR'] as Currency[]).map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}</TextField>
             <TextField select label="Timezone" value={f.timezone} onChange={(e) => setF({ ...f, timezone: e.target.value })} sx={{ flex: 2 }}>{TIMEZONES.map((t) => <MenuItem key={t} value={t}>{t}</MenuItem>)}</TextField>
           </Stack>
-          {provider !== 'gam' && (
-            <TextField select label="Domínios desta conta" value={f.domains} onChange={(e) => setF({ ...f, domains: typeof e.target.value === 'string' ? e.target.value.split(',') : (e.target.value as string[]) })} fullWidth
-              slotProps={{ select: { multiple: true, renderValue: (v) => (v as string[]).join(', ') || 'Nenhum' } }} helperText="O custo desta conta entra nesses domínios.">
-              {doms?.domains.filter((d) => !d.technical).map((d) => <MenuItem key={d.hostname} value={d.hostname}><Checkbox size="small" checked={f.domains.includes(d.hostname)} /><ListItemText primary={d.hostname} /></MenuItem>)}
-            </TextField>
+          {provider !== 'gam' && !isNew && (
+            <Box>
+              <Typography variant="overline">Domínios desta conta</Typography>
+              <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap', mt: 0.25 }}>
+                {(initial as IntegrationAccount).domains.length ? (initial as IntegrationAccount).domains.map((d) => <Chip key={d} size="small" label={d} />) : <Typography variant="caption">Nenhum</Typography>}
+              </Stack>
+              <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>Os domínios da conta vêm dos vínculos feitos em Configurações → Usuários & Squads (gestor → domínio → contas).</Typography>
+            </Box>
           )}
           <FormControlLabel control={<Switch checked={f.imported} onChange={(e) => setF({ ...f, imported: e.target.checked })} />} label="Importar no sync" />
           {err && <Alert severity="error" variant="outlined">{err}</Alert>}

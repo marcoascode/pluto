@@ -1,4 +1,4 @@
-import { Alert, Button, Card, CardHeader, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel, Grid, IconButton, InputAdornment, ListItemText, MenuItem, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Button, Card, CardHeader, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel, Grid, IconButton, InputAdornment, MenuItem, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
@@ -33,7 +33,7 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const { data: ma } = useIntegrationAccounts('meta');
   const { data: gam } = useIntegrationAccounts('gam');
   const today = todayISO();   // data no fuso da organização (não UTC)
-  const [f, setF] = useState<Pick<Required<DomainInput>, 'hostname' | 'active' | 'squadId' | 'googleAccounts' | 'metaAccounts' | 'gamAccountId'>>({ hostname: d.hostname, active: d.active, squadId: d.squadId, googleAccounts: d.googleAccounts, metaAccounts: d.metaAccounts, gamAccountId: d.gamAccountId });
+  const [f, setF] = useState<Pick<Required<DomainInput>, 'hostname' | 'active' | 'squadId' | 'gamAccountId'>>({ hostname: d.hostname, active: d.active, squadId: d.squadId, gamAccountId: d.gamAccountId });
   const [rs, setRs] = useState(String(d.revShare ?? 0).replace('.', ','));
   const [rsFrom, setRsFrom] = useState(today);
   const [err, setErr] = useState('');
@@ -43,19 +43,11 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const [shown, setShown] = useState<string | null>(null);
   const [clearPw, setClearPw] = useState(false);
   const [pwErr, setPwErr] = useState('');
-  const [accFrom, setAccFrom] = useState(today);   // 0.17: a partir de quando a mudança de contas vale
-  const accChanged = [...f.googleAccounts].sort().join() !== [...d.googleAccounts].sort().join() || [...f.metaAccounts].sort().join() !== [...d.metaAccounts].sort().join();
   const reveal = async () => {
     setPwErr('');
     try { const r = await adminApi.revealWpPassword(d.hostname); setShown(r.password); } catch (e) { setPwErr(e instanceof ApiError ? e.message : 'Não foi possível abrir a senha.'); }
   };
   const save = useAdminMutation((b: DomainInput) => adminApi.updateDomain(d.hostname, b), INV);
-  const multi = (label: string, key: 'googleAccounts' | 'metaAccounts', opts: { id: string; name: string }[]) => (
-    <TextField select label={label} value={f[key]} fullWidth onChange={(e) => setF({ ...f, [key]: typeof e.target.value === 'string' ? e.target.value.split(',') : (e.target.value as string[]) })}
-      slotProps={{ inputLabel: { shrink: true }, select: { multiple: true, displayEmpty: true, renderValue: (v) => (v as string[]).map((id) => opts.find((o) => o.id === id)?.name ?? id).join(', ') || 'Nenhuma' } }}>
-      {opts.map((o) => <MenuItem key={o.id} value={o.id}><Checkbox size="small" checked={f[key].includes(o.id)} /><ListItemText primary={o.name} /></MenuItem>)}
-    </TextField>
-  );
   const submit = () => {
     const h = clean(f.hostname);
     if (!HOST_RE.test(h)) return setErr('Digite um domínio válido, ex.: novodominio.com');
@@ -63,10 +55,9 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
     if (!Number.isFinite(share) || share < 0 || share >= 100) return setErr('revShare precisa ser um percentual entre 0 e 99,999.');
     setErr('');
     const changed = Math.abs(share - (d.revShare ?? 0)) > 1e-9;
-    if (accChanged && accFrom > today) return setErr('A data do vínculo das contas não pode ser no futuro.');
     const n = (v: string) => v.trim() || null;
     save.mutate({
-      ...f, hostname: h, ...(changed ? { revShare: share, revShareFrom: rsFrom } : {}), ...(accChanged ? { accountsFrom: accFrom } : {}),
+      ...f, hostname: h, ...(changed ? { revShare: share, revShareFrom: rsFrom } : {}),
       registrar: n(reg.registrar), expiresOn: reg.expiresOn || null, hosting: n(reg.hosting), wpUser: n(reg.wpUser),
       ...(clearPw ? { wpPassword: null } : pw ? { wpPassword: pw } : {}),
     }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
@@ -92,12 +83,6 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
           <MenuItem value="">Automático (primeira rede que mostrar o site)</MenuItem>
           {gam?.accounts.map((a) => <MenuItem key={a.id} value={a.id}>{a.name} · {a.externalId}</MenuItem>)}
         </TextField>
-        {multi('Contas Google Ads', 'googleAccounts', (ga?.accounts ?? []).map((a) => ({ id: a.id, name: `${a.name} · ${a.externalId}` })))}
-        {multi('Contas Meta Ads', 'metaAccounts', (ma?.accounts ?? []).map((a) => ({ id: a.id, name: `${a.name} · ${a.externalId}` })))}
-        {accChanged && (
-          <TextField label="Mudança das contas vale a partir de" type="date" value={accFrom} onChange={(e) => setAccFrom(e.target.value)} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today } }}
-            helperText="A despesa das contas até o dia anterior continua no site em que estavam (ex.: site penalizado e conta passada para outro site). O histórico fica em Contas × Sites." />
-        )}
         <Divider />
         <Typography variant="overline" sx={{ mb: -1 }}>Registro do domínio</Typography>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
@@ -127,7 +112,7 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
         <Typography variant="caption" sx={{ mt: -0.75 }}>A senha WP fica criptografada (não aparece na lista nem nas respostas da API). “Mostrar senha” abre uma vez e registra quem abriu.</Typography>
         <Divider />
         <Stack spacing={0.75}>
-          <Typography variant="overline">Gestores do domínio</Typography>
+          <Typography variant="overline">Gestores e contas de anúncios do domínio</Typography>
           {d.managers.length ? d.managers.map((m) => {
             const nm = (ids: string[], list?: { id: string; name: string }[]) => ids.map((id) => list?.find((a) => a.id === id)?.name ?? id).join(', ');
             return (
@@ -137,7 +122,7 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
               </Stack>
             );
           }) : <Typography variant="caption">Nenhum gestor ainda.</Typography>}
-          <Typography variant="caption">Gestores e as contas de cada um são definidos em Usuários & Squads → editar o gestor → Domínios.</Typography>
+          <Typography variant="caption">Os vínculos de gestores e contas Google Ads / Meta Ads são feitos só em Configurações → Usuários & Squads → editar o gestor → Domínios. A despesa dessas contas é a que entra no ROI do domínio e na comissão do gestor.</Typography>
         </Stack>
         <FormControlLabel control={<Switch checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} />} label="Ativo" />
         {err && <Alert severity="error" variant="outlined">{err}</Alert>}

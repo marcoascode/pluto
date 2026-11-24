@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.8
+- **Vínculos só em Usuários & Squads**: usuário × domínio × contas Google Ads / Meta Ads passam a ser criados **exclusivamente** em Configurações → Usuários & Squads → aba Usuários (editar o gestor → Domínios). Saíram a atribuição de contas na edição de domínios (`/admin/dominios`), a de domínios na edição de contas Meta Ads e Google Ads (`/admin/integracoes/…`) e, em **Contas × Sites** (`/vinculos`), o botão Vincular e a aba "Atribuição aos gestores" (a tela fica só para consulta e correção da data de uma mudança). As telas continuam mostrando os vínculos (gestores e contas no domínio, domínios na conta).
+- O site em que o sync põe a despesa de cada conta (`domain_accounts`) passa a ser derivado desses vínculos (conta → domínios em que algum gestor a usa), com histórico a partir do dia da mudança; a migration `020` reconcilia os vínculos atuais a partir de hoje (dias anteriores não mudam).
+- **Comissões por ROI do gestor**: ROI = receita líquida dos sites que o gestor administra (a mesma da Home, em R$ pela cotação do ROI; dividida igualmente se o site tiver mais de um gestor) − despesas Google + Meta + IVA **só das contas vinculadas a ele** naquele site. Site negativo desconta. A % é aplicada ao ROI total do mês (sem ROI positivo, sem comissão). Saíram do cálculo os outros gastos do Caixa e os custos do site, e o diálogo "Gestores e sites" (o gestor vem só de Usuários & Squads).
+- **Modalidade de comissão no cadastro do gestor** (Admin/SuperAdmin): **Progressiva** (faixas de ROI) ou **Fixa** (campo de % que aparece ao escolher Fixa).
+- **Card "Comissão progressiva"** no painel de Comissões: mostra os patamares e o Admin edita faixas, % e moeda ali mesmo. Padrão: ROI até US$ 19.999,99 → 10% · US$ 20.000,00 a 39.999,99 → 12% · a partir de US$ 40.000,00 → 15%.
+- Cards dos gestores mostram ROI total em R$ e US$, modalidade, % aplicada e comissão (R$ e ≈ US$). Fluxo do mês encerrado mantido: conferir → aprovar → marcar como paga (pagamento por fora; o painel só registra).
+
 ## 0.18.7
 - **ROI conferido em todos os relatórios**: ROI (R$) = ((Receita − Receita × revShare) × cotação c/ deságio) − Despesas Google Ads − Despesas Meta Ads − IVA (mês com cotação travada usa a travada). Textos de ajuda e rodapé de Relatórios mostram a fórmula completa.
 - **Placements**: corrigido o ROI das linhas de subdomínio com receita estimada (distribuída a partir do domínio principal), que subtraía a despesa em R$ da receita em US$ sem converter.

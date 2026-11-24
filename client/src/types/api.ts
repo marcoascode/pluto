@@ -81,6 +81,7 @@ export interface Comparison {
 }
 
 /* ---------- auth ---------- */
+export type CommissionMode = 'progressive' | 'fixed';
 export interface User {
   id: string;
   name: string;
@@ -94,6 +95,9 @@ export interface User {
   isMainAdmin?: boolean;
   /** 0.18: criação automatizada de campanhas Meta. Só o SuperAdmin atribui. */
   canCreateMetaCampaigns?: boolean;
+  /** 0.18.8: Gestor — comissão progressiva (faixas do painel de Comissões) ou fixa (commissionPct %). */
+  commissionMode?: CommissionMode;
+  commissionPct?: number | null;
   /** Módulos que o usuário pode abrir (ver Capability). SuperAdmin recebe todos. */
   permissions?: Capability[];
 }
@@ -406,12 +410,12 @@ export interface IntegrationAccount {
   currency: Currency;
   timezone: string;
   imported: boolean; // entra no sync
-  domains: string[]; // domínios ligados à conta
+  domains: string[]; // domínios ligados à conta (0.18.8: vêm dos vínculos de Usuários & Squads; só leitura)
   status: ConnStatus;
   lastSyncAt: string | null;
   message?: string;
 }
-export type IntegrationAccountInput = Pick<IntegrationAccount, 'name' | 'externalId' | 'currency' | 'timezone' | 'imported' | 'domains'>;
+export type IntegrationAccountInput = Pick<IntegrationAccount, 'name' | 'externalId' | 'currency' | 'timezone' | 'imported'>;
 export interface SyncSetting {
   id: string; // ex.: google-ads.metrics
   provider: Provider | 'fx';
@@ -442,10 +446,7 @@ export interface DomainInput {
   revShareFrom?: string; // YYYY-MM-DD a partir de quando vale (padrão: hoje; o primeiro vale para todo o histórico)
   active?: boolean;
   squadId?: string | null;
-  googleAccounts?: string[]; // ids de IntegrationAccount
-  metaAccounts?: string[];
-  /** 0.17: data a partir da qual a mudança de contas vale (a despesa de antes fica no site antigo). Padrão: hoje. */
-  accountsFrom?: string;
+  // 0.18.8: contas Google/Meta do domínio não se editam aqui (só em Usuários & Squads → gestor → Domínios)
   /** 0.17: registro do domínio */
   registrar?: string | null; expiresOn?: string | null; hosting?: string | null; wpUser?: string | null;
   /** texto = troca a senha · null = apaga · ausente = mantém (a senha nunca volta na lista) */
@@ -483,6 +484,8 @@ export interface CreateUserRequest {
   squadIds?: string[]; // só Gerente
   companyIds?: string[];
   domains?: DomainLink[]; // só Gestor
+  commissionMode?: CommissionMode; // só Gestor
+  commissionPct?: number | null;
 }
 export interface UpdateUserRequest {
   name?: string;
@@ -491,6 +494,8 @@ export interface UpdateUserRequest {
   companyIds?: string[];
   domains?: DomainLink[];
   status?: 'active' | 'disabled';
+  commissionMode?: CommissionMode;
+  commissionPct?: number | null;
 }
 export interface CreateUserResponse {
   user: User;

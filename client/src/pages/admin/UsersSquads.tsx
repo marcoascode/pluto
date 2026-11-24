@@ -1,4 +1,4 @@
-import { Alert, Avatar, AvatarGroup, Box, Button, Card, CardContent, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, ListItemText, MenuItem, Snackbar, Stack, Switch, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Avatar, AvatarGroup, Box, Button, Card, CardContent, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, InputAdornment, ListItemText, MenuItem, Snackbar, Stack, Switch, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
@@ -14,7 +14,7 @@ import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
 import { initials } from '@/lib/format';
-import type { Capability, Company, DomainLink, Role, User } from '@/types/api';
+import type { Capability, CommissionMode, Company, DomainLink, Role, User } from '@/types/api';
 
 /* =====================================================================
    Usuários & Squads
@@ -63,7 +63,7 @@ function UsersTab() {
     if (u.role === 'admin' || u.role === 'superadmin') return <Typography variant="caption">Todos os domínios</Typography>;
     if (u.role === 'gerente') return u.squadIds.length ? <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{u.squadIds.map((id) => <Tag key={id}>{sq?.squads.find((s) => s.id === id)?.name ?? id}</Tag>)}</Stack> : <Typography variant="caption">Só as Empresas dele</Typography>;
     return u.domains.length
-      ? <Tooltip title={u.domains.map((d) => `${d.domain} (${d.googleAccounts.length} Google · ${d.metaAccounts.length} Meta)`).join('\n')}><Typography variant="body2">{u.domains.length === 1 ? u.domains[0].domain : `${u.domains.length} domínios`}<Typography component="span" variant="caption"> · {u.domains.reduce((a, d) => a + d.googleAccounts.length + d.metaAccounts.length, 0)} contas</Typography></Typography></Tooltip>
+      ? <Tooltip title={u.domains.map((d) => `${d.domain} (${d.googleAccounts.length} Google · ${d.metaAccounts.length} Meta)`).join('\n')}><Typography variant="body2">{u.domains.length === 1 ? u.domains[0].domain : `${u.domains.length} domínios`}<Typography component="span" variant="caption"> · {u.domains.reduce((a, d) => a + d.googleAccounts.length + d.metaAccounts.length, 0)} contas · comissão {u.commissionMode === 'fixed' ? `fixa ${String(u.commissionPct ?? '').replace('.', ',')}%` : 'progressiva'}</Typography></Typography></Tooltip>
       : <Tag tone="warn">Sem domínio</Tag>;
   };
   return (
@@ -137,7 +137,9 @@ function Multi({ label, value, options, onChange, helper, disabled }: { label: s
   );
 }
 
-/** Gestor: cada linha = domínio + contas Google Ads + contas Meta Ads que ele usa nesse domínio. */
+/** Gestor: cada linha = domínio + contas Google Ads + contas Meta Ads que ele usa nesse domínio.
+ *  0.18.8: é o ÚNICO lugar onde usuário × domínio × conta são ligados. A despesa dessas contas no domínio é a que sai da
+ *  receita do site no ROI do gestor (e na comissão); o site em que o sync põe a despesa da conta vem daqui. */
 function DomainLinksEditor({ value, onChange }: { value: DomainLink[]; onChange: (v: DomainLink[]) => void }) {
   const { data: doms } = useAdminDomains();
   const { data: ga } = useIntegrationAccounts('google-ads');
@@ -148,7 +150,7 @@ function DomainLinksEditor({ value, onChange }: { value: DomainLink[]; onChange:
   return (
     <Stack spacing={1.25}>
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="overline">Domínios que gere</Typography>
+        <Box><Typography variant="overline">Domínios que gere</Typography><Typography variant="caption" component="div">As despesas das contas escolhidas saem da receita do domínio no ROI e na comissão do gestor. Mudanças valem a partir de hoje.</Typography></Box>
         <Button size="small" startIcon={<AddRoundedIcon />} disabled={!free.some((d) => !value.some((v) => v.domain === d.hostname))}
           onClick={() => { const d = free.find((x) => !value.some((v) => v.domain === x.hostname)); if (d) onChange([...value, { domain: d.hostname, googleAccounts: [], metaAccounts: [] }]); }}>Adicionar domínio</Button>
       </Stack>
@@ -178,7 +180,8 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
   const { data: sq } = useSquads();
   const { data: co } = useAdminCompanies();
   const { isSuperAdmin } = useAuth();
-  const [f, setF] = useState({ name: u?.name ?? '', email: u?.email ?? '', role: u?.role ?? ('gestor' as Role), status: u?.status === 'disabled' ? 'disabled' : 'active', squadIds: u?.squadIds ?? [], companyIds: u?.companyIds ?? [], domains: u?.domains ?? [] });
+  const [f, setF] = useState({ name: u?.name ?? '', email: u?.email ?? '', role: u?.role ?? ('gestor' as Role), status: u?.status === 'disabled' ? 'disabled' : 'active', squadIds: u?.squadIds ?? [], companyIds: u?.companyIds ?? [], domains: u?.domains ?? [],
+    commissionMode: u?.commissionMode ?? ('progressive' as CommissionMode), commissionPct: u?.commissionPct != null ? String(u.commissionPct).replace('.', ',') : '' });
   const [err, setErr] = useState('');
   const create = useAdminMutation(adminApi.createUser, INV);
   const save = useAdminMutation((b: Parameters<typeof adminApi.updateUser>[1]) => adminApi.updateUser(u!.id, b), INV);
@@ -189,7 +192,10 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
     const dup = f.domains.find((d, i) => f.domains.findIndex((x) => x.domain === d.domain) !== i);
     if (dup) return setErr(`O domínio ${dup.domain} está repetido.`);
     setErr('');
-    const links = { squadIds: f.role === 'gerente' ? f.squadIds : [], companyIds: f.companyIds, domains: f.role === 'gestor' ? f.domains : [] };
+    const pct = Number(f.commissionPct.trim().replace(',', '.'));
+    if (f.role === 'gestor' && f.commissionMode === 'fixed' && (!Number.isFinite(pct) || pct <= 0 || pct > 100)) return setErr('Na comissão fixa, informe a porcentagem (maior que 0 e até 100%).');
+    const commission = f.role === 'gestor' ? { commissionMode: f.commissionMode, commissionPct: f.commissionMode === 'fixed' ? pct : null } : {};
+    const links = { squadIds: f.role === 'gerente' ? f.squadIds : [], companyIds: f.companyIds, domains: f.role === 'gestor' ? f.domains : [], ...commission };
     const onError = (e: unknown) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.');
     if (!u) return create.mutate({ name: f.name.trim(), email: f.email.trim().toLowerCase(), role: f.role, ...links }, { onSuccess: onCreated, onError });
     save.mutate({ name: f.name.trim(), role: f.role, ...links, ...(u.status !== 'invited' ? { status: f.status as 'active' | 'disabled' } : {}) }, { onSuccess: onClose, onError });
@@ -207,6 +213,19 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
           </TextField>
           <Multi label="Sócio das Empresas" value={f.companyIds} options={(co?.companies ?? []).map((c) => ({ id: c.id, name: c.name, sub: `${c.squadIds.length} Squad(s)` }))} onChange={(v) => setF({ ...f, companyIds: v })}
             helper="Sócio vê todos os Squads e domínios da Empresa, completos." />
+          {f.role === 'gestor' && (
+            <Stack spacing={1.25}>
+              <TextField select label="Modalidade de comissão" value={f.commissionMode} onChange={(e) => setF({ ...f, commissionMode: e.target.value as CommissionMode })} fullWidth
+                helperText={f.commissionMode === 'progressive' ? 'A % depende do ROI total do mês, pelas faixas do painel Finance → Comissões.' : 'Uma % única sobre o ROI total do mês nos sites que ele gere.'}>
+                <MenuItem value="progressive">Progressiva (faixas de ROI)</MenuItem>
+                <MenuItem value="fixed">Fixa</MenuItem>
+              </TextField>
+              {f.commissionMode === 'fixed' && (
+                <TextField label="Comissão fixa" value={f.commissionPct} onChange={(e) => setF({ ...f, commissionPct: e.target.value })} fullWidth placeholder="ex.: 12"
+                  slotProps={{ htmlInput: { inputMode: 'decimal' }, input: { endAdornment: <InputAdornment position="end">%</InputAdornment> } }} helperText="Aplicada ao ROI total do gestor no mês (sem ROI positivo, sem comissão)." />
+              )}
+            </Stack>
+          )}
           {u && u.status !== 'invited' && (
             <TextField select label="Status" value={f.status} disabled={self} onChange={(e) => setF({ ...f, status: e.target.value })} fullWidth helperText="Desativado não consegue entrar, mas o usuário continua cadastrado.">
               <MenuItem value="active">Ativo</MenuItem><MenuItem value="disabled">Desativado</MenuItem>

@@ -5,8 +5,6 @@ import { conflict, notFound, parse } from '../../lib/http.js';
 import { today } from '../../lib/dates.js';
 import { config } from '../../config.js';
 import { decrypt, encrypt } from '../../lib/crypto.js';
-import { providersOf, snapshotAccount } from '../../services/accountLinks.js';
-import { requestRun } from '../../services/sync/index.js';
 
 export const domainsRouter = Router();
 
@@ -33,7 +31,8 @@ const DOMAIN_SQL = `
     LEFT JOIN domain_accounts da ON da.domain_id = d.id
     LEFT JOIN integration_accounts a ON a.id = da.account_id`;
 const GROUP = ' GROUP BY d.id, sd.squad_id';
-/* Gestores do domínio (e as contas de cada um) são editados em Usuários → gestor → Domínios. */
+/* Gestores do domínio (e as contas de cada um) são editados em Usuários → gestor → Domínios.
+   0.18.8: googleAccounts/metaAccounts = contas que os gestores usam no domínio (só leitura aqui). */
 const get = (host: string) => one(`${DOMAIN_SQL} WHERE d.hostname = $1${GROUP}`, [host]);
 
 /** O domínio técnico "Sem domínio" é do sistema: não se edita, renomeia, liga nem exclui. */
@@ -73,18 +72,13 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
   const host = parse(HOST, req.params.hostname);
   const b = parse(z.object({
     hostname: HOST.optional(), active: z.boolean().optional(), squadId: z.string().regex(/^\d+$/).nullable().optional(),
-    googleAccounts: z.array(z.string().regex(/^\d+$/)).max(200).optional(), metaAccounts: z.array(z.string().regex(/^\d+$/)).max(200).optional(),
     revShare: revShare.optional(), revShareFrom: ISO.optional(),
     gamAccountId: z.string().regex(/^\d+$/).nullable().optional(),   // um domínio = uma conta do Ad Manager
-    // 0.17: data a partir da qual o novo vínculo de contas vale (padrão hoje; a despesa de antes fica no site antigo)
-    accountsFrom: ISO.optional(),
     // 0.17: registro do domínio
     registrar: z.string().trim().max(120).nullable().optional(), expiresOn: ISO.nullable().optional(),
     hosting: z.string().trim().max(160).nullable().optional(), wpUser: z.string().trim().max(160).nullable().optional(),
     wpPassword: z.string().max(300).nullable().optional(),   // texto = troca · null = apaga · ausente = mantém
   }), req.body);
-  if (b.accountsFrom && b.accountsFrom > today()) throw conflict('future_date', 'A data do vínculo não pode ser no futuro.');
-  const touched = new Set<string>();
   const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
   if (!d) throw notFound('Domínio não encontrado.');
   await tx(async (c) => {
@@ -109,18 +103,7 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
         await c.query('INSERT INTO squad_domains (squad_id, domain_id) VALUES ($1, $2)', [b.squadId, d.id]);
       }
     }
-    for (const [prov, list] of [['google-ads', b.googleAccounts], ['meta', b.metaAccounts]] as const) {
-      if (!list) continue;
-      const ok = await q<{ id: string }>('SELECT id::text FROM integration_accounts WHERE provider = $1 AND id = ANY($2::bigint[])', [prov, list], c);
-      if (ok.length !== new Set(list).size) throw conflict('unknown_account', 'Alguma conta da lista não existe.');
-      const before = (await q<{ id: string }>('SELECT da.account_id::text AS id FROM domain_accounts da JOIN integration_accounts a ON a.id = da.account_id WHERE da.domain_id = $1 AND a.provider = $2', [d.id, prov], c)).map((r) => r.id);
-      await c.query('DELETE FROM domain_accounts da USING integration_accounts a WHERE da.account_id = a.id AND a.provider = $2 AND da.domain_id = $1', [d.id, prov]);
-      for (const a of ok) await c.query('INSERT INTO domain_accounts (domain_id, account_id) VALUES ($1, $2)', [d.id, a.id]);
-      const after = ok.map((a) => a.id);
-      for (const a of [...before.filter((x) => !after.includes(x)), ...after.filter((x) => !before.includes(x))]) touched.add(a);
-    }
-    // 0.17: histórico do vínculo (a despesa até a data fica no site antigo)
-    for (const a of touched) await snapshotAccount(c, a, b.accountsFrom ?? today(), req.user!.id);
+    // 0.18.8: contas de anúncios NÃO se ligam mais por aqui: só em Usuários & Squads (gestor → domínio → contas).
     // 0.17: registro do domínio
     const reg: [string, unknown][] = [['registrar', b.registrar], ['expires_on', b.expiresOn], ['hosting', b.hosting], ['wp_user', b.wpUser]];
     for (const [col, v] of reg) if (v !== undefined) await c.query(`UPDATE domains SET ${col} = $2 WHERE id = $1`, [d.id, v === '' ? null : v]);
@@ -129,7 +112,6 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
       await c.query('INSERT INTO domain_secret_access (domain_id, user_id, action) VALUES ($1, $2, $3)', [d.id, req.user!.id, b.wpPassword ? 'update' : 'clear']);
     }
   });
-  if (touched.size) for (const p of await providersOf([...touched])) { requestRun(p === 'meta' ? 'meta.metrics' : 'google-ads.metrics'); if (p === 'google-ads') requestRun('google-ads.placements'); }
   res.json(await get(b.hostname ?? host));
 });
 
