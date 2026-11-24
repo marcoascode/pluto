@@ -1,9 +1,7 @@
 import {
-  Alert, Avatar, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, IconButton, InputAdornment, MenuItem, Stack,
+  Alert, Avatar, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, InputAdornment, MenuItem, Stack,
   TextField, Typography, alpha, useTheme,
 } from '@mui/material';
-import AddRoundedIcon from '@mui/icons-material/AddRounded';
-import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -13,8 +11,8 @@ import { ApiError } from '@/lib/api/client';
 import { ErrorBox, PageHead, PageSkeleton } from '@/components/ui/States';
 import { ddmmyyyy, monthTitle, shiftMonth } from '@/lib/finance';
 import {
-  brl, brl0, commissionsApi, parseNum, pctFmt, STATUS, tiersText, usd,
-  type CommissionLine, type CommissionsResponse, type SiteCard, type Tier,
+  brl, brl0, commissionsApi, curSym, parseNum, pctFmt, STATUS, tiersText, usd,
+  type CommissionLine, type SiteCard,
 } from '@/lib/financeOps';
 import { todayISO } from '@/lib/period';
 
@@ -25,8 +23,8 @@ const initials = (n: string) => n.split(/\s+/).map((x) => x[0]).slice(0, 2).join
  * Finance → Comissões (0.18.8).
  * ROI do gestor = receita líquida dos sites que ele gere (a mesma da Home, em R$ pela cotação do ROI) − despesas Google +
  * Meta + IVA SÓ das contas vinculadas a ele em Usuários & Squads. Site negativo desconta.
- * Comissão = % × ROI total do mês: progressiva (faixas do card "Comissão progressiva", editáveis pelo Admin) ou fixa (% do
- * cadastro do gestor). Mês encerrado: o Admin confere, aprova e marca como paga (pagamento feito por fora; só registra).
+ * Comissão = % × ROI total do mês: progressiva (faixas) ou fixa (%), ambas definidas no cadastro do gestor
+ * (Usuários & Squads). Mês encerrado: o Admin confere, aprova e marca como paga (pagamento feito por fora; só registra).
  */
 export default function CommissionsPage() {
   const { pluto: p } = useTheme();
@@ -44,7 +42,7 @@ export default function CommissionsPage() {
   return (
     <>
       <PageHead title="Comissões"
-        sub={mgr ? 'Seus sites no mês, o seu ROI e a sua comissão.' : 'ROI de cada gestor nos sites que ele gere (receita − despesas das contas vinculadas a ele em Usuários & Squads) × % da modalidade dele. A comissão é paga por fora: aqui você confere, aprova e marca como paga.'} />
+        sub={mgr ? 'Seus sites no mês, o seu ROI e a sua comissão.' : 'ROI de cada gestor nos sites que ele gere (receita − despesas das contas vinculadas a ele em Usuários & Squads) × % da modalidade dele (progressiva ou fixa, definida no cadastro do gestor em Usuários & Squads). A comissão é paga por fora: aqui você confere, aprova e marca como paga.'} />
 
       {/* filtros: Empresa · Gestor · Mês de fechamento */}
       <Card sx={{ p: 1.5, mb: 2 }}>
@@ -72,8 +70,6 @@ export default function CommissionsPage() {
         <Kpi label="A pagar" value={brl(t.toPay)} tone={t.toPay > 0 ? p.warn : undefined} sub="aprovadas e a aprovar" />
         <Kpi label="Pagas" value={brl(t.paid)} tone={t.paid > 0 ? p.pos : undefined} />
       </Grid>
-
-      <RuleCard rule={data.rule} admin={admin} />
 
       <SectionTitle title={mgr ? 'Sua comissão' : 'Gestores'} sub={`${monthTitle(month)}${month === NOW ? ' · mês em apuração (aprova depois que fechar)' : ''}`} />
       <Grid container spacing={1.5} sx={{ mb: 3 }}>
@@ -145,6 +141,9 @@ function ManagerCard({ l, company, showCompany, admin }: { l: CommissionLine; co
           <Typography variant="caption">{l.profit > 0 ? (l.mode === 'fixed' ? `fixa ${pctFmt(l.pct)}` : `progressiva · faixa ${pctFmt(l.pct)}`) : 'sem ROI positivo, sem comissão'}</Typography>
         </Box>
       </Stack>
+      {l.mode === 'progressive' && l.tiers.length > 0 && (
+        <Typography variant="caption" sx={{ fontSize: 11.5 }}>Faixas: {tiersText(l.tiers, l.tierCurrency)}{l.profit > 0 ? ` · ROI ${curSym(l.tierCurrency)} ${Math.round(l.profitTier).toLocaleString('pt-BR')}` : ''}</Typography>
+      )}
 
       <Stack spacing={0.6}>
         {l.sites.map((s) => (
@@ -257,78 +256,6 @@ function SiteTile({ s, company }: { s: SiteCard; company?: string }) {
       {!s.managers.length && <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>Sem gestor: vincule em Usuários &amp; Squads.</Typography>}
       {s.equalSplit && <Typography variant="caption" component="div" sx={{ mt: 0.5, color: p.warn }}>Rateio não definido: receita dividida igualmente (Admin → Domínios → Rateio).</Typography>}
       {neg && s.managers.length > 0 && <Typography variant="caption" component="div" sx={{ mt: 1, color: p.neg }}>Desconta {brl0(Math.abs(s.result))} do ROI de {s.managers.map((m) => m.userName).join(' e ')}.</Typography>}
-    </Card>
-  );
-}
-
-/* ---------------- comissão progressiva (faixas) ---------------- */
-const curSym = (c: string) => (c === 'USD' ? 'US$' : c === 'EUR' ? '€' : 'R$');
-function RuleCard({ rule, admin }: { rule: CommissionsResponse['rule']; admin: boolean }) {
-  const { pluto: p } = useTheme();
-  const [edit, setEdit] = useState(false);
-  const [tiers, setTiers] = useState<{ from: string; pct: string }[]>([]);
-  const [cur, setCur] = useState(rule.tierCurrency);
-  const [err, setErr] = useState('');
-  const save = useFinanceMutation(commissionsApi.saveRule);
-  const reset = () => { setTiers([...rule.tiers].sort((a, b) => a.from - b.from).map((t) => ({ from: String(t.from).replace('.', ','), pct: String(t.pct).replace('.', ',') }))); setCur(rule.tierCurrency); setErr(''); };
-  const set = (i: number, k: 'from' | 'pct', v: string) => setTiers(tiers.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
-  const submit = () => {
-    const list: Tier[] = tiers.map((t) => ({ from: parseNum(t.from), pct: parseNum(t.pct) }));
-    if (list.some((t) => !Number.isFinite(t.from) || t.from < 0 || !Number.isFinite(t.pct) || t.pct < 0 || t.pct > 100)) return setErr('Confira os valores: patamar a partir de 0 e % entre 0 e 100.');
-    if (new Set(list.map((t) => t.from)).size !== list.length) return setErr('Dois patamares não podem começar no mesmo valor.');
-    setErr('');
-    save.mutate({ name: rule.name || 'Progressiva', tiers: list.map((t, i) => (i === 0 ? { ...t, from: 0 } : t)), tierCurrency: cur },
-      { onSuccess: () => setEdit(false), onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
-  };
-  const sorted = [...rule.tiers].sort((a, b) => a.from - b.from);
-  return (
-    <Card sx={{ p: 2, mb: 2.5 }}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between', mb: 1.25 }}>
-        <Box>
-          <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 16 }}>Comissão progressiva</Typography>
-          <Typography variant="caption">Vale para os gestores com modalidade Progressiva. A faixa atingida pelo ROI total do mês vale para o ROI todo; sem ROI positivo, sem comissão. Gestores com comissão Fixa usam a % do cadastro (Usuários &amp; Squads).</Typography>
-        </Box>
-        {admin && !edit && <Button size="small" variant="outlined" onClick={() => { reset(); setEdit(true); }}>Editar faixas</Button>}
-      </Stack>
-      {!edit ? (
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25}>
-          {sorted.map((t, i) => {
-            const next = sorted[i + 1];
-            const k = (v: number) => `${curSym(rule.tierCurrency)} ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-            const range = !next ? (i === 0 ? 'Qualquer ROI' : `A partir de ${k(t.from)}`) : i === 0 ? `Até ${k(next.from - 0.01)}` : `${k(t.from)} a ${k(next.from - 0.01)}`;
-            return (
-              <Box key={i} sx={{ flex: 1, p: 1.5, borderRadius: 2, bgcolor: alpha(p.accent, 0.06 + i * 0.04), border: `1px solid ${alpha(p.accent, 0.25)}` }}>
-                <Typography variant="caption" component="div">ROI no mês · {range}</Typography>
-                <Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 22, color: p.accent }}>{pctFmt(t.pct)}</Typography>
-              </Box>
-            );
-          })}
-        </Stack>
-      ) : (
-        <Stack spacing={1.25} sx={{ maxWidth: 560 }}>
-          {tiers.map((t, i) => (
-            <Stack key={i} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-              <TextField size="small" label={i === 0 ? 'Patamar inicial' : 'ROI a partir de'} value={i === 0 ? '0' : t.from} disabled={i === 0} onChange={(e) => set(i, 'from', e.target.value)} sx={{ flex: 1 }}
-                slotProps={{ input: { startAdornment: <InputAdornment position="start">{curSym(cur)}</InputAdornment> } }} />
-              <TextField size="small" label="Comissão" value={t.pct} onChange={(e) => set(i, 'pct', e.target.value)} sx={{ width: 120 }}
-                slotProps={{ htmlInput: { inputMode: 'decimal' }, input: { endAdornment: <InputAdornment position="end">%</InputAdornment> } }} />
-              <IconButton size="small" disabled={i === 0} onClick={() => setTiers(tiers.filter((_, j) => j !== i))} aria-label="Remover faixa"><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
-            </Stack>
-          ))}
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <Button size="small" startIcon={<AddRoundedIcon />} disabled={tiers.length >= 10}
-              onClick={() => { const last = tiers[tiers.length - 1]; setTiers([...tiers, { from: String((parseNum(last?.from ?? '0') || 0) + 20000), pct: String((parseNum(last?.pct ?? '10') || 10) + 2) }]); }}>Faixa</Button>
-            <Box sx={{ flex: 1 }} />
-            <TextField select size="small" label="Moeda dos patamares" value={cur} onChange={(e) => setCur(e.target.value as typeof cur)} sx={{ width: 170 }}>{['USD', 'BRL', 'EUR'].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}</TextField>
-          </Stack>
-          <Typography variant="caption">Prévia: {tiersText(tiers.map((t, i) => ({ from: i === 0 ? 0 : parseNum(t.from) || 0, pct: parseNum(t.pct) || 0 })), cur)}. Comissões já aprovadas mantêm a % da época.</Typography>
-          {err && <Alert severity="error" variant="outlined">{err}</Alert>}
-          <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
-            <Button onClick={() => { reset(); setEdit(false); }}>Cancelar</Button>
-            <Button variant="contained" disabled={save.isPending} onClick={submit}>{save.isPending ? 'Salvando…' : 'Salvar faixas'}</Button>
-          </Stack>
-        </Stack>
-      )}
     </Card>
   );
 }

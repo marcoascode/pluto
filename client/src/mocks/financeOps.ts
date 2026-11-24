@@ -10,7 +10,7 @@ import type { Assignment, CommissionLine, CommissionMode, CommissionSite, SiteCa
 import { FIN_CASH, FIN_COSTS, FIN_SITES, financeCompanies, finMock } from './finance';
 import { TODAY } from './db';
 
-const OPS = /^\/finance\/(sites|commissions|assignments|commission-rule)(\/|$)/;
+const OPS = /^\/finance\/(sites|commissions|assignments)(\/|$)/;
 export const isOpsPath = (p: string) => OPS.test(p);
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -24,7 +24,8 @@ const MANAGERS: { id: string; name: string; mode: CommissionMode; fixedPct: numb
   { id: 'u2', name: 'Gestor Exemplo', mode: 'progressive', fixedPct: null }, { id: 'u3', name: 'Ana Exemplo', mode: 'fixed', fixedPct: 11 },
   { id: 'g3', name: 'Gestor Gama', mode: 'progressive', fixedPct: null }, { id: 'g4', name: 'Gestor Delta', mode: 'progressive', fixedPct: null },
 ];
-const RULE = { name: 'Progressiva', tiers: [{ from: 0, pct: 10 }, { from: 20000, pct: 12 }, { from: 40000, pct: 15 }] as Tier[], tierCurrency: 'USD' as T.Currency };
+/** 0.18.10: faixas da progressiva ficam no cadastro de cada gestor; no demo, todos com o padrão */
+const RULE = { tiers: [{ from: 0, pct: 10 }, { from: 20000, pct: 12 }, { from: 40000, pct: 15 }] as Tier[], tierCurrency: 'USD' as T.Currency };
 /** gestor × site (no dash real: Usuários & Squads → gestor → Domínios) */
 interface Asg { userId: string; companyId: string; site: string }
 const ASG: Asg[] = [];
@@ -89,7 +90,7 @@ function commissionsFor(ids: string[], month: string, userId?: string): Commissi
     const pct = mode === 'fixed' ? (profit > 0 ? mgr?.fixedPct ?? 0 : 0) : tier?.pct ?? 0;
     const calculated = r2(Math.max(0, profit) * pct / 100);
     const live: CommissionLine = {
-      periodId: null, userId: uid, userName: mgr?.name ?? '', companyId, month, mode, fixedPct: mgr?.fixedPct ?? null, sites,
+      periodId: null, userId: uid, userName: mgr?.name ?? '', companyId, month, mode, fixedPct: mgr?.fixedPct ?? null, tiers: mode === 'fixed' ? [] : RULE.tiers, sites,
       revenue: r2(sites.reduce((a, s) => a + s.revenue, 0)), ads: r2(sites.reduce((a, s) => a + s.ads, 0)), profit, profitUsd,
       negatives: r2(sites.filter((s) => s.result < 0).reduce((a, s) => a + s.result, 0)), profitTier, tierCurrency: RULE.tierCurrency as CommissionLine['tierCurrency'], pct, calculated, calculatedUsd: r2(calculated / USD_RATE),
       adjustments: 0, adjustmentNote: null, approved: null, status: month >= M() ? 'open' : 'to_approve', frozen: false, liveDiff: null,
@@ -144,7 +145,7 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
     const months: string[] = []; for (let i = 0, mm = M(); i < 12; i++, mm = sh(mm, -1)) months.push(mm);
     return {
       viewer: { role, userId: u.id }, month, months, companies: all, managers: [...new Map(allLines.map((l) => [l.userId, l.userName])).entries()].map(([i, name]) => ({ id: i, name })),
-      rule: RULE, lines, sites: cards,
+      lines, sites: cards,
       totals: { revenue: sum((l) => l.revenue), ads: sum((l) => l.ads), result: sum((l) => l.profit), resultUsd: sum((l) => l.profitUsd),
         commissions: sum((l) => l.approved ?? l.calculated), toPay: sum((l) => (l.status === 'paid' ? 0 : l.approved ?? l.calculated)), paid: sum((l) => (l.status === 'paid' ? l.approved ?? 0 : 0)) },
     };
@@ -179,12 +180,6 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
     const row: Assignment = { id: m[1] ?? id('a'), userId: b.userId, userName: MANAGERS.find((x) => x.id === b.userId)?.name ?? 'Gestor', companyId: b.companyId, site: String(b.site).toLowerCase(), startDate: b.startDate, endDate: b.endDate || null, sharePct: Number(b.sharePct), note: b.note || null };
     if (i >= 0) PERIODS[i] = row; else PERIODS.push(row);
     return { id: row.id };
-  }
-  if (path === '/finance/commission-rule') {
-    if (!(b.tiers ?? []).some((t: Tier) => t.from === 0)) throw new ApiError(422, 'invalid_input', 'A primeira faixa precisa começar em 0.');
-    if (new Set((b.tiers as Tier[]).map((t) => t.from)).size !== b.tiers.length) throw new ApiError(422, 'invalid_input', 'Duas faixas não podem começar no mesmo valor.');
-    RULE.name = b.name; RULE.tiers = [...b.tiers].sort((x: Tier, y: Tier) => x.from - y.from); RULE.tierCurrency = b.tierCurrency;
-    return { ok: true };
   }
   throw new ApiError(404, 'not_found', 'rota ' + path);
 }

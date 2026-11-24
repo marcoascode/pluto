@@ -21,6 +21,11 @@ export const DEFAULT_REVSHARE = 7.5;
 export const sitesApi = { list: (q: { company?: string }) => get<{ sites: Site[]; sourceError: string | null }>('/finance/sites', q) };
 
 export interface Tier { from: number; pct: number }
+/** 0.18.10 · padrões do cadastro do gestor: Progressiva (US$) e Fixa */
+export const DEFAULT_TIERS: Tier[] = [{ from: 0, pct: 10 }, { from: 20000, pct: 12 }, { from: 40000, pct: 15 }];
+export const DEFAULT_TIER_CURRENCY = 'USD' as const;
+export const DEFAULT_FIXED_PCT = 10;
+export const curSym = (c: string) => (c === 'USD' ? 'US$' : c === 'EUR' ? '€' : 'R$');
 export type CommissionStatus = 'open' | 'to_approve' | 'approved' | 'paid';
 export const STATUS: Record<CommissionStatus, { label: string; color: string }> = {
   open: { label: 'Em apuração', color: '#8094b9' },
@@ -35,7 +40,7 @@ export type ShareSource = 'rateio' | 'periodo' | 'misto';
 export interface CommissionSite { site: string; sharePct: number; revenue: number; ads: number; result: number; source?: ShareSource; days?: number }
 export interface CommissionLine {
   periodId: string | null; userId: string; userName: string; companyId: string; month: string;
-  mode: CommissionMode; fixedPct: number | null;
+  mode: CommissionMode; fixedPct: number | null; tiers: Tier[];
   sites: CommissionSite[]; revenue: number; ads: number; profit: number; profitUsd: number; negatives: number; profitTier: number; tierCurrency: 'BRL' | 'USD' | 'EUR';
   pct: number; calculated: number; calculatedUsd: number; adjustments: number; adjustmentNote: string | null; approved: number | null;
   status: CommissionStatus; frozen: boolean; liveDiff: number | null; incomplete: string[];
@@ -46,7 +51,6 @@ export interface SiteManager { userId: string; userName: string; sharePct: numbe
 export interface SiteCard { companyId: string; site: string; month: string; revenue: number; revenueUsd: number; ads: number; result: number; roi: number | null; allAds: number; managers: SiteManager[]; equalSplit?: boolean }
 export interface CommissionsResponse {
   viewer: { role: ViewerRole; userId: string }; month: string; months: string[]; companies: Company[]; managers: { id: string; name: string }[];
-  rule: { name: string; tiers: Tier[]; tierCurrency: 'BRL' | 'USD' | 'EUR' };
   lines: CommissionLine[]; sites: SiteCard[];
   totals: { revenue: number; ads: number; result: number; resultUsd: number; commissions: number; toPay: number; paid: number };
 }
@@ -63,7 +67,6 @@ export const commissionsApi = {
   assignments: (q: { company?: string; user?: string }) => get<AssignmentsResponse>('/finance/assignments', q),
   saveAssignment: ({ id, ...b }: Omit<Assignment, 'id' | 'userName'> & { id?: string }) => (id ? api.put<{ id: string }>(`/finance/assignments/${id}`, b) : api.post<{ id: string }>('/finance/assignments', b)),
   removeAssignment: (id: string) => api.del<void>(`/finance/assignments/${id}`),
-  saveRule: (b: { name: string; tiers: Tier[]; tierCurrency: 'BRL' | 'USD' | 'EUR' }) => api.put<unknown>('/finance/commission-rule', b),
 };
 
 export const usd = (v: number | null | undefined) => (v == null || !isFinite(v) ? '—' : `US$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);

@@ -22,6 +22,9 @@ export interface SessionUser {
   /** 0.18.8: Gestor — comissão progressiva (faixas do painel) ou fixa (commissionPct %). */
   commissionMode: 'progressive' | 'fixed';
   commissionPct: number | null;
+  /** 0.18.10: faixas da progressiva do próprio gestor (moeda commissionTierCurrency) */
+  commissionTiers: { from: number; pct: number }[] | null;
+  commissionTierCurrency: 'BRL' | 'USD' | 'EUR';
   permissions: Capability[];
 }
 declare global {
@@ -31,6 +34,7 @@ declare global {
 export const USER_SQL = `
   SELECT u.id::text, u.name, u.email, u.role, u.status, u.must_change_password AS "mustChangePassword", u.is_main_admin AS "isMainAdmin", u.can_create_meta_campaigns AS "canCreateMetaCampaigns",
          u.commission_mode AS "commissionMode", u.commission_pct::float AS "commissionPct",
+         u.commission_tiers AS "commissionTiers", u.commission_tier_currency AS "commissionTierCurrency",
          COALESCE((SELECT array_agg(su.squad_id::text ORDER BY su.squad_id) FROM squad_users su WHERE su.user_id = u.id), '{}') AS "squadIds",
          COALESCE((SELECT array_agg(cu.company_id::text ORDER BY cu.company_id) FROM company_users cu WHERE cu.user_id = u.id), '{}') AS "companyIds",
          COALESCE((SELECT json_agg(json_build_object(
