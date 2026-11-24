@@ -38,6 +38,9 @@ export type CommissionMode = 'progressive' | 'fixed';
 /** source: 'rateio' = rateio do domínio · 'periodo' = período de "Gestores e sites" · 'misto' = os dois no mês */
 export type ShareSource = 'rateio' | 'periodo' | 'misto';
 export interface CommissionSite { site: string; sharePct: number; revenue: number; ads: number; result: number; source?: ShareSource; days?: number }
+export type PayoutMethod = 'pix' | 'dolafy' | 'other';
+/** label: "Chave PIX", "Dolafy" ou o nome do meio informado em "Outro". */
+export interface Payout { method: PayoutMethod | null; methodOther: string | null; key: string | null; label: string | null }
 export interface CommissionLine {
   periodId: string | null; userId: string; userName: string; companyId: string; month: string;
   mode: CommissionMode; fixedPct: number | null; tiers: Tier[];
@@ -45,6 +48,8 @@ export interface CommissionLine {
   pct: number; calculated: number; calculatedUsd: number; adjustments: number; adjustmentNote: string | null; approved: number | null;
   status: CommissionStatus; frozen: boolean; liveDiff: number | null; incomplete: string[];
   approvedBy: string | null; approvedAt: string | null; paidAt: string | null; paidNote: string | null;
+  /** 0.18.13: meio de recebimento informado pelo gestor (menu do usuário → Dados de recebimento). */
+  payout?: Payout | null;
 }
 export interface SiteManager { userId: string; userName: string; sharePct: number; revenue: number; ads: number; result: number; source: ShareSource; days: number }
 /** revenue = receita líquida (R$, cotação do ROI) · ads = despesas das contas vinculadas aos gestores · allAds = despesa total do site */

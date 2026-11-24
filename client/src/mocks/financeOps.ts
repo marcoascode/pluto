@@ -9,6 +9,7 @@ import { ApiError } from '@/lib/api/client';
 import type { Assignment, CommissionLine, CommissionMode, CommissionSite, SiteCard, Tier } from '@/lib/financeOps';
 import { FIN_CASH, FIN_COSTS, FIN_SITES, financeCompanies, finMock } from './finance';
 import { TODAY } from './db';
+import { mockPayout } from './handlers';
 
 const OPS = /^\/finance\/(sites|commissions|assignments)(\/|$)/;
 export const isOpsPath = (p: string) => OPS.test(p);
@@ -137,7 +138,7 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
     const month = b.month || sh(M(), -1);
     const mine = role === 'manager' ? u.id : undefined;
     const allLines = commissionsFor(ids, month, mine);
-    const lines = b.user ? allLines.filter((l) => l.userId === b.user) : allLines;
+    const lines = (b.user ? allLines.filter((l) => l.userId === b.user) : allLines).map((l) => ({ ...l, payout: mockPayout(l.userId) }));
     let cards = siteResults(ids, month);
     if (mine) cards = cards.filter((c) => c.managers.some((x) => x.userId === mine));
     if (b.user) cards = cards.filter((c) => c.managers.some((x) => x.userId === b.user));

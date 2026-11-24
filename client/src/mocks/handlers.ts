@@ -157,6 +157,16 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path === '/auth/me') return out({ user: pub(u) });
   if (path === '/auth/logout') { LS.set('pluto_mock_session', null); return out(undefined); }
   if (path === '/auth/change-password') { u.password = b.newPassword; u.mustChangePassword = false; u.status = 'active'; return out(undefined); }
+  if (path === '/me/payout') {
+    const k = 'pluto_mock_payout_' + u.id;
+    if (method === 'PUT') {
+      const m = b.method as 'pix' | 'dolafy' | 'other' | null;
+      if (m && !String(b.key ?? '').trim()) throw new ApiError(422, 'invalid_input', 'Informe a identificação para recebimento (chave PIX, @ Dolafy ou outra).');
+      if (m === 'other' && !String(b.methodOther ?? '').trim()) throw new ApiError(422, 'invalid_input', 'Informe qual é o meio de recebimento.');
+      LS.set(k, m ? { method: m, methodOther: m === 'other' ? String(b.methodOther).trim() : null, key: String(b.key).trim() } : null);
+    }
+    return out(mockPayout(u.id));
+  }
   if (path === '/me/preferences') { const k = 'pluto_mock_prefs_' + u.id; if (method === 'PUT') LS.set(k, b); return out(LS.get(k) ?? {}); }
 
   /* ---- 0.18.9 Gerente/Admin atribuem domínios e contas aos gestores ---- */
@@ -552,3 +562,10 @@ function debugUtm(raw: string): T.UtmDebugResponse {
 }
 
 export const _mockInfo = { TODAY, first: addDays(TODAY, -(DAYS - 1)) };
+
+/** 0.18.13: meio de recebimento do usuário no mock (localStorage), no formato da API. */
+export function mockPayout(userId: string) {
+  const v = LS.get<{ method: 'pix' | 'dolafy' | 'other'; methodOther: string | null; key: string }>('pluto_mock_payout_' + userId);
+  if (!v?.method) return { method: null, methodOther: null, key: null, label: null };
+  return { ...v, label: v.method === 'pix' ? 'Chave PIX' : v.method === 'dolafy' ? 'Dolafy' : v.methodOther || 'Outro' };
+}

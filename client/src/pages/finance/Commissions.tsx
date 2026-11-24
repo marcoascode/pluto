@@ -1,8 +1,9 @@
 import {
   Alert, Avatar, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, InputAdornment, MenuItem, Stack,
-  TextField, Typography, alpha, useTheme,
+  IconButton, TextField, Tooltip, Typography, alpha, useTheme,
 } from '@mui/material';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
+import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useFilters } from '@/context/FiltersContext';
@@ -165,6 +166,7 @@ function ManagerCard({ l, company, showCompany, admin }: { l: CommissionLine; co
       {l.liveDiff != null && <Typography variant="caption" sx={{ color: p.warn }}>Os números mudaram depois da aprovação: hoje daria {l.liveDiff > 0 ? '+' : '−'}{brl(Math.abs(l.liveDiff))}. O aprovado não muda sozinho.</Typography>}
 
       <Box sx={{ flex: 1 }} />
+      <PayoutLine l={l} />
       <Divider />
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minHeight: 32 }}>
         {l.status === 'paid' && <Typography variant="caption" sx={{ flex: 1, color: p.pos }}>Paga em {ddmmyyyy(l.paidAt!)}{l.paidNote ? ` · ${l.paidNote}` : ''}</Typography>}
@@ -177,6 +179,23 @@ function ManagerCard({ l, company, showCompany, admin }: { l: CommissionLine; co
       </Stack>
       {dlg && <ActionDialog kind={dlg} l={l} onClose={() => setDlg(null)} />}
     </Card>
+  );
+}
+
+/** 0.18.13: meio de recebimento escolhido pelo gestor (menu do usuário → Dados de recebimento), em destaque acima do Aprovar. */
+function PayoutLine({ l }: { l: CommissionLine }) {
+  const { pluto: p } = useTheme();
+  const [copied, setCopied] = useState(false);
+  const pay = l.payout;
+  if (!pay?.method || !pay.key) return <Typography variant="caption" sx={{ color: p.warn }}>Meio de recebimento não informado pelo gestor (menu do usuário → Dados de recebimento).</Typography>;
+  const copy = () => { navigator.clipboard?.writeText(pay.key!).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
+  return (
+    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', px: 1.5, py: 1, borderRadius: 2, bgcolor: alpha(p.accent, 0.12), border: 1, borderColor: alpha(p.accent, 0.35) }}>
+      <Typography sx={{ flex: 1, minWidth: 0, fontSize: 15, wordBreak: 'break-all' }}>
+        <Box component="span" sx={{ color: p.fg2 }}>{pay.label}: </Box><Box component="span" sx={{ fontWeight: 700, color: p.fg }}>{pay.key}</Box>
+      </Typography>
+      <Tooltip title={copied ? 'Copiado!' : 'Copiar'}><IconButton size="small" onClick={copy} aria-label="Copiar identificação para recebimento"><ContentCopyRoundedIcon sx={{ fontSize: 16 }} /></IconButton></Tooltip>
+    </Stack>
   );
 }
 

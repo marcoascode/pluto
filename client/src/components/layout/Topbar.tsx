@@ -10,6 +10,7 @@ import { useDashboard, useSearch } from '@/hooks/queries';
 import { initials, relTime } from '@/lib/format';
 import { Logo } from '@/components/ui/Logo';
 import { TopFilters } from '@/components/filters/TopFilters';
+import { PayoutDialog } from './PayoutDialog';
 
 export function Topbar({ showFilters }: { showFilters: boolean }) {
   const { user, logout } = useAuth();
@@ -19,6 +20,7 @@ export function Topbar({ showFilters }: { showFilters: boolean }) {
   const mobile = useMediaQuery(useTheme().breakpoints.down('md'));
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const [search, setSearch] = useState(false);
+  const [payout, setPayout] = useState(false);
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearch(true); } };
     window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k);
@@ -43,11 +45,13 @@ export function Topbar({ showFilters }: { showFilters: boolean }) {
         <Menu anchorEl={menu} open={!!menu} onClose={() => setMenu(null)} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
           <Box sx={{ px: 2, py: 1, borderBottom: 1, borderColor: 'divider', mb: 0.5 }}><Typography sx={{ fontWeight: 600 }} >{user?.name}</Typography><Typography variant="caption">{user?.email}</Typography></Box>
           <MenuItem onClick={() => update({ dense: !prefs.dense })} sx={{ justifyContent: 'space-between', gap: 3 }}>Tabelas <Typography variant="caption">{prefs.dense ? 'Compacta' : 'Confortável'}</Typography></MenuItem>
+          <MenuItem onClick={() => { setMenu(null); setPayout(true); }}>Dados de recebimento</MenuItem>
           <MenuItem component={RouterLink} to="/login?change=1" onClick={() => setMenu(null)}>Alterar senha</MenuItem>
           <MenuItem onClick={() => { setMenu(null); logout(); }}>Sair</MenuItem>
         </Menu>
       </Toolbar>
       <SearchDialog open={search} onClose={() => setSearch(false)} />
+      <PayoutDialog open={payout} onClose={() => setPayout(false)} />
     </AppBar>
   );
 }
