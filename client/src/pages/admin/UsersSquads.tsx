@@ -68,7 +68,8 @@ function UsersTab() {
   if (error) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data) return <PageSkeleton />;
   const access = (u: User) => {
-    if (u.role === 'admin' || u.role === 'superadmin') return <Typography variant="caption">Todos os domínios</Typography>;
+    if (u.role === 'superadmin') return <Typography variant="caption">Todos os domínios</Typography>;
+    if (u.role === 'admin') return <Typography variant="caption">Domínios das Empresas em que é sócio</Typography>;
     if (u.role === 'gerente') return u.squadIds.length ? <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{u.squadIds.map((id) => <Tag key={id}>{sq?.squads.find((s) => s.id === id)?.name ?? id}</Tag>)}</Stack> : <Typography variant="caption">Só as Empresas dele</Typography>;
     return u.domains.length
       ? <Tooltip title={u.domains.map((d) => `${d.domain} (${d.googleAccounts.length} Google · ${d.metaAccounts.length} Meta)`).join('\n')}><Typography variant="body2">{u.domains.length === 1 ? u.domains[0].domain : `${u.domains.length} domínios`}<Typography component="span" variant="caption"> · {u.domains.reduce((a, d) => a + d.googleAccounts.length + d.metaAccounts.length, 0)} contas · comissão {u.commissionMode === 'fixed' ? `fixa ${String(u.commissionPct ?? DEFAULT_FIXED_PCT).replace('.', ',')}%` : `progressiva ${(u.commissionTiers?.length ? u.commissionTiers : [{ pct: 10 }, { pct: 12 }, { pct: 15 }]).map((t) => String(t.pct).replace('.', ',')).join('/')}%`}</Typography></Typography></Tooltip>
@@ -273,7 +274,7 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
               <Typography variant="caption">Vai ver: {[...new Set([...(sq?.squads ?? []).filter((s) => f.squadIds.includes(s.id) || (s.companyId && f.companyIds.includes(s.companyId))).flatMap((s) => s.domains)])].join(', ') || 'nenhum domínio'}</Typography>
             </Stack>
           )}
-          {(f.role === 'admin' || f.role === 'superadmin') && <Alert severity="info" variant="outlined">{ROLE_LABEL[f.role]} vê todos os domínios. Squads e domínios não se aplicam.</Alert>}
+          {(f.role === 'admin' || f.role === 'superadmin') && <Alert severity="info" variant="outlined">{f.role === 'superadmin' ? 'SuperAdmin vê todos os domínios.' : 'Admin vê só os domínios dos Squads das Empresas em que é sócio (marque em “Sócio das Empresas”).'} Squads e domínios de gestor não se aplicam.</Alert>}
         </Grid>
         {err && <Grid size={12}><Alert severity="error" variant="outlined">{err}</Alert></Grid>}
       </Grid></DialogContent>
@@ -340,6 +341,7 @@ function TeamDialog({ g, data, onClose }: { g: TeamGestor; data: TeamResponse; o
 
 /* ---------------- Squads ---------------- */
 function SquadsTab() {
+  const { isSuperAdmin } = useAuth();
   const { data, error, refetch } = useSquads();
   const { data: doms } = useAdminDomains();
   const { data: users } = useUsers();
@@ -362,7 +364,7 @@ function SquadsTab() {
           <Grid size={{ xs: 12, md: 6 }}><Card><CardHeader title={edit.id ? 'Editar Squad' : 'Novo Squad'} /><CardContent><Stack spacing={1.5}>
             <TextField label="Nome" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} fullWidth />
             <TextField select label="Empresa" value={edit.companyId ?? ''} onChange={(e) => setEdit({ ...edit, companyId: e.target.value || null })} fullWidth>
-              <MenuItem value="">Sem Empresa</MenuItem>{co?.companies.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+              <MenuItem value="" disabled={!isSuperAdmin}>{isSuperAdmin ? 'Sem Empresa' : 'Escolha uma Empresa da qual você é sócio'}</MenuItem>{co?.companies.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
             </TextField>
             <Multi label="Domínios" value={edit.domains} options={active.map((d) => { const other = data.squads.find((s) => s.id !== edit.id && s.domains.includes(d.hostname)); return { id: d.hostname, name: d.hostname, sub: other ? `hoje em ${other.name}` : undefined }; })} onChange={(v) => setEdit({ ...edit, domains: v })}
               helper="Um domínio fica em um Squad só: escolher aqui tira do Squad anterior." />
@@ -401,6 +403,7 @@ function People({ list, empty }: { list: User[]; empty: string }) {
 
 /* ---------------- Empresas ---------------- */
 function CompaniesTab() {
+  const { isSuperAdmin } = useAuth();
   const { data, error, refetch } = useAdminCompanies();
   const { data: sq } = useSquads();
   const { data: users } = useUsers();
@@ -414,8 +417,8 @@ function CompaniesTab() {
   return (
     <>
       <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 1.75 }}>
-        <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => setEdit({ name: '', partnerIds: [], squadIds: [] })}>Criar Empresa</Button>
-        <Typography variant="caption">Empresa = sociedade. Ex.: “Empresa do Fulano” com os sócios Fulano e Beltrano. Aparece no seletor “Empresa” do topo.</Typography>
+        {isSuperAdmin && <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => setEdit({ name: '', partnerIds: [], squadIds: [] })}>Criar Empresa</Button>}
+        <Typography variant="caption">{isSuperAdmin ? '' : 'Você vê e edita só as Empresas em que é sócio; criar e excluir Empresa é com o SuperAdmin. '}Empresa = sociedade. Ex.: “Empresa do Fulano” com os sócios Fulano e Beltrano. Aparece no seletor “Empresa” do topo.</Typography>
       </Stack>
       <Grid container spacing={1.75}>
         {data.companies.map((c) => {
@@ -423,7 +426,7 @@ function CompaniesTab() {
           return (
             <Grid key={c.id} size={{ xs: 12, md: 6 }}><Card sx={{ height: '100%' }}>
               <CardHeader avatar={<ApartmentRoundedIcon color="primary" />} title={c.name} subheader={`${squads.length} Squad(s) · ${squads.reduce((a, s) => a + s.domains.length, 0)} domínio(s)`}
-                action={<Stack direction="row" spacing={0.5}><Button size="small" variant="outlined" onClick={() => setEdit(c)}>Editar</Button><Tooltip title="Excluir Empresa"><IconButton size="small" aria-label={`Excluir ${c.name}`} onClick={() => setDel(c)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip></Stack>} />
+                action={<Stack direction="row" spacing={0.5}><Button size="small" variant="outlined" onClick={() => setEdit(c)}>Editar</Button>{isSuperAdmin && <Tooltip title="Excluir Empresa"><IconButton size="small" aria-label={`Excluir ${c.name}`} onClick={() => setDel(c)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip>}</Stack>} />
               <CardContent><Stack spacing={1.5}>
                 <Box><Typography variant="overline">Sócios</Typography>
                   {c.partnerIds.length ? <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><AvatarGroup max={6} sx={{ '& .MuiAvatar-root': { ...avatarSx, width: 26, height: 26 } }}>{c.partnerIds.map((id) => <Avatar key={id}>{initials(uname(id))}</Avatar>)}</AvatarGroup><Typography variant="body2">{c.partnerIds.map(uname).join(' · ')}</Typography></Stack> : <Typography variant="caption">Nenhum sócio</Typography>}
@@ -436,7 +439,7 @@ function CompaniesTab() {
             </Card></Grid>
           );
         })}
-        {!data.companies.length && <Grid size={12}><Card><CardContent><Typography variant="caption">Nenhuma Empresa ainda. Crie uma para aparecer o seletor “Empresa” no topo do painel.</Typography></CardContent></Card></Grid>}
+        {!data.companies.length && <Grid size={12}><Card><CardContent><Typography variant="caption">{isSuperAdmin ? 'Nenhuma Empresa ainda. Crie uma para aparecer o seletor “Empresa” no topo do painel.' : 'Você não é sócio de nenhuma Empresa. Peça a um SuperAdmin para incluir você como sócio.'}</Typography></CardContent></Card></Grid>}
       </Grid>
       <Dialog open={!!edit} onClose={() => setEdit(null)} maxWidth="sm" fullWidth>
         <DialogTitle>{edit?.id ? 'Editar Empresa' : 'Criar Empresa'}</DialogTitle>

@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { one, q, tx } from '../../db.js';
-import { conflict, notFound, parse } from '../../lib/http.js';
+import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
+import { adminScope, type AdminScope } from '../../auth/scope.js';
 
 export const squadsRouter = Router();
 
@@ -12,7 +13,20 @@ const SQUAD_SQL = `
          COALESCE((SELECT array_agg(su.user_id::text ORDER BY su.user_id) FROM squad_users su WHERE su.squad_id = s.id), '{}') AS "userIds"
     FROM squads s`;
 
-squadsRouter.get('/squads', async (_req, res) => { res.json({ squads: await q(`${SQUAD_SQL} ORDER BY s.name`) }); });
+/* 0.18.11: o Admin só vê e mexe nos Squads das Empresas em que é sócio (e só com domínios delas); SuperAdmin: todos. */
+squadsRouter.get('/squads', async (req, res) => {
+  const sc = await adminScope(req);
+  res.json({ squads: sc ? await q(`${SQUAD_SQL} WHERE s.id = ANY($1::bigint[]) ORDER BY s.name`, [sc.squadIds]) : await q(`${SQUAD_SQL} ORDER BY s.name`) });
+});
+const forbid = (m: string) => new HttpError(403, 'forbidden', m);
+async function checkAdmin(sc: AdminScope | null, id: string | null, b: z.infer<typeof body>) {
+  if (!sc) return;
+  if (id && !sc.squadIds.includes(id)) throw forbid('Este Squad não pertence a uma Empresa da qual você é sócio.');
+  if (!b.companyId && (!id || b.companyId === null)) throw new HttpError(422, 'company_required', 'Escolha uma Empresa da qual você é sócio para o Squad.');
+  if (b.companyId && !sc.companyIds.includes(b.companyId)) throw forbid('Você só pode pôr Squads nas Empresas em que é sócio.');
+  const ids = (await q<{ id: string }>('SELECT id::text FROM domains WHERE hostname = ANY($1)', [b.domains])).map((r) => r.id);
+  if (ids.some((d) => !sc.domainIds.includes(d))) throw forbid('Algum domínio da lista não pertence a uma Empresa da qual você é sócio.');
+}
 
 /** Salva nome + domínios. Um domínio só pode estar em um Squad: se estava em outro, muda para este. */
 async function save(id: string | null, b: z.infer<typeof body>) {
@@ -35,12 +49,22 @@ async function save(id: string | null, b: z.infer<typeof body>) {
   });
 }
 
-squadsRouter.post('/squads', async (req, res) => { res.status(201).json(await save(null, parse(body, req.body))); });
-squadsRouter.put('/squads/:id', async (req, res) => { res.json(await save(parse(z.string().regex(/^\d+$/), req.params.id), parse(body, req.body))); });
+squadsRouter.post('/squads', async (req, res) => {
+  const b = parse(body, req.body);
+  await checkAdmin(await adminScope(req), null, b);
+  res.status(201).json(await save(null, b));
+});
+squadsRouter.put('/squads/:id', async (req, res) => {
+  const id = parse(z.string().regex(/^\d+$/), req.params.id), b = parse(body, req.body);
+  await checkAdmin(await adminScope(req), id, b);
+  res.json(await save(id, b));
+});
 
 squadsRouter.delete('/squads/:id', async (req, res) => {
   const sid = parse(z.string().regex(/^\d+$/), req.params.id);
   if (!(await one('SELECT 1 FROM squads WHERE id = $1', [sid]))) throw notFound('Squad não encontrado.');
+  const sc = await adminScope(req);
+  if (sc && !sc.squadIds.includes(sid)) throw forbid('Este Squad não pertence a uma Empresa da qual você é sócio.');
   // Gerentes que viam este Squad deixam de ver; domínios ficam sem Squad (gestores continuam pelos vínculos deles)
   await q('DELETE FROM squads WHERE id = $1', [sid]); // squad_domains sai em cascata → domínios ficam sem Squad
   res.status(204).end();

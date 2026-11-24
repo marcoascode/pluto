@@ -83,7 +83,7 @@ function visibleCompanies(u: T.User) {
 }
 function scopeOf(u: T.User, company = REQ_COMPANY): Scope {
   let doms: Set<string>; let filter: Scope['filter'] = null;
-  if (isAdm(u)) doms = new Set([...DOMAINS.map((d) => d.hostname), UNKNOWN_DOMAIN]);
+  if (u.role === 'superadmin') doms = new Set([...DOMAINS.map((d) => d.hostname), UNKNOWN_DOMAIN]);
   else {
     const full = new Set(SQUADS.filter((s) => (s.companyId && COMPANIES.find((c) => c.id === s.companyId)?.partnerIds.includes(u.id)) || (u.role === 'gerente' && u.squadIds.includes(s.id))).flatMap((s) => s.domains).filter(activeDom));
     const restricted = u.role === 'gestor' ? u.domains.filter((l) => activeDom(l.domain) && !full.has(l.domain)) : [];

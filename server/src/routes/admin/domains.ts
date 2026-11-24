@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { one, q, tx } from '../../db.js';
-import { conflict, notFound, parse } from '../../lib/http.js';
+import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { today } from '../../lib/dates.js';
 import { config } from '../../config.js';
 import { decrypt, encrypt } from '../../lib/crypto.js';
+import { adminScope, assertAdminDomain } from '../../auth/scope.js';
 
 export const domainsRouter = Router();
 
@@ -41,7 +42,27 @@ async function rejectTechnical(host: string) {
     throw conflict('technical_domain', 'O domínio técnico "Sem domínio" é do sistema e não pode ser alterado. Para tirar campanhas dele, defina o domínio da campanha.');
 }
 
-domainsRouter.get('/domains', async (_req, res) => { res.json({ domains: await q(`${DOMAIN_SQL}${GROUP} ORDER BY d.is_technical, d.active DESC, d.hostname`) }); });
+/* 0.18.11: o Admin só vê e mexe nos domínios dos Squads das Empresas em que é sócio (SuperAdmin: todos). */
+domainsRouter.get('/domains', async (req, res) => {
+  const sc = await adminScope(req);
+  res.json({ domains: sc
+    ? await q(`${DOMAIN_SQL} WHERE d.id = ANY($1::bigint[])${GROUP} ORDER BY d.active DESC, d.hostname`, [sc.domainIds])
+    : await q(`${DOMAIN_SQL}${GROUP} ORDER BY d.is_technical, d.active DESC, d.hostname`) });
+});
+/** Domínio pelo hostname + checagem do alcance do Admin. */
+async function domainFor(req: Parameters<typeof adminScope>[0], host: string) {
+  const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
+  if (!d) throw notFound('Domínio não encontrado.');
+  await assertAdminDomain(req, d.id);
+  return d;
+}
+/** Admin só põe domínio em Squad das Empresas dele (e não deixa o domínio sem Squad, senão ele some do alcance). */
+async function assertAdminSquad(req: Parameters<typeof adminScope>[0], squadId: string | null | undefined) {
+  const sc = await adminScope(req);
+  if (!sc) return;
+  if (!squadId) throw new HttpError(422, 'squad_required', 'Escolha um Squad de uma Empresa da qual você é sócio (sem Squad o domínio sai do seu alcance).');
+  if (!sc.squadIds.includes(squadId)) throw new HttpError(403, 'forbidden_squad', 'Este Squad não pertence a uma Empresa da qual você é sócio.');
+}
 
 const revShare = z.number().min(0).max(99.999);   // percentual (20 = 20%)
 const ISO = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
@@ -54,15 +75,23 @@ async function setRevShare(c: Parameters<Parameters<typeof tx>[0]>[0], domainId:
 }
 
 domainsRouter.post('/domains', async (req, res) => {
-  const b = parse(z.object({ hostname: HOST, revShare: revShare.optional() }), req.body);
+  const b = parse(z.object({ hostname: HOST, revShare: revShare.optional(), squadId: z.string().regex(/^\d+$/).nullable().optional() }), req.body);
+  await assertAdminSquad(req, b.squadId);
   const existing = await one<{ id: string; created_by_sync: boolean }>('SELECT id::text, created_by_sync FROM domains WHERE hostname = $1', [b.hostname]);
   if (existing && !existing.created_by_sync) throw conflict('domain_exists', 'Esse domínio já está cadastrado.');
+  if (existing && (await adminScope(req)) && (await one('SELECT 1 FROM squad_domains WHERE domain_id = $1', [existing.id])) && !(await adminScope(req))!.domainIds.includes(existing.id))
+    throw new HttpError(403, 'forbidden_domain', 'Esse domínio já pertence a uma Empresa da qual você não é sócio.');
   await tx(async (c) => {
     // site que o Ad Manager já tinha mostrado: só ativa o registro que o sync criou
     const id = existing
       ? (await c.query(`UPDATE domains SET active = true, created_by_sync = false WHERE id = $1 RETURNING id::text`, [existing.id])).rows[0].id
       : (await c.query(`INSERT INTO domains (hostname) VALUES ($1) RETURNING id::text`, [b.hostname])).rows[0].id;
     if (b.revShare !== undefined) await setRevShare(c, id, b.revShare, '2000-01-01', req.user!.id);
+    if (b.squadId) {
+      if (!(await one('SELECT 1 FROM squads WHERE id = $1', [b.squadId], c))) throw notFound('Squad não encontrado.');
+      await c.query('DELETE FROM squad_domains WHERE domain_id = $1', [id]);
+      await c.query('INSERT INTO squad_domains (squad_id, domain_id) VALUES ($1, $2)', [b.squadId, id]);
+    }
   });
   res.status(201).json(await get(b.hostname));
 });
@@ -81,8 +110,8 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
     // 0.18.9: rateio da receita do domínio entre os gestores (todos os gestores atuais, soma = 100%; null = dividir igualmente)
     managerShares: z.array(z.object({ userId: z.string().regex(/^\d+$/), sharePct: z.number().gt(0).max(100) })).max(50).nullable().optional(),
   }), req.body);
-  const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
-  if (!d) throw notFound('Domínio não encontrado.');
+  const d = await domainFor(req, host);
+  if (b.squadId !== undefined) await assertAdminSquad(req, b.squadId);
   await tx(async (c) => {
     if (b.hostname && b.hostname !== host) {
       if (await one('SELECT 1 FROM domains WHERE hostname = $1', [b.hostname], c)) throw conflict('domain_exists', 'Já existe um domínio com esse nome.');
@@ -133,8 +162,7 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
 domainsRouter.delete('/domains/:hostname', async (req, res) => {
   await rejectTechnical(req.params.hostname);
   const host = parse(HOST, req.params.hostname);
-  const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
-  if (!d) throw notFound('Domínio não encontrado.');
+  const d = await domainFor(req, host);
   if (await one('SELECT 1 FROM daily_metrics WHERE domain_id = $1 LIMIT 1', [d.id])) throw conflict('domain_has_data', 'Este domínio tem dados históricos. Desative em vez de excluir.');
   await q('DELETE FROM domains WHERE id = $1', [d.id]);
   res.status(204).end();
@@ -148,6 +176,7 @@ domainsRouter.post('/domains/:hostname/wp-password', async (req, res) => {
   const host = parse(HOST, req.params.hostname);
   const d = await one<{ id: string; enc: Buffer | null; user: string | null }>('SELECT id::text, wp_password_enc AS enc, wp_user AS user FROM domains WHERE hostname = $1', [host]);
   if (!d) throw notFound('Domínio não encontrado.');
+  await assertAdminDomain(req, d.id);
   if (!d.enc) throw notFound('Nenhuma senha cadastrada para este domínio.');
   await q('INSERT INTO domain_secret_access (domain_id, user_id, action) VALUES ($1, $2, $3)', [d.id, req.user!.id, 'view']);
   res.setHeader('Cache-Control', 'no-store');

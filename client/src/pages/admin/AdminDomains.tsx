@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useAdminDomains, useAdminMutation, useIntegrationAccounts, useSquads } from '@/hooks/queries';
 import { adminApi } from '@/lib/api/endpoints';
+import { useAuth } from '@/context/AuthContext';
 import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
@@ -28,6 +29,7 @@ export function ExpiryTag({ iso }: { iso?: string | null }) {
 }
 
 function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
+  const { isSuperAdmin } = useAuth();
   const { data: sq } = useSquads();
   const { data: ga } = useIntegrationAccounts('google-ads');
   const { data: ma } = useIntegrationAccounts('meta');
@@ -88,7 +90,7 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
         </Stack>
         <Typography variant="caption" sx={{ mt: -0.75 }}>Parte da receita do Ad Manager que a Network (ex.: Publeno) retém. A receita exibida já vem descontada; o revShare não aparece nos relatórios.</Typography>
         <TextField select label="Squad" value={f.squadId ?? ''} onChange={(e) => setF({ ...f, squadId: e.target.value || null })} fullWidth>
-          <MenuItem value="">Sem Squad (gestores do domínio, Admin e SuperAdmin veem)</MenuItem>
+          {(isSuperAdmin || !d.squadId) && <MenuItem value="" disabled={!isSuperAdmin}>Sem Squad (gestores do domínio e SuperAdmin veem)</MenuItem>}
           {sq?.squads.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
         </TextField>
         <TextField select label="Conta do Google Ad Manager" value={f.gamAccountId ?? ''} slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true } }} onChange={(e) => setF({ ...f, gamAccountId: e.target.value || null })} fullWidth
@@ -173,6 +175,8 @@ export default function AdminDomainsPage() {
   const { data: ma } = useIntegrationAccounts('meta');
   const { data: gam } = useIntegrationAccounts('gam');
   const [host, setHost] = useState(''); const [msg, setMsg] = useState('');
+  const { isSuperAdmin } = useAuth();
+  const [newSquad, setNewSquad] = useState('');   // 0.18.11: o Admin cadastra o domínio já num Squad das Empresas dele
   const [edit, setEdit] = useState<Domain | null>(null);
   const [del, setDel] = useState<Domain | null>(null);
   const create = useAdminMutation(adminApi.createDomain, INV);
@@ -187,18 +191,24 @@ export default function AdminDomainsPage() {
   const add = () => {
     const v = clean(host);
     if (!HOST_RE.test(v)) return setMsg('Digite um domínio válido, ex.: novodominio.com');
-    setMsg(''); create.mutate(v, { onSuccess: () => setHost(''), onError: (e) => setMsg(e instanceof ApiError ? e.message : 'Não foi possível adicionar.') });
+    if (!isSuperAdmin && !newSquad) return setMsg('Escolha o Squad (de uma Empresa da qual você é sócio).');
+    setMsg(''); create.mutate({ hostname: v, squadId: newSquad || null }, { onSuccess: () => setHost(''), onError: (e) => setMsg(e instanceof ApiError ? e.message : 'Não foi possível adicionar.') });
   };
   return (
     <>
-      <PageHead title="Domínios" sub="Cadastro dos sites: Squad, conta do Ad Manager, contas de tráfego, gestores e registro (onde foi comprado, vencimento, hospedagem e acesso WP)." />
+      <PageHead title="Domínios" sub={`Cadastro dos sites: Squad, conta do Ad Manager, contas de tráfego, gestores e registro (onde foi comprado, vencimento, hospedagem e acesso WP).${isSuperAdmin ? '' : ' Você vê só os domínios dos Squads das Empresas em que é sócio.'}`} />
       <Grid container spacing={1.75} sx={{ mb: 1.75 }}>
         {([['Total de domínios', d.length], ['Ativos', act], ['Domínios sem Squad', noSq], ['Registro vence em 30 dias', expiring]] as const).map(([l, v]) => (
           <Grid key={l} size={{ xs: 6, md: 3 }}><Card sx={{ p: 2.25 }}><Typography variant="caption">{l}</Typography><Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 28, color: (l === 'Domínios sem Squad' || l === 'Registro vence em 30 dias') && v > 0 ? 'warning.main' : undefined }}>{v}</Typography></Card></Grid>
         ))}
       </Grid>
       <Card>
-        <CardHeader title="Domínios" action={<Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}><TextField size="small" placeholder="novodominio.com" value={host} onChange={(e) => setHost(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} error={!!msg} helperText={msg || undefined} /><Button variant="contained" size="small" onClick={add} disabled={create.isPending}>Adicionar domínio</Button></Stack>} />
+        <CardHeader title="Domínios" action={<Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}><TextField size="small" placeholder="novodominio.com" value={host} onChange={(e) => setHost(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} error={!!msg} helperText={msg || undefined} />
+          <TextField select size="small" label="Squad" value={newSquad} onChange={(e) => setNewSquad(e.target.value)} sx={{ minWidth: 150 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
+            {isSuperAdmin && <MenuItem value="">Sem Squad</MenuItem>}
+            {!isSuperAdmin && <MenuItem value="" disabled>Escolha</MenuItem>}
+            {sq?.squads.map((s) => <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>)}
+          </TextField><Button variant="contained" size="small" onClick={add} disabled={create.isPending}>Adicionar domínio</Button></Stack>} />
         <TableContainer><Table>
           <TableHead><TableRow>{['Domínio', 'Squad', 'Gestores', 'Google Ads', 'Meta Ads', 'Ad Manager', 'Registro · hospedagem', 'revShare', 'Status', 'Último dado', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
           <TableBody>{d.map((x) => (

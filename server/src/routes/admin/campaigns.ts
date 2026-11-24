@@ -14,10 +14,11 @@
  *  3. ressincroniza a janela do job de métricas da plataforma em segundo plano (meta.metrics / google-ads.metrics),
  *     para trazer o que ficou de fora antes da 0.9 (linhas descartadas nunca foram gravadas)
  */
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { one, q, tx } from '../../db.js';
-import { conflict, notFound, parse } from '../../lib/http.js';
+import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
+import { adminScope, assertAdminDomain } from '../../auth/scope.js';
 import { addDays, today } from '../../lib/dates.js';
 import { GRAIN_CONFLICT, METRIC_SUMS } from '../../services/sync/common.js';
 import { requestRun } from '../../services/sync/index.js';
@@ -29,8 +30,16 @@ const platform = z.enum(['meta', 'google']);
 const SOURCE = { meta: 'meta', google: 'google-ads' } as const;
 const JOB = { meta: 'meta.metrics', google: 'google-ads.metrics' } as const;
 
+/** 0.18.11: Admin só nas contas ligadas aos domínios das Empresas em que é sócio (SuperAdmin: todas). */
+async function adminAccounts(req: Request): Promise<string[] | null> {
+  const sc = await adminScope(req);
+  if (!sc) return null;
+  return (await q<{ id: string }>('SELECT DISTINCT account_id::text AS id FROM domain_accounts WHERE domain_id = ANY($1::bigint[])', [sc.domainIds])).map((r) => r.id);
+}
+
 campaignsAdminRouter.get('/campaigns/unmapped', async (req, res) => {
   const p = parse(platform.default('meta'), req.query.platform ?? undefined);
+  const accs = await adminAccounts(req);
   const days = Math.min(400, Math.max(1, Number(req.query.days) || 30));
   const from = addDays(today(), -days);
   const rows = await q<{ id: string; name: string; platform: string; status: string; accountId: string; accountName: string; spend: number; clicks: number; rows: number; firstDate: string | null; lastDate: string | null }>(`
@@ -44,7 +53,8 @@ campaignsAdminRouter.get('/campaigns/unmapped', async (req, res) => {
       FROM campaigns c JOIN integration_accounts a ON a.id = c.account_id
       LEFT JOIN lost l ON l.campaign_id = c.id
      WHERE c.platform = $1 AND c.domain_id IS NULL AND c.status <> 'REMOVED' AND (l.campaign_id IS NOT NULL OR c.status = 'ENABLED')
-     ORDER BY COALESCE(l.spend, 0) DESC, c.name`, [p, SOURCE[p], from]);
+       ${accs ? 'AND c.account_id = ANY($4::bigint[])' : ''}
+     ORDER BY COALESCE(l.spend, 0) DESC, c.name`, accs ? [p, SOURCE[p], from, accs] : [p, SOURCE[p], from]);
   const totals = rows.reduce((acc, r) => ({ spend: acc.spend + r.spend, rows: acc.rows + r.rows }), { spend: 0, rows: 0 });
   res.json({ platform: p, days, campaigns: rows, totals });
 });
@@ -68,6 +78,8 @@ campaignsAdminRouter.patch('/campaigns/:id', async (req, res) => {
   const b = parse(patchBody, req.body);
   const camp = await one<{ id: string; name: string; account_id: string }>('SELECT id::text, name, account_id::text FROM campaigns WHERE platform = $1 AND external_id = $2', [b.platform, ext]);
   if (!camp) throw notFound('Campanha não encontrada.');
+  const accs = await adminAccounts(req);
+  if (accs && !accs.includes(camp.account_id)) throw new HttpError(403, 'forbidden', 'Esta campanha é de uma conta fora das Empresas em que você é sócio.');
   // domínio de destino (null = volta para o automático)
   let target: { id: string; hostname: string; is_technical: boolean; active: boolean } | null = null;
   const wanted = b.domainId ?? b.domain;
@@ -77,6 +89,7 @@ campaignsAdminRouter.patch('/campaigns/:id', async (req, res) => {
     if (!target) throw notFound('Domínio não encontrado.');
     if (target.is_technical) throw conflict('technical_domain', 'Escolha um site: "Sem domínio" é o destino automático de quem não tem domínio.');
     if (!target.active) throw conflict('domain_inactive', 'Este domínio está inativo. Ative em Domínios antes de usar.');
+    await assertAdminDomain(req, target.id);
   }
   const moved = await tx(async (c) => {
     await c.query(`UPDATE campaigns SET domain_id = $2, domain_manual = $3, domain_set_by = $4, domain_set_at = now(), updated_at = now() WHERE id = $1`,

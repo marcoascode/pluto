@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.11
+- **Permissão Admin restrita às Empresas em que é sócio**: antes o Admin via todos os domínios (igual ao SuperAdmin). Agora vê e edita só os domínios dos Squads das Empresas das quais é sócio, em todo o painel: Dashboard, Relatórios, URLs, campanhas, seletor "Empresa", Finance (Caixa, Custos, Comissões), Administração → Domínios, Squads, Empresas, Relatórios por conta, Campanhas sem domínio e Contas × Sites. O domínio técnico "Sem domínio" fica só para o SuperAdmin. O servidor confere tudo (403 fora do alcance).
+- **Usuários & Squads (Admin)**: vincula gestores, Gerentes (Squads) e sócios só dentro das Empresas dele; vínculos do usuário em outras Empresas ficam como estão e não aparecem. Não pode se tirar da própria sociedade.
+- **Empresas**: o Admin edita só as Empresas em que é sócio (e só com Squads delas); criar e excluir Empresa passa a ser só do SuperAdmin.
+- **Domínios e Squads**: o Admin cadastra domínio já escolhendo um Squad das Empresas dele e não deixa domínio sem Squad nem Squad sem Empresa (senão sairia do alcance dele).
+- SuperAdmin continua vendo e editando tudo.
+
 ## 0.18.10
 - **Comissão progressiva no cadastro do gestor**: as faixas saíram do painel de Comissões (card "Comissão progressiva" e rota `PUT /finance/commission-rule` removidos) e passam a ser definidas por gestor em Usuários & Squads → editar gestor, no campo que aparece ao escolher a modalidade **Progressiva** (patamares, %, moeda, "+ Faixa" e "Restaurar padrão"), do mesmo jeito que a % da **Fixa**.
 - **Padrões**: Progressiva = ROI até US$ 19.999,99 → 10% · US$ 20.000,00 a 39.999,99 → 12% · a partir de US$ 40.000,00 → 15%. Fixa = 10%.

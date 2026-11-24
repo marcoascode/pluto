@@ -1,11 +1,11 @@
 import type { Request } from 'express';
 import { q } from '../db.js';
 import { HttpError } from '../lib/http.js';
-import { isAdminRole } from './permissions.js';
 
 /**
  * Quem vê o quê (TODA consulta de métricas passa por aqui):
- * - Admin / SuperAdmin: todos os domínios ativos, inclusive o técnico "Sem domínio" (só eles veem).
+ * - SuperAdmin: todos os domínios ativos, inclusive o técnico "Sem domínio" (só ele vê).
+ * - Admin (0.18.11): só os domínios dos Squads das Empresas em que é sócio (como qualquer sócio), completos.
  * - Sócio de uma Empresa (qualquer papel): todos os domínios dos Squads da Empresa, completos.
  * - Gerente: todos os domínios dos Squads dados a ele (vários), completos.
  * - Gestor: os domínios que ele gere (domain_managers), mas só as campanhas das contas Google/Meta ligadas a
@@ -24,10 +24,33 @@ type Dom = { id: string; hostname: string };
 /** Domínios ativos. O domínio técnico "Sem domínio" (custo sem site identificável) só entra para Admin/SuperAdmin. */
 const DOMS = (where: string, withTechnical = false) => `SELECT DISTINCT d.id::text, d.hostname FROM domains d ${where} AND d.active${withTechnical ? '' : ' AND NOT d.is_technical'} ORDER BY d.hostname`;
 
-/** Empresas que o usuário enxerga (ids). Admin: todas. */
+/**
+ * 0.18.11 · Alcance do Admin nas telas de administração: Empresas em que é sócio, os Squads delas e os domínios desses
+ * Squads (inclusive inativos). SuperAdmin (e quem não é Admin) → null = sem restrição aqui (as demais regras valem).
+ */
+export interface AdminScope { companyIds: string[]; squadIds: string[]; domainIds: string[] }
+export async function adminScope(req: Request): Promise<AdminScope | null> {
+  const u = req.user!;
+  if (u.role !== 'admin') return null;
+  const r = req as Request & { _adminScope?: Promise<AdminScope> };
+  r._adminScope ??= (async () => {
+    const companyIds = (await q<{ id: string }>('SELECT company_id::text AS id FROM company_users WHERE user_id = $1', [u.id])).map((x) => x.id);
+    const squadIds = (await q<{ id: string }>('SELECT id::text FROM squads WHERE company_id = ANY($1::bigint[])', [companyIds])).map((x) => x.id);
+    const domainIds = (await q<{ id: string }>('SELECT DISTINCT domain_id::text AS id FROM squad_domains WHERE squad_id = ANY($1::bigint[])', [squadIds])).map((x) => x.id);
+    return { companyIds, squadIds, domainIds };
+  })();
+  return r._adminScope;
+}
+/** 403 quando o domínio está fora das Empresas do Admin. */
+export async function assertAdminDomain(req: Request, domainId: string) {
+  const sc = await adminScope(req);
+  if (sc && !sc.domainIds.includes(domainId)) throw new HttpError(403, 'forbidden_domain', 'Este domínio não pertence a uma Empresa da qual você é sócio.');
+}
+
+/** Empresas que o usuário enxerga (ids). SuperAdmin: todas. Admin: as que é sócio (0.18.11). */
 export async function visibleCompanyIds(req: Request): Promise<string[]> {
   const u = req.user!;
-  if (isAdminRole(u.role)) return (await q<{ id: string }>('SELECT id::text FROM companies ORDER BY name')).map((r) => r.id);
+  if (u.role === 'superadmin') return (await q<{ id: string }>('SELECT id::text FROM companies ORDER BY name')).map((r) => r.id);
   return (await q<{ id: string }>(`
     SELECT c.id::text FROM companies c WHERE
       EXISTS (SELECT 1 FROM company_users cu WHERE cu.company_id = c.id AND cu.user_id = $1)
@@ -40,7 +63,7 @@ async function compute(req: Request, companyParam: unknown = req.query.company):
   const u = req.user!;
   let full: Dom[] = [], restricted: Dom[] = [];
   let filter: RowFilter | null = null;
-  if (isAdminRole(u.role)) full = await q<Dom>(DOMS('WHERE true', true));
+  if (u.role === 'superadmin') full = await q<Dom>(DOMS('WHERE true', true));
   else {
     // sócio: Empresa inteira · Gerente: Squads dele (Gestor não ganha domínio pelo Squad, só pelo vínculo de gestor)
     full = await q<Dom>(DOMS(`JOIN squad_domains sd ON sd.domain_id = d.id JOIN squads s ON s.id = sd.squad_id

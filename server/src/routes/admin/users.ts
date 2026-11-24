@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { accountsOf, clearGestorLinks, resyncAccounts, saveGestorLinks } from '../../services/gestorLinks.js';
 import { deriveAccounts } from '../../services/accountLinks.js';
 import { DEFAULT_FIXED_PCT, DEFAULT_TIERS } from '../../services/financeResults.js';
+import { adminScope, type AdminScope } from '../../auth/scope.js';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { tempPassword } from '../../lib/crypto.js';
@@ -66,31 +67,43 @@ type C = Parameters<Parameters<typeof tx>[0]>[0];
  *   domain_accounts (site em que o sync põe a despesa da conta) e manager_accounts são derivados daqui.
  * Devolve as contas cujo site mudou (para ressincronizar depois do commit).
  */
-async function saveLinks(c: C, uid: string, newRole: string, b: { squadIds?: string[]; companyIds?: string[]; domains?: z.infer<typeof domainLink>[] }, roleChanged: boolean, actor: string | null): Promise<string[]> {
+async function saveLinks(c: C, uid: string, newRole: string, b: { squadIds?: string[]; companyIds?: string[]; domains?: z.infer<typeof domainLink>[] }, roleChanged: boolean, actor: string | null, sc: AdminScope | null = null): Promise<string[]> {
+  // 0.18.11: o Admin só mexe nos Squads, Empresas e domínios das Empresas em que é sócio; o resto do usuário fica como está
   if (b.squadIds !== undefined || roleChanged) {
-    await c.query('DELETE FROM squad_users WHERE user_id = $1', [uid]);
     const sq = newRole === 'gerente' ? [...new Set(b.squadIds ?? [])] : [];
+    if (sc && sq.some((x) => !sc.squadIds.includes(x))) throw new HttpError(403, 'forbidden_squad', 'Algum Squad não pertence a uma Empresa da qual você é sócio.');
+    if (sc && !(roleChanged && newRole !== 'gerente')) await c.query('DELETE FROM squad_users WHERE user_id = $1 AND squad_id = ANY($2::bigint[])', [uid, sc.squadIds]);
+    else await c.query('DELETE FROM squad_users WHERE user_id = $1', [uid]);
     if (sq.length) {
       const ok = await q<{ id: string }>('SELECT id::text FROM squads WHERE id = ANY($1::bigint[])', [sq], c);
       if (ok.length !== sq.length) throw notFound('Algum Squad da lista não existe.');
-      for (const s of sq) await c.query('INSERT INTO squad_users (squad_id, user_id) VALUES ($1, $2)', [s, uid]);
+      for (const s of sq) await c.query('INSERT INTO squad_users (squad_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [s, uid]);
     }
   }
   if (b.companyIds !== undefined) {
     const co = [...new Set(b.companyIds)];
     const ok = await q<{ id: string }>('SELECT id::text FROM companies WHERE id = ANY($1::bigint[])', [co], c);
     if (ok.length !== co.length) throw notFound('Alguma Empresa da lista não existe.');
-    await c.query('DELETE FROM company_users WHERE user_id = $1', [uid]);
-    for (const x of co) await c.query('INSERT INTO company_users (company_id, user_id) VALUES ($1, $2)', [x, uid]);
+    if (sc) {
+      if (co.some((x) => !sc.companyIds.includes(x))) throw new HttpError(403, 'forbidden_company', 'Você só pode dar sociedade nas Empresas em que é sócio.');
+      if (uid === actor && sc.companyIds.some((x) => !co.includes(x))) throw conflict('self_partner', 'Você não pode se tirar da sociedade (perderia o acesso à Empresa). Peça a um SuperAdmin.');
+      await c.query('DELETE FROM company_users WHERE user_id = $1 AND company_id = ANY($2::bigint[])', [uid, sc.companyIds]);
+    } else await c.query('DELETE FROM company_users WHERE user_id = $1', [uid]);
+    for (const x of co) await c.query('INSERT INTO company_users (company_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [x, uid]);
   }
   if (b.domains === undefined && !roleChanged) return [];
   if (newRole !== 'gestor') return clearGestorLinks(c, uid, actor);
-  return saveGestorLinks(c, uid, b.domains ?? [], actor);
+  const scope = sc ? { domainIds: new Set(sc.domainIds), accountIds: new Set((await q<{ id: string }>(`SELECT id::text FROM integration_accounts WHERE provider IN ('google-ads', 'meta')`, [], c)).map((r) => r.id)) } : undefined;
+  return saveGestorLinks(c, uid, b.domains ?? [], actor, scope);
 }
 
-usersRouter.get('/users', async (_req, res) => {
-  const users = await q(`${USER_SQL} ORDER BY u.is_main_admin DESC, u.name`);
-  res.json({ users });
+usersRouter.get('/users', async (req, res) => {
+  const users = await q<{ domains: { domain: string }[]; companyIds: string[]; squadIds: string[] }>(`${USER_SQL} ORDER BY u.is_main_admin DESC, u.name`);
+  const sc = await adminScope(req);
+  if (!sc) return res.json({ users });
+  // 0.18.11: o Admin só enxerga os domínios, Squads e Empresas das sociedades dele
+  const hosts = new Set((await q<{ hostname: string }>('SELECT hostname FROM domains WHERE id = ANY($1::bigint[])', [sc.domainIds])).map((r) => r.hostname));
+  res.json({ users: users.map((u) => ({ ...u, domains: u.domains.filter((d) => hosts.has(d.domain)), companyIds: u.companyIds.filter((x) => sc.companyIds.includes(x)), squadIds: u.squadIds.filter((x) => sc.squadIds.includes(x)) })) });
 });
 
 /** Cria com senha temporária (hash argon2id) e envia o convite por e-mail. A senha nunca volta na resposta. */
@@ -101,9 +114,10 @@ usersRouter.post('/users', async (req, res) => {
   const pw = tempPassword();
   const hash = await argon2.hash(pw, { type: argon2.argon2id });
   let moved: string[] = [];
+  const sc = await adminScope(req);
   const uid = await tx(async (c) => {
     const r = await one<{ id: string }>(`INSERT INTO users (name, email, password_hash, role, status, must_change_password) VALUES ($1, $2, $3, $4, 'invited', true) RETURNING id::text`, [b.name, b.email, hash, b.role], c);
-    moved = await saveLinks(c, r!.id, b.role, b, false, req.user!.id);
+    moved = await saveLinks(c, r!.id, b.role, b, false, req.user!.id, sc);
     await saveCommission(c, r!.id, b.role, b, true);
     return r!.id;
   });
@@ -124,9 +138,10 @@ usersRouter.patch('/users/:id', async (req, res) => {
   if (t.isMainAdmin && ((b.role && b.role !== 'superadmin') || b.status === 'disabled')) throw conflict('main_admin', 'O admin principal é sempre SuperAdmin e fica ativo.');
   if (b.status && t.status === 'invited') throw conflict('invited', 'O usuário ainda não ativou o convite.');
   const newRole = b.role ?? t.role;
+  const sc = await adminScope(req);
   const moved = await tx(async (c) => {
     await c.query(`UPDATE users SET name = COALESCE($2, name), role = $3, status = COALESCE($4, status), updated_at = now() WHERE id = $1`, [uid, b.name ?? null, newRole, b.status ?? null]);
-    const m = await saveLinks(c, uid, newRole, b, newRole !== t.role, req.user!.id);
+    const m = await saveLinks(c, uid, newRole, b, newRole !== t.role, req.user!.id, sc);
     await saveCommission(c, uid, newRole, b);
     return m;
   });

@@ -65,12 +65,12 @@ export const SQUADS: Squad[] = [
 ];
 /** Empresas (sociedades) de exemplo: sócios + Squads. Nomes genéricos. */
 export const COMPANIES: Company[] = [
-  { id: 'c1', name: 'Empresa A', partnerIds: ['u1', 'u5'], squadIds: ['s1'] },
+  { id: 'c1', name: 'Empresa A', partnerIds: ['u1', 'u5', 'u4'], squadIds: ['s1'] },
   { id: 'c2', name: 'Empresa B', partnerIds: ['u6', 'u5'], squadIds: ['s2'] },
 ];
 export const USERS: (User & { password?: string })[] = [
   { id: 'u1', name: 'Lucas Hirsch', email: 'admin@exemplo.com', role: 'superadmin', squadIds: [], companyIds: ['c1'], domains: [], status: 'active', mustChangePassword: false, isMainAdmin: true, password: 'admin123' },
-  { id: 'u4', name: 'Admin Exemplo', email: 'ops@exemplo.com', role: 'admin', squadIds: [], companyIds: [], domains: [], status: 'active', mustChangePassword: false, password: 'admin123' },
+  { id: 'u4', name: 'Admin Exemplo', email: 'ops@exemplo.com', role: 'admin', squadIds: [], companyIds: ['c1'], domains: [], status: 'active', mustChangePassword: false, password: 'admin123' },
   { id: 'u5', name: 'Sócio Principal', email: 'socio@exemplo.com', role: 'gerente', squadIds: [], companyIds: ['c1', 'c2'], domains: [], status: 'active', mustChangePassword: false, password: 'socio123' },
   { id: 'u6', name: 'Sócio B', email: 'socio.b@exemplo.com', role: 'gerente', squadIds: [], companyIds: ['c2'], domains: [], status: 'active', mustChangePassword: false, password: 'socio123' },
   { id: 'u2', name: 'Gestor Exemplo', email: 'gestor@exemplo.com', role: 'gestor', squadIds: [], companyIds: [], status: 'active', mustChangePassword: false, password: 'gestor123',

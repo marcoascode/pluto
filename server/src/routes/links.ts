@@ -20,7 +20,7 @@ import { one, q, tx } from '../db.js';
 import { HttpError, conflict, notFound, parse } from '../lib/http.js';
 import { today } from '../lib/dates.js';
 import { isAdminRole } from '../auth/permissions.js';
-import { allowedDomains } from '../auth/scope.js';
+import { adminScope, allowedDomains } from '../auth/scope.js';
 import { applyCurrent, providersOf } from '../services/accountLinks.js';
 import { requestRun } from '../services/sync/index.js';
 
@@ -36,15 +36,16 @@ interface Ctx { role: string; userId: string; domainIds: Set<string>; accountIds
 /** Domínios e contas que o usuário pode ver e ligar. */
 async function ctxOf(req: Request): Promise<Ctx> {
   const u = req.user!;
-  if (isAdminRole(u.role)) {
+  if (u.role === 'superadmin') {
     const [d, a] = await Promise.all([
       q<{ id: string }>('SELECT id::text FROM domains WHERE NOT is_technical'),
       q<{ id: string }>(`SELECT id::text FROM integration_accounts WHERE provider IN ('google-ads', 'meta')`),
     ]);
     return { role: u.role, userId: u.id, domainIds: new Set(d.map((x) => x.id)), accountIds: new Set(a.map((x) => x.id)) };
   }
-  if (u.role === 'gerente') {
-    const doms = (await allowedDomains(req)).ids;
+  // 0.18.11: Admin, como o Gerente, só nos domínios do alcance dele (Empresas em que é sócio)
+  if (u.role === 'gerente' || isAdminRole(u.role)) {
+    const doms = isAdminRole(u.role) ? (await adminScope(req))!.domainIds : (await allowedDomains(req)).ids;
     const acc = await q<{ id: string }>(`
       SELECT a.id::text FROM integration_accounts a WHERE a.provider IN ('google-ads', 'meta') AND (
         EXISTS (SELECT 1 FROM domain_accounts da WHERE da.account_id = a.id AND da.domain_id = ANY($1::bigint[]))
@@ -97,9 +98,12 @@ linksRouter.get('/', async (req, res) => {
     accounts: accounts.map((a) => {
       const h = hist.filter((x) => x.accountId === a.id);
       const cur = h.find((x) => x.from <= t);
-      return { ...a, since: cur && cur.from > '2000-01-01' ? cur.from : null, history: h,
+      const hosts = new Set(domains.map((d) => d.hostname));
+      return { ...a, since: cur && cur.from > '2000-01-01' ? cur.from : null,
+        history: cx.role === 'admin' ? h.map((x) => ({ ...x, domains: x.domains.filter((hn) => hosts.has(hn)) })) : h,
         // o gestor só mexe nos domínios dele; o resto aparece, mas travado
-        domains: a.domains.map((d) => ({ ...d, editable: cx.domainIds.has(d.id) })) };
+        // 0.18.11: o Admin não vê domínios de Empresas das quais não é sócio
+        domains: a.domains.filter((d) => cx.role !== 'admin' || cx.domainIds.has(d.id)).map((d) => ({ ...d, editable: cx.domainIds.has(d.id) })) };
     }),
   });
 });
@@ -115,7 +119,7 @@ async function histRow(req: Request, id: string) {
   if (!h) throw notFound('Período não encontrado.');
   if (!cx.accountIds.has(h.account_id)) throw forbid('Conta fora do seu alcance.');
   // Gerente: só períodos com domínios do alcance dele (ou vazios)
-  if (cx.role === 'gerente' && h.domain_ids.some((d) => !cx.domainIds.has(d))) throw forbid('Este período tem domínio fora do seu alcance.');
+  if ((cx.role === 'gerente' || cx.role === 'admin') && h.domain_ids.some((d) => !cx.domainIds.has(d))) throw forbid('Este período tem domínio fora do seu alcance.');
   return h;
 }
 

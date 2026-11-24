@@ -1,6 +1,6 @@
 /**
  * Finance (menu Finance → Caixa Empresa e Custos).
- * Quem acessa: Admin/SuperAdmin (todas as Empresas) e os sócios de cada Empresa (company_users), só as Empresas deles.
+ * Quem acessa: SuperAdmin (todas as Empresas), Admin (0.18.11: só as Empresas em que é sócio) e os sócios de cada Empresa (company_users), só as Empresas deles.
  * Gestor e Gerente que não são sócios recebem 403. ?company=<id> = uma Empresa; vazio = todas as que o usuário vê.
  *
  *   GET    /finance/overview?company&from=YYYY-MM&to=YYYY-MM&currency   caixa + fechamento mês a mês (só lançamentos manuais + custos)
@@ -44,10 +44,11 @@ const currencyOf = (req: Request) => (CUR.safeParse(req.query.currency).success 
 /** Empresas que o usuário pode ver no Finance. */
 async function financeCompanies(req: Request) {
   const u = req.user!;
-  const rows = isAdminRole(u.role)
+  // 0.18.11: SuperAdmin vê todas; Admin, como os demais, só as Empresas em que é sócio
+  const rows = u.role === 'superadmin'
     ? await q<{ id: string; name: string }>('SELECT id::text, name FROM companies ORDER BY name')
     : await q<{ id: string; name: string }>('SELECT c.id::text, c.name FROM companies c JOIN company_users cu ON cu.company_id = c.id WHERE cu.user_id = $1 ORDER BY c.name', [u.id]);
-  if (!isAdminRole(u.role) && !rows.length) throw new HttpError(403, 'forbidden_finance', 'O Finance é só para Admin e sócios das Empresas.');
+  if (!rows.length) throw new HttpError(403, 'forbidden_finance', isAdminRole(u.role) ? 'Você não é sócio de nenhuma Empresa: o Admin vê no Finance só as Empresas em que é sócio.' : 'O Finance é só para Admin e sócios das Empresas.');
   return rows;
 }
 /** Empresas da consulta: ?company= (precisa ser uma das dele) ou todas. */

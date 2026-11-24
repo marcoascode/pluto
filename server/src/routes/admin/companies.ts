@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { one, q, tx } from '../../db.js';
-import { conflict, notFound, parse } from '../../lib/http.js';
+import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
+import { adminScope } from '../../auth/scope.js';
+import { requireSuperAdmin } from '../../auth/session.js';
 
 /**
  * Empresas (sociedades): nome + sócios (usuários) + Squads. Ex.: "Empresa do Lucas" com Lucas e Fabricio.
@@ -17,7 +19,12 @@ export const COMPANY_SQL = `
          COALESCE((SELECT array_agg(s.id::text ORDER BY s.name) FROM squads s WHERE s.company_id = c.id), '{}') AS "squadIds"
     FROM companies c`;
 
-companiesRouter.get('/companies', async (_req, res) => { res.json({ companies: await q(`${COMPANY_SQL} ORDER BY c.name`) }); });
+/* 0.18.11: o Admin só vê e edita as Empresas em que é sócio (Squads só dessas Empresas; não sai da
+   própria sociedade). Criar e excluir Empresa: só SuperAdmin. */
+companiesRouter.get('/companies', async (req, res) => {
+  const sc = await adminScope(req);
+  res.json({ companies: sc ? await q(`${COMPANY_SQL} WHERE c.id = ANY($1::bigint[]) ORDER BY c.name`, [sc.companyIds]) : await q(`${COMPANY_SQL} ORDER BY c.name`) });
+});
 
 async function save(id: string | null, b: z.infer<typeof body>) {
   return tx(async (c) => {
@@ -37,9 +44,19 @@ async function save(id: string | null, b: z.infer<typeof body>) {
     return one(`${COMPANY_SQL} WHERE c.id = $1`, [cid], c);
   });
 }
-companiesRouter.post('/companies', async (req, res) => { res.status(201).json(await save(null, parse(body, req.body))); });
-companiesRouter.put('/companies/:id', async (req, res) => { res.json(await save(parse(z.string().regex(/^\d+$/), req.params.id), parse(body, req.body))); });
-companiesRouter.delete('/companies/:id', async (req, res) => {
+companiesRouter.post('/companies', requireSuperAdmin, async (req, res) => { res.status(201).json(await save(null, parse(body, req.body))); });
+companiesRouter.put('/companies/:id', async (req, res) => {
+  const id = parse(z.string().regex(/^\d+$/), req.params.id), b = parse(body, req.body);
+  const sc = await adminScope(req);
+  if (sc) {
+    if (!sc.companyIds.includes(id)) throw new HttpError(403, 'forbidden_company', 'Você só edita as Empresas em que é sócio.');
+    if (!b.partnerIds.includes(req.user!.id)) throw conflict('self_partner', 'Você não pode se tirar da sociedade (perderia o acesso à Empresa). Peça a um SuperAdmin.');
+    const free = (await q<{ id: string }>('SELECT id::text FROM squads WHERE id = ANY($1::bigint[]) AND company_id = ANY($2::bigint[])', [b.squadIds, sc.companyIds])).map((r) => r.id);
+    if (free.length !== new Set(b.squadIds).size) throw new HttpError(403, 'forbidden_squad', 'Algum Squad pertence a uma Empresa da qual você não é sócio.');
+  }
+  res.json(await save(id, b));
+});
+companiesRouter.delete('/companies/:id', requireSuperAdmin, async (req, res) => {
   const r = await q('DELETE FROM companies WHERE id = $1 RETURNING id', [parse(z.string().regex(/^\d+$/), req.params.id)]);   // Squads ficam sem Empresa
   if (!r.length) throw notFound('Empresa não encontrada.');
   res.status(204).end();
