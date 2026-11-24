@@ -4,6 +4,7 @@
  */
 import { api } from './client';
 import type * as T from '@/types/api';
+import type { Payout, PayoutMethod } from '@/lib/financeOps';
 
 type P = T.PeriodQuery;
 
@@ -21,6 +22,9 @@ export const meApi = {
   domains: (company?: string) => api.get<{ domains: string[] }>('/me/domains', { company }),
   /** Empresas que o usuário vê (seletor do topo). */
   companies: () => api.get<{ companies: T.MyCompany[] }>('/me/companies'),
+  /** 0.18.13: meio de recebimento da comissão (o próprio usuário edita). */
+  payout: () => api.get<Payout>('/me/payout'),
+  savePayout: (b: { method: PayoutMethod | null; methodOther: string | null; key: string | null }) => api.put<Payout>('/me/payout', b),
 };
 
 export const companiesApi = {

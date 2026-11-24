@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.13
+- **Dados de recebimento da comissão**: novo item **Dados de recebimento** no menu do usuário (avatar, canto superior direito). Cada usuário edita o próprio cadastro escolhendo o meio de recebimento — **Chave PIX**, **Dolafy** ou **Outro (especificar)** — e a identificação para recebimento (a chave PIX, o @ Dolafy ou outro dado). Rotas `GET/PUT /me/payout`; migration `024` adiciona `payout_method`, `payout_method_other` e `payout_key` em `users`.
+- **Comissões** (`/finance/comissoes`): o card de cada gestor mostra, em destaque numa linha acima do botão Aprovar, o meio e a identificação (ex.: "Chave PIX: 123.456.789-01"), com botão para copiar. Sem dados informados, o card avisa "Meio de recebimento não informado".
+
 ## 0.18.12
 - **Usuários visíveis ao Admin**: o Admin vê (e edita, exclui, reenvia convite, atribui domínios) só ele mesmo, os usuários que **ele cadastrou** e os que pertencem a um **Squad das Empresas em que é sócio** (Gerente do Squad, gestor de domínio do Squad ou sócio da Empresa). Vale também para a lista de gestores, sócios das Empresas e "Gestores e sites". SuperAdmin continua vendo todos. Migration `023` grava quem cadastrou cada usuário a partir de agora (usuários antigos ficam sem autor).
 - **Menu lateral reorganizado**: Dashboard, Relatórios · **Campanhas** (Google Ads, Placements, Meta Ads, Perfis & BMs, Criar campanhas Meta) · **Domínios** (Domínios / Sites, Contas × Sites, URLs) · **Monetização** (Google Ad Manager) · **Atribuição** (Diagnóstico da atribuição, UTM Debugger) · **Administração** → Finanças (Caixa Empresa, Custos, Comissões), Relatórios (Google Ads, Meta Ads, Google Ad Manager), Integrações (Google Ads, Meta Ads, Google Ad Manager), Configurações (Contas, Domínios, Usuários & Squads, Atribuição / UTMs, Moedas).

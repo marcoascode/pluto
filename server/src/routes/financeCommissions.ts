@@ -10,7 +10,7 @@
  *   Gerente não sócio . bloqueado (403)
  *
  *   GET  /finance/sites?company                                   sites (domínios) das Empresas, para os selects
- *   GET  /finance/commissions?company&month&user                  comissões do mês + cards dos sites
+ *   GET  /finance/commissions?company&month&user                  comissões do mês + cards dos sites (+ meio de recebimento de cada gestor)
  *   POST /finance/commissions/approve                             { userId, companyId, month, adjustments?, adjustmentNote? }
  *   POST /finance/commissions/:id/paid   { date, note? }          marca como paga (pagamento feito por fora; não mexe no Caixa)
  *   DELETE /finance/commissions/:id/paid                          desmarca
@@ -26,6 +26,7 @@ import { isAdminRole } from '../auth/permissions.js';
 import { listSites, normSite } from '../services/financeSources.js';
 import { adminVisibleUserIds } from '../auth/scope.js';
 import { audit, commissionsFor, loadAssignments, r2 } from '../services/financeResults.js';
+import { payoutsOf } from '../services/payout.js';
 
 export const financeCommissionsRouter = Router();
 const YM = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'use YYYY-MM');
@@ -90,7 +91,9 @@ financeCommissionsRouter.get('/commissions', async (req, res) => {
   const mine = v.role === 'manager' ? v.userId : undefined;
   const { lines: all, sites } = await commissionsFor(ids, month, { userId: mine });
   const who = typeof req.query.user === 'string' && req.query.user ? req.query.user : '';
-  const lines = who ? all.filter((l) => l.userId === who) : all;
+  // 0.18.13: meio de recebimento que o gestor informou no próprio cadastro (aparece no card, acima de Aprovar)
+  const pay = await payoutsOf([...new Set(all.map((l) => l.userId))]);
+  const lines = (who ? all.filter((l) => l.userId === who) : all).map((l) => ({ ...l, payout: pay.get(l.userId) ?? null }));
   // cards dos sites: gestor só vê os dele
   let cards = sites;
   if (mine) cards = cards.filter((c) => c.managers.some((m) => m.userId === mine));
