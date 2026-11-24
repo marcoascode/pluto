@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.10
+- **Comissão progressiva no cadastro do gestor**: as faixas saíram do painel de Comissões (card "Comissão progressiva" e rota `PUT /finance/commission-rule` removidos) e passam a ser definidas por gestor em Usuários & Squads → editar gestor, no campo que aparece ao escolher a modalidade **Progressiva** (patamares, %, moeda, "+ Faixa" e "Restaurar padrão"), do mesmo jeito que a % da **Fixa**.
+- **Padrões**: Progressiva = ROI até US$ 19.999,99 → 10% · US$ 20.000,00 a 39.999,99 → 12% · a partir de US$ 40.000,00 → 15%. Fixa = 10%.
+- Migration `022`: gestores que já estavam na progressiva recebem as faixas que valiam no painel. Comissões já aprovadas mantêm a % gravada na aprovação.
+- Painel de Comissões: cada card de gestor mostra as faixas dele (progressiva) ou a % (fixa).
+
 ## 0.18.9
 - **"Gestores e sites" de volta, na edição do gestor** (Usuários & Squads → editar gestor → botão **Gestores e sites**): períodos por site com início, fim (opcional), rateio e observação, como antes. Nos dias que um período cobre, ele vale no lugar do Rateio do domínio; trocar o responsável continua sendo "data de fim + período novo" (meses anteriores não mudam, e período com comissão aprovada fica travado).
 - **Rateio na edição de domínio** (`/admin/dominios`): aparece quando o domínio tem mais de um gestor. Dá para definir a % da receita de cada gestor (a soma precisa ser 100%; conferido na tela e no servidor) ou voltar para "dividir igualmente". Cada gestor continua descontando só as despesas das próprias contas. Quando entra ou sai um gestor do domínio, o rateio volta para partes iguais até ser definido de novo (migration `021`).

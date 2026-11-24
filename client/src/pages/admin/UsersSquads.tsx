@@ -10,6 +10,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import EventNoteOutlinedIcon from '@mui/icons-material/EventNoteOutlined';
 import { teamApi, type TeamGestor, type TeamResponse } from '@/lib/team';
 import { GestorPeriodsDialog } from './GestorPeriods';
+import { CommissionTiersEditor, parseTiers, toDraft } from './CommissionTiersEditor';
+import { DEFAULT_FIXED_PCT, DEFAULT_TIER_CURRENCY, type Tier } from '@/lib/financeOps';
 import { useAuth } from '@/context/AuthContext';
 import { ROLE_HELP, ROLE_LABEL, roleTone } from '@/lib/roles';
 import { useAdminCompanies, useAdminDomains, useAdminMutation, useIntegrationAccounts, usePermissions, useSquads, useUsers } from '@/hooks/queries';
@@ -18,7 +20,7 @@ import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
 import { initials } from '@/lib/format';
-import type { Capability, CommissionMode, Company, DomainLink, Role, User } from '@/types/api';
+import type { Capability, CommissionMode, Company, Currency, DomainLink, Role, User } from '@/types/api';
 
 /* =====================================================================
    Usuários & Squads
@@ -69,7 +71,7 @@ function UsersTab() {
     if (u.role === 'admin' || u.role === 'superadmin') return <Typography variant="caption">Todos os domínios</Typography>;
     if (u.role === 'gerente') return u.squadIds.length ? <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{u.squadIds.map((id) => <Tag key={id}>{sq?.squads.find((s) => s.id === id)?.name ?? id}</Tag>)}</Stack> : <Typography variant="caption">Só as Empresas dele</Typography>;
     return u.domains.length
-      ? <Tooltip title={u.domains.map((d) => `${d.domain} (${d.googleAccounts.length} Google · ${d.metaAccounts.length} Meta)`).join('\n')}><Typography variant="body2">{u.domains.length === 1 ? u.domains[0].domain : `${u.domains.length} domínios`}<Typography component="span" variant="caption"> · {u.domains.reduce((a, d) => a + d.googleAccounts.length + d.metaAccounts.length, 0)} contas · comissão {u.commissionMode === 'fixed' ? `fixa ${String(u.commissionPct ?? '').replace('.', ',')}%` : 'progressiva'}</Typography></Typography></Tooltip>
+      ? <Tooltip title={u.domains.map((d) => `${d.domain} (${d.googleAccounts.length} Google · ${d.metaAccounts.length} Meta)`).join('\n')}><Typography variant="body2">{u.domains.length === 1 ? u.domains[0].domain : `${u.domains.length} domínios`}<Typography component="span" variant="caption"> · {u.domains.reduce((a, d) => a + d.googleAccounts.length + d.metaAccounts.length, 0)} contas · comissão {u.commissionMode === 'fixed' ? `fixa ${String(u.commissionPct ?? DEFAULT_FIXED_PCT).replace('.', ',')}%` : `progressiva ${(u.commissionTiers?.length ? u.commissionTiers : [{ pct: 10 }, { pct: 12 }, { pct: 15 }]).map((t) => String(t.pct).replace('.', ',')).join('/')}%`}</Typography></Typography></Tooltip>
       : <Tag tone="warn">Sem domínio</Tag>;
   };
   return (
@@ -193,7 +195,8 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
   const { data: co } = useAdminCompanies();
   const { isSuperAdmin } = useAuth();
   const [f, setF] = useState({ name: u?.name ?? '', email: u?.email ?? '', role: u?.role ?? ('gestor' as Role), status: u?.status === 'disabled' ? 'disabled' : 'active', squadIds: u?.squadIds ?? [], companyIds: u?.companyIds ?? [], domains: u?.domains ?? [],
-    commissionMode: u?.commissionMode ?? ('progressive' as CommissionMode), commissionPct: u?.commissionPct != null ? String(u.commissionPct).replace('.', ',') : '' });
+    commissionMode: u?.commissionMode ?? ('progressive' as CommissionMode), commissionPct: String(u?.commissionPct ?? DEFAULT_FIXED_PCT).replace('.', ','),
+    commissionTiers: toDraft(u?.commissionTiers), commissionTierCurrency: (u?.commissionTiers?.length ? u.commissionTierCurrency : undefined) ?? (DEFAULT_TIER_CURRENCY as Currency) });
   const [err, setErr] = useState('');
   const [periods, setPeriods] = useState(false);
   const create = useAdminMutation(adminApi.createUser, INV);
@@ -207,7 +210,11 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
     setErr('');
     const pct = Number(f.commissionPct.trim().replace(',', '.'));
     if (f.role === 'gestor' && f.commissionMode === 'fixed' && (!Number.isFinite(pct) || pct <= 0 || pct > 100)) return setErr('Na comissão fixa, informe a porcentagem (maior que 0 e até 100%).');
-    const commission = f.role === 'gestor' ? { commissionMode: f.commissionMode, commissionPct: f.commissionMode === 'fixed' ? pct : null } : {};
+    const tiers = parseTiers(f.commissionTiers);
+    if (f.role === 'gestor' && f.commissionMode === 'progressive' && typeof tiers === 'string') return setErr(tiers);
+    const commission = f.role !== 'gestor' ? {} : f.commissionMode === 'fixed'
+      ? { commissionMode: f.commissionMode, commissionPct: pct }
+      : { commissionMode: f.commissionMode, commissionTiers: tiers as Tier[], commissionTierCurrency: f.commissionTierCurrency };
     const links = { squadIds: f.role === 'gerente' ? f.squadIds : [], companyIds: f.companyIds, domains: f.role === 'gestor' ? f.domains : [], ...commission };
     const onError = (e: unknown) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.');
     if (!u) return create.mutate({ name: f.name.trim(), email: f.email.trim().toLowerCase(), role: f.role, ...links }, { onSuccess: onCreated, onError });
@@ -229,12 +236,15 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
           {f.role === 'gestor' && (
             <Stack spacing={1.25}>
               <TextField select label="Modalidade de comissão" value={f.commissionMode} onChange={(e) => setF({ ...f, commissionMode: e.target.value as CommissionMode })} fullWidth
-                helperText={f.commissionMode === 'progressive' ? 'A % depende do ROI total do mês, pelas faixas do painel Finance → Comissões.' : 'Uma % única sobre o ROI total do mês nos sites que ele gere.'}>
+                helperText={f.commissionMode === 'progressive' ? 'A % depende do ROI total do mês, pelas faixas abaixo.' : 'Uma % única sobre o ROI total do mês nos sites que ele gere.'}>
                 <MenuItem value="progressive">Progressiva (faixas de ROI)</MenuItem>
                 <MenuItem value="fixed">Fixa</MenuItem>
               </TextField>
+              {f.commissionMode === 'progressive' && (
+                <CommissionTiersEditor value={f.commissionTiers} currency={f.commissionTierCurrency} onChange={(v) => setF({ ...f, commissionTiers: v })} onCurrency={(c) => setF({ ...f, commissionTierCurrency: c })} />
+              )}
               {f.commissionMode === 'fixed' && (
-                <TextField label="Comissão fixa" value={f.commissionPct} onChange={(e) => setF({ ...f, commissionPct: e.target.value })} fullWidth placeholder="ex.: 12"
+                <TextField label="Comissão fixa" value={f.commissionPct} onChange={(e) => setF({ ...f, commissionPct: e.target.value })} fullWidth placeholder="10"
                   slotProps={{ htmlInput: { inputMode: 'decimal' }, input: { endAdornment: <InputAdornment position="end">%</InputAdornment> } }} helperText="Aplicada ao ROI total do gestor no mês (sem ROI positivo, sem comissão)." />
               )}
             </Stack>

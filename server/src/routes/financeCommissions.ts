@@ -4,7 +4,7 @@
  * Montado dentro do financeRouter (routes/finance.ts): tudo em /api/finance/*.
  *
  * Quem pode o quê (validado aqui, não só na tela):
- *   Admin/SuperAdmin ... tudo; único que aprova, marca como paga, reabre e edita as faixas da comissão progressiva
+ *   Admin/SuperAdmin ... tudo; único que aprova, marca como paga e reabre (faixas e % ficam no cadastro do gestor)
  *   Sócio ............. vê as comissões e os sites das suas Empresas
  *   Gestor ............ vê só os próprios sites e a própria comissão (sem caixa nem outros gestores)
  *   Gerente não sócio . bloqueado (403)
@@ -16,7 +16,6 @@
  *   DELETE /finance/commissions/:id/paid                          desmarca
  *   POST /finance/commissions/:id/reopen { reason }               volta a calcular ao vivo (só se não estiver paga)
  *   GET  /finance/assignments?company&user · POST · PUT /:id · DELETE /:id   períodos "Gestores e sites" (só Admin edita)
- *   PUT  /finance/commission-rule        { name, tiers, tierCurrency }
  */
 import { Router, type Request } from 'express';
 import { z } from 'zod';
@@ -25,7 +24,7 @@ import { HttpError, notFound, parse } from '../lib/http.js';
 import { today } from '../lib/dates.js';
 import { isAdminRole } from '../auth/permissions.js';
 import { listSites, normSite } from '../services/financeSources.js';
-import { audit, commissionsFor, loadAssignments, loadRule, r2 } from '../services/financeResults.js';
+import { audit, commissionsFor, loadAssignments, r2 } from '../services/financeResults.js';
 
 export const financeCommissionsRouter = Router();
 const YM = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'use YYYY-MM');
@@ -86,7 +85,7 @@ financeCommissionsRouter.get('/commissions', async (req, res) => {
   const month = req.query.month ? parse(YM, req.query.month) : prevMonth(NOWM());
   const ids = sel.map((c) => c.id);
   const mine = v.role === 'manager' ? v.userId : undefined;
-  const { lines: all, sites, rule } = await commissionsFor(ids, month, { userId: mine });
+  const { lines: all, sites } = await commissionsFor(ids, month, { userId: mine });
   const who = typeof req.query.user === 'string' && req.query.user ? req.query.user : '';
   const lines = who ? all.filter((l) => l.userId === who) : all;
   // cards dos sites: gestor só vê os dele
@@ -100,7 +99,6 @@ financeCommissionsRouter.get('/commissions', async (req, res) => {
   for (let i = 0; i < 12; i++) { months.push(m); m = prevMonth(m); }
   res.json({
     viewer: { role: v.role, userId: v.userId }, month, months, companies: v.companies, managers,
-    rule: { name: rule.name, tiers: rule.tiers, tierCurrency: rule.tier_currency },
     lines, sites: cards,
     totals: {
       // ROI total dos gestores (soma das linhas) e comissões
@@ -219,18 +217,4 @@ financeCommissionsRouter.delete('/assignments/:id', async (req, res) => {
   res.status(204).end();
 });
 
-/* ---------- regra ---------- */
-financeCommissionsRouter.put('/commission-rule', async (req, res) => {
-  const v = await viewer(req); adminOnly(v);
-  const b = parse(z.object({
-    name: z.string().trim().min(2).max(80),
-    tiers: z.array(z.object({ from: z.number().min(0).max(1e10), pct: z.number().min(0).max(100) })).min(1).max(10),
-    tierCurrency: z.enum(['BRL', 'USD', 'EUR']).default('USD'),
-  }).refine((x) => x.tiers.some((t) => t.from === 0), { message: 'A primeira faixa precisa começar em 0.' })
-    .refine((x) => new Set(x.tiers.map((t) => t.from)).size === x.tiers.length, { message: 'Duas faixas não podem começar no mesmo valor.' }), req.body);
-  const rule = await loadRule();
-  const tiers = [...b.tiers].sort((x, y) => x.from - y.from);
-  await q(`UPDATE finance_commission_rules SET name = $1, tiers = $2, tier_currency = $3, updated_by = $4, updated_at = now() WHERE id = $5`, [b.name, JSON.stringify(tiers), b.tierCurrency, v.userId, rule.id]);
-  await audit(v.userId, null, 'update', 'commission_rule', rule.id, rule, { ...b, tiers }, 'comissões já aprovadas mantêm a regra gravada');
-  res.json({ id: rule.id });
-});
+/* 0.18.10: as faixas da comissão progressiva ficam no cadastro de cada gestor (Usuários & Squads); PUT /commission-rule saiu. */

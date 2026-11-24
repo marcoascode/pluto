@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { accountsOf, clearGestorLinks, resyncAccounts, saveGestorLinks } from '../../services/gestorLinks.js';
 import { deriveAccounts } from '../../services/accountLinks.js';
+import { DEFAULT_FIXED_PCT, DEFAULT_TIERS } from '../../services/financeResults.js';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { tempPassword } from '../../lib/crypto.js';
@@ -20,17 +21,31 @@ const ids = z.array(z.string().regex(/^\d+$/)).max(200);
 /** Gestor: domínio + contas Google Ads + contas Meta Ads que ele usa nesse domínio. */
 const domainLink = z.object({ domain: z.string().trim().toLowerCase().min(3).max(190), googleAccounts: ids.default([]), metaAccounts: ids.default([]) });
 const links = { squadIds: ids.optional(), companyIds: ids.optional(), domains: z.array(domainLink).max(300).optional() };
-/** 0.18.8 · Comissão do gestor: progressiva (faixas do painel de Comissões) ou fixa (% única sobre o ROI total do mês). */
-const commission = { commissionMode: z.enum(['progressive', 'fixed']).optional(), commissionPct: z.number().gt(0).max(100).nullable().optional() };
+/** Comissão do gestor (0.18.10): progressiva (faixas do próprio cadastro) ou fixa (% única), sobre o ROI total do mês. */
+const tiersSchema = z.array(z.object({ from: z.number().min(0).max(1e10), pct: z.number().min(0).max(100) })).min(1).max(10)
+  .refine((t) => t.some((x) => x.from === 0), { message: 'A primeira faixa da comissão progressiva precisa começar em 0.' })
+  .refine((t) => new Set(t.map((x) => x.from)).size === t.length, { message: 'Duas faixas da comissão progressiva não podem começar no mesmo valor.' });
+const commission = {
+  commissionMode: z.enum(['progressive', 'fixed']).optional(),
+  commissionPct: z.number().gt(0).max(100).nullable().optional(),
+  commissionTiers: tiersSchema.nullable().optional(),
+  commissionTierCurrency: z.enum(['BRL', 'USD', 'EUR']).optional(),
+};
 
-async function saveCommission(c: C, uid: string, role: string, b: { commissionMode?: 'progressive' | 'fixed'; commissionPct?: number | null }) {
-  if (b.commissionMode === undefined && b.commissionPct === undefined) return;
+async function saveCommission(c: C, uid: string, role: string, b: { commissionMode?: 'progressive' | 'fixed'; commissionPct?: number | null; commissionTiers?: { from: number; pct: number }[] | null; commissionTierCurrency?: 'BRL' | 'USD' | 'EUR' }, isNew = false) {
   if (role !== 'gestor') return;   // só gestor recebe comissão
-  const cur = await one<{ mode: 'progressive' | 'fixed'; pct: number | null }>('SELECT commission_mode AS mode, commission_pct::float AS pct FROM users WHERE id = $1', [uid], c);
+  if (!isNew && b.commissionMode === undefined && b.commissionPct === undefined && b.commissionTiers === undefined && b.commissionTierCurrency === undefined) return;
+  const cur = await one<{ mode: 'progressive' | 'fixed'; pct: number | null; tiers: { from: number; pct: number }[] | null; cur: 'BRL' | 'USD' | 'EUR' }>(
+    'SELECT commission_mode AS mode, commission_pct::float AS pct, commission_tiers AS tiers, commission_tier_currency AS cur FROM users WHERE id = $1', [uid], c);
   const mode = b.commissionMode ?? cur?.mode ?? 'progressive';
-  const pct = b.commissionPct !== undefined ? b.commissionPct : cur?.pct ?? null;
-  if (mode === 'fixed' && (pct == null || !(pct > 0))) throw conflict('commission_pct', 'Na comissão fixa, informe a porcentagem do gestor (maior que 0 e até 100%).');
-  await c.query('UPDATE users SET commission_mode = $2, commission_pct = $3 WHERE id = $1', [uid, mode, mode === 'fixed' ? pct : null]);
+  if (mode === 'fixed') {
+    const pct = (b.commissionPct !== undefined ? b.commissionPct : cur?.pct) ?? DEFAULT_FIXED_PCT;
+    await c.query('UPDATE users SET commission_mode = $2, commission_pct = $3, commission_tiers = NULL WHERE id = $1', [uid, mode, pct]);
+  } else {
+    const tiers = [...((b.commissionTiers !== undefined ? b.commissionTiers : cur?.tiers) ?? DEFAULT_TIERS)].sort((x, y) => x.from - y.from);
+    const currency = b.commissionTierCurrency ?? (b.commissionTiers ? undefined : cur?.cur) ?? 'USD';
+    await c.query('UPDATE users SET commission_mode = $2, commission_pct = NULL, commission_tiers = $3, commission_tier_currency = $4 WHERE id = $1', [uid, mode, JSON.stringify(tiers), currency]);
+  }
 }
 
 const resync = resyncAccounts;
@@ -89,7 +104,7 @@ usersRouter.post('/users', async (req, res) => {
   const uid = await tx(async (c) => {
     const r = await one<{ id: string }>(`INSERT INTO users (name, email, password_hash, role, status, must_change_password) VALUES ($1, $2, $3, $4, 'invited', true) RETURNING id::text`, [b.name, b.email, hash, b.role], c);
     moved = await saveLinks(c, r!.id, b.role, b, false, req.user!.id);
-    await saveCommission(c, r!.id, b.role, b);
+    await saveCommission(c, r!.id, b.role, b, true);
     return r!.id;
   });
   if (moved.length) await resync(moved);

@@ -492,6 +492,13 @@ export const MGR_SHARES = new Map<string, number>();
 const sqOut = (s: T.Squad): T.Squad => ({ ...s, userIds: USERS.filter((x) => x.role === 'gerente' && x.squadIds.includes(s.id)).map((x) => x.id) });
 /** Mesmas regras de vínculo do servidor (routes/admin/users.ts → saveLinks). */
 function setLinks(t: T.User, b: Record<string, any>, roleChanged = false) {
+  // 0.18.10: comissão do gestor (progressiva com faixas próprias ou fixa; padrões 10/12/15% e 10%)
+  if (t.role === 'gestor' && (b.commissionMode !== undefined || !t.commissionMode)) {
+    t.commissionMode = b.commissionMode ?? t.commissionMode ?? 'progressive';
+    t.commissionPct = t.commissionMode === 'fixed' ? Number(b.commissionPct ?? t.commissionPct ?? 10) : null;
+    t.commissionTiers = t.commissionMode === 'progressive' ? (b.commissionTiers ?? t.commissionTiers ?? [{ from: 0, pct: 10 }, { from: 20000, pct: 12 }, { from: 40000, pct: 15 }]) : null;
+    t.commissionTierCurrency = b.commissionTierCurrency ?? t.commissionTierCurrency ?? 'USD';
+  }
   if (b.squadIds !== undefined || roleChanged) t.squadIds = t.role === 'gerente' ? [...new Set<string>(b.squadIds ?? (roleChanged ? [] : t.squadIds))] : [];
   if (b.companyIds !== undefined) { t.companyIds = [...new Set<string>(b.companyIds)]; COMPANIES.forEach((c) => { const has = t.companyIds.includes(c.id); c.partnerIds = has ? [...new Set([...c.partnerIds, t.id])] : c.partnerIds.filter((y) => y !== t.id); }); }
   if (b.domains !== undefined || roleChanged) {

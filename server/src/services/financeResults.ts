@@ -7,9 +7,9 @@
  *   × % dele em cada dia − despesas (Google + Meta + IVA) SÓ das campanhas das contas que ele usa naquele site.
  * ROI total do gestor (por Empresa e mês) = soma do ROI dos sites dele (site negativo desconta).
  * Comissão = % × ROI total (sem ROI positivo, sem comissão), com a % pela modalidade do cadastro do gestor:
- *   progressiva → faixa atingida pelo ROI total (faixas do painel de Comissões, padrão em US$: até 19.999,99 = 10% ·
+ *   progressiva → faixa atingida pelo ROI total, pelas faixas do cadastro do gestor (padrão em US$: até 19.999,99 = 10% ·
  *                 20.000 a 39.999,99 = 12% · a partir de 40.000 = 15%; a faixa vale para o ROI todo)
- *   fixa        → a % do cadastro do gestor.
+ *   fixa        → a % do cadastro do gestor (padrão 10%).
  *   O ROI em US$ usa a mesma cotação do ROI do mês (receita R$ ÷ receita US$).
  * A comissão é paga por fora: aqui só se aprova (congela a base) e marca como paga. Não gera lançamento no Caixa.
  */
@@ -33,18 +33,18 @@ export async function companyDomains(companyIds: string[]) {
   return rows.map((r) => ({ ...r, site: normSite(r.hostname) })).filter((r): r is typeof r & { site: string } => !!r.site);
 }
 
-/* ---------------- regra progressiva ---------------- */
+/* ---------------- comissão progressiva (faixas no cadastro de cada gestor) ---------------- */
 export interface Tier { from: number; pct: number }
-export interface Rule { id: string; name: string; tiers: Tier[]; tier_currency: Cur }
-export async function loadRule(): Promise<Rule> {
-  const r = await q<Rule>(`SELECT id::text, name, tiers, tier_currency FROM finance_commission_rules ORDER BY id LIMIT 1`);
-  return r[0] ?? { id: '0', name: 'Progressiva', tiers: [{ from: 0, pct: 10 }, { from: 20000, pct: 12 }, { from: 40000, pct: 15 }], tier_currency: 'USD' };
-}
+/** Padrão ao escolher "Progressiva": até US$ 19.999,99 → 10% · US$ 20.000 a 39.999,99 → 12% · a partir de US$ 40.000 → 15% */
+export const DEFAULT_TIERS: Tier[] = [{ from: 0, pct: 10 }, { from: 20000, pct: 12 }, { from: 40000, pct: 15 }];
+export const DEFAULT_TIER_CURRENCY: Cur = 'USD';
+/** Padrão ao escolher "Fixa". */
+export const DEFAULT_FIXED_PCT = 10;
 /** % da faixa atingida pelo ROI (na moeda das faixas). Sem ROI positivo, sem comissão. */
-export function tierFor(rule: Pick<Rule, 'tiers'>, profitInTierCur: number) {
+export function tierFor(tiers: Tier[], profitInTierCur: number) {
   if (profitInTierCur <= 0) return null;
-  const tiers = [...rule.tiers].sort((a, b) => a.from - b.from);
-  return tiers.filter((x) => profitInTierCur >= x.from).pop() ?? tiers[0];
+  const t = [...tiers].sort((a, b) => a.from - b.from);
+  return t.filter((x) => profitInTierCur >= x.from).pop() ?? t[0];
 }
 
 /* ---------------- períodos "Gestores e sites" (edição do gestor em Usuários & Squads) ---------------- */
@@ -66,7 +66,7 @@ function daysOf(month: string, to: string) {
 }
 
 /* ---------------- ROI por gestor × site ---------------- */
-interface Manager { userId: string; userName: string; mode: CommissionMode; fixedPct: number | null }
+interface Manager { userId: string; userName: string; mode: CommissionMode; fixedPct: number | null; tiers: Tier[] | null; tierCurrency: Cur }
 /** Gestor no site: receita (parte dele) − despesas das contas dele no site.
  *  source: 'rateio' = rateio do domínio (ou divisão igual) · 'periodo' = período de "Gestores e sites" · 'misto' = os dois no mês */
 export interface SiteManager { userId: string; userName: string; sharePct: number; revenue: number; ads: number; result: number; source: 'rateio' | 'periodo' | 'misto'; days: number }
@@ -111,7 +111,7 @@ export async function siteResults(companyIds: string[], month: string): Promise<
   const manual = manualAll.filter((a) => a.start_date <= to && (a.end_date ?? '9999-12-31') >= `${month}-01`);
   const userIds = [...new Set([...mgrs.map((m) => m.userId), ...manual.map((a) => a.user_id)])];
   const managers = new Map<string, Manager>();
-  if (userIds.length) for (const u of await q<Manager>(`SELECT id::text AS "userId", name AS "userName", commission_mode AS mode, commission_pct::float AS "fixedPct" FROM users WHERE id = ANY($1::bigint[])`, [userIds])) managers.set(u.userId, u);
+  if (userIds.length) for (const u of await q<Manager>(`SELECT id::text AS "userId", name AS "userName", commission_mode AS mode, commission_pct::float AS "fixedPct", commission_tiers AS tiers, commission_tier_currency AS "tierCurrency" FROM users WHERE id = ANY($1::bigint[])`, [userIds])) managers.set(u.userId, u);
   const days = daysOf(month, to);
   let revBrl = 0, revUsd = 0;
   const sites: SiteMonth[] = [];
@@ -154,7 +154,7 @@ export type CommissionStatus = 'open' | 'to_approve' | 'approved' | 'paid';
 export interface CommissionSite { site: string; sharePct: number; revenue: number; ads: number; result: number; source?: SiteManager['source']; days?: number }
 export interface CommissionLine {
   periodId: string | null; userId: string; userName: string; companyId: string; month: string;
-  mode: CommissionMode; fixedPct: number | null;
+  mode: CommissionMode; fixedPct: number | null; tiers: Tier[];
   sites: CommissionSite[]; revenue: number; ads: number; profit: number; profitUsd: number; negatives: number; profitTier: number; tierCurrency: Cur;
   pct: number; calculated: number; calculatedUsd: number; adjustments: number; adjustmentNote: string | null; approved: number | null;
   status: CommissionStatus; frozen: boolean; liveDiff: number | null; incomplete: string[];
@@ -164,8 +164,8 @@ interface PeriodRow { id: string; user_id: string; company_id: string; base: Par
 
 export async function commissionsFor(companyIds: string[], month: string, opts: { userId?: string } = {}) {
   const t = today();
-  const [res, rule, periods, conv] = await Promise.all([
-    siteResults(companyIds, month), loadRule(),
+  const [res, periods, conv] = await Promise.all([
+    siteResults(companyIds, month),
     q<PeriodRow>(`SELECT p.id::text, p.user_id::text, p.company_id::text, p.base, p.calculated::float AS calculated, p.adjustments::float AS adjustments, p.adjustment_note,
         p.approved_amount::float AS approved_amount, u.name AS approved_by, p.approved_at::text, p.paid_at::text, p.paid_note
         FROM finance_commission_periods p LEFT JOIN users u ON u.id = p.approved_by
@@ -175,7 +175,7 @@ export async function commissionsFor(companyIds: string[], month: string, opts: 
   const rateDay = res.to;
   // R$ → US$ pela cotação do ROI do mês (a mesma que converteu a receita); sem receita no mês, câmbio do fim do mês
   const toUsd = (brl: number) => (res.usdRate ? brl / res.usdRate : conv(brl, 'BRL', 'USD', rateDay));
-  const inTier = (brl: number) => (rule.tier_currency === 'BRL' ? brl : rule.tier_currency === 'USD' ? toUsd(brl) : conv(brl, 'BRL', rule.tier_currency, rateDay));
+  const inCur = (brl: number, cur: Cur) => (cur === 'BRL' ? brl : cur === 'USD' ? toUsd(brl) : conv(brl, 'BRL', cur, rateDay));
   const groups = new Map<string, CommissionSite[]>();
   for (const s of res.sites) for (const m of s.managers) {
     if (opts.userId && m.userId !== opts.userId) continue;
@@ -190,14 +190,16 @@ export async function commissionsFor(companyIds: string[], month: string, opts: 
     const mode: CommissionMode = mgr?.mode ?? 'progressive';
     const profit = r2(sites.reduce((a, s) => a + s.result, 0));
     const profitUsd = r2(toUsd(profit));
-    const profitTier = r2(inTier(profit));
-    const pct = mode === 'fixed' ? (profit > 0 ? mgr?.fixedPct ?? 0 : 0) : tierFor(rule, profitTier)?.pct ?? 0;
+    const tiers = mgr?.tiers?.length ? mgr.tiers : DEFAULT_TIERS;
+    const tierCurrency: Cur = mgr?.tiers?.length ? mgr.tierCurrency : DEFAULT_TIER_CURRENCY;
+    const profitTier = r2(inCur(profit, tierCurrency));
+    const pct = mode === 'fixed' ? (profit > 0 ? mgr?.fixedPct ?? DEFAULT_FIXED_PCT : 0) : tierFor(tiers, profitTier)?.pct ?? 0;
     const calculated = r2(Math.max(0, profit) * pct / 100);
     const incomplete = sites.filter((s) => !(s.revenue > 0)).map((s) => `${s.site}: sem receita no dash para o mês`);
     const live: CommissionLine = {
-      periodId: null, userId, userName: mgr?.userName ?? '', companyId, month, mode, fixedPct: mgr?.fixedPct ?? null, sites,
+      periodId: null, userId, userName: mgr?.userName ?? '', companyId, month, mode, fixedPct: mode === 'fixed' ? mgr?.fixedPct ?? DEFAULT_FIXED_PCT : null, tiers: mode === 'fixed' ? [] : tiers, sites,
       revenue: r2(sites.reduce((a, s) => a + s.revenue, 0)), ads: r2(sites.reduce((a, s) => a + s.ads, 0)), profit, profitUsd,
-      negatives: r2(sites.filter((s) => s.result < 0).reduce((a, s) => a + s.result, 0)), profitTier, tierCurrency: rule.tier_currency, pct, calculated, calculatedUsd: r2(toUsd(calculated)),
+      negatives: r2(sites.filter((s) => s.result < 0).reduce((a, s) => a + s.result, 0)), profitTier, tierCurrency: mode === 'fixed' ? DEFAULT_TIER_CURRENCY : tierCurrency, pct, calculated, calculatedUsd: r2(toUsd(calculated)),
       adjustments: 0, adjustmentNote: null, approved: null, status: month >= t.slice(0, 7) ? 'open' : 'to_approve', frozen: false, liveDiff: null, incomplete,
       approvedBy: null, approvedAt: null, paidAt: null, paidNote: null,
     };
@@ -207,14 +209,14 @@ export async function commissionsFor(companyIds: string[], month: string, opts: 
       const b = per.base;
       lines.push({
         ...live, ...b, sites: (b.sites ?? []).map((s) => ({ site: s.site, sharePct: s.sharePct ?? 100, revenue: s.revenue ?? 0, ads: s.ads ?? 0, result: s.result ?? 0 })),
-        mode: b.mode ?? 'progressive', fixedPct: b.fixedPct ?? null, ads: b.ads ?? 0, profitUsd: b.profitUsd ?? 0, calculatedUsd: b.calculatedUsd ?? 0,
+        mode: b.mode ?? 'progressive', fixedPct: b.fixedPct ?? null, tiers: b.tiers ?? [], ads: b.ads ?? 0, profitUsd: b.profitUsd ?? 0, calculatedUsd: b.calculatedUsd ?? 0,
         periodId: per.id, userName: b.userName || live.userName, frozen: true, calculated: per.calculated, adjustments: per.adjustments, adjustmentNote: per.adjustment_note,
         approved: per.approved_amount, status: per.paid_at ? 'paid' : 'approved', approvedBy: per.approved_by, approvedAt: per.approved_at, paidAt: per.paid_at, paidNote: per.paid_note,
         liveDiff: sites.length && Math.abs(live.calculated - per.calculated) >= 0.01 ? r2(live.calculated - per.calculated) : null,
       });
     } else lines.push(live);
   }
-  return { lines: lines.sort((a, b) => b.profit - a.profit), sites: res.sites, rule };
+  return { lines: lines.sort((a, b) => b.profit - a.profit), sites: res.sites };
 }
 
 export async function audit(userId: string | null, companyId: string | null, action: string, entity: string, entityId: string | null, before: unknown, after: unknown, note?: string) {

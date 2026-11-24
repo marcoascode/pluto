@@ -82,6 +82,8 @@ export interface Comparison {
 
 /* ---------- auth ---------- */
 export type CommissionMode = 'progressive' | 'fixed';
+/** Faixa da comissão progressiva: a partir de `from` (ROI do mês), `pct`%. */
+export interface CommissionTier { from: number; pct: number }
 export interface User {
   id: string;
   name: string;
@@ -98,6 +100,9 @@ export interface User {
   /** 0.18.8: Gestor — comissão progressiva (faixas do painel de Comissões) ou fixa (commissionPct %). */
   commissionMode?: CommissionMode;
   commissionPct?: number | null;
+  /** 0.18.10: faixas da progressiva do próprio gestor (na moeda commissionTierCurrency) */
+  commissionTiers?: CommissionTier[] | null;
+  commissionTierCurrency?: Currency;
   /** Módulos que o usuário pode abrir (ver Capability). SuperAdmin recebe todos. */
   permissions?: Capability[];
 }
@@ -489,6 +494,8 @@ export interface CreateUserRequest {
   domains?: DomainLink[]; // só Gestor
   commissionMode?: CommissionMode; // só Gestor
   commissionPct?: number | null;
+  commissionTiers?: CommissionTier[] | null;
+  commissionTierCurrency?: Currency;
 }
 export interface UpdateUserRequest {
   name?: string;
@@ -499,6 +506,8 @@ export interface UpdateUserRequest {
   status?: 'active' | 'disabled';
   commissionMode?: CommissionMode;
   commissionPct?: number | null;
+  commissionTiers?: CommissionTier[] | null;
+  commissionTierCurrency?: Currency;
 }
 export interface CreateUserResponse {
   user: User;
