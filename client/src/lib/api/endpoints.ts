@@ -106,7 +106,7 @@ export const adminApi = {
   metaTagAudit: (days = 7) => api.get<T.MetaTagAuditResponse>('/admin/utm-audit/meta', { days }),
   unmappedCampaigns: (platform: T.Platform = 'meta', days = 30) => api.get<T.UnmappedCampaignsResponse>('/admin/campaigns/unmapped', { platform, days }),
   setCampaignDomain: (a: { id: string; platform: T.Platform; domain: string | null }) => api.patch<T.SetCampaignDomainResponse>(`/admin/campaigns/${encodeURIComponent(a.id)}`, { platform: a.platform, domain: a.domain }),
-  createDomain: (hostname: string) => api.post<T.Domain>('/admin/domains', { hostname }),
+  createDomain: (a: string | { hostname: string; squadId?: string | null }) => api.post<T.Domain>('/admin/domains', typeof a === 'string' ? { hostname: a } : a),
   updateDomain: (hostname: string, patch: T.DomainInput) => api.patch<T.Domain>(`/admin/domains/${encodeURIComponent(hostname)}`, patch),
   /** 0.17: mostra a senha do WordPress (cada leitura fica registrada no servidor) */
   revealWpPassword: (hostname: string) => api.post<{ user: string | null; password: string }>(`/admin/domains/${encodeURIComponent(hostname)}/wp-password`, {}),

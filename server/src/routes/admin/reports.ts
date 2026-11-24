@@ -1,6 +1,7 @@
 /**
  * 0.18.6 · Administração → Relatórios (só Admin e SuperAdmin: o adminRouter já aplica requireAdmin).
- * Métricas de TODAS as contas conectadas ao painel, sem o escopo de Squad/Empresa das telas de gestor.
+ * Métricas das contas conectadas ao painel. SuperAdmin: todas as contas e domínios. Admin (0.18.11): só as linhas dos
+ * domínios das Empresas em que é sócio, e só as contas que aparecem nesses domínios.
  *
  *   GET /admin/reports/:platform/accounts                         contas da plataforma (para o seletor)
  *   GET /admin/reports/:platform?mode=account&from&to&accounts=   por conta: dia × conta (só as contas escolhidas)
@@ -15,6 +16,7 @@ import { z } from 'zod';
 import { q } from '../../db.js';
 import { HttpError, parse } from '../../lib/http.js';
 import { isIsoDate, today } from '../../lib/dates.js';
+import { adminScope } from '../../auth/scope.js';
 
 export const reportsAdminRouter = Router();
 
@@ -65,14 +67,18 @@ const ACCOUNT_JOIN: Record<Platform, string> = {
 };
 const ACCOUNT_COL: Record<Platform, string> = { meta: 'c.account_id', 'google-ads': 'c.account_id', gam: 'd.gam_account_id' };
 
-async function accounts(p: Platform) {
+/** Contas da plataforma. Com `domainIds` (Admin): só as ligadas a esses domínios (vínculo, campanha ou rede do Ad Manager). */
+async function accounts(p: Platform, domainIds: string[] | null = null) {
+  const only = domainIds ? (p === 'gam'
+    ? 'AND id IN (SELECT gam_account_id FROM domains WHERE id = ANY($2::bigint[]))'
+    : 'AND (id IN (SELECT account_id FROM domain_accounts WHERE domain_id = ANY($2::bigint[])) OR id IN (SELECT account_id FROM campaigns WHERE domain_id = ANY($2::bigint[])))') : '';
   return q<{ id: string; name: string; externalId: string; currency: string; imported: boolean; status: string }>(`
-    SELECT id::text, name, external_id AS "externalId", currency, imported, status FROM integration_accounts WHERE provider = $1 ORDER BY name, id`, [p]);
+    SELECT id::text, name, external_id AS "externalId", currency, imported, status FROM integration_accounts WHERE provider = $1 ${only} ORDER BY name, id`, domainIds ? [p, domainIds] : [p]);
 }
 
 reportsAdminRouter.get('/reports/:platform/accounts', async (req, res) => {
   const p = parse(PLATFORM, req.params.platform);
-  res.json({ platform: p, currency: p === 'gam' ? 'USD' : 'BRL', accounts: await accounts(p) });
+  res.json({ platform: p, currency: p === 'gam' ? 'USD' : 'BRL', accounts: await accounts(p, (await adminScope(req))?.domainIds ?? null) });
 });
 
 reportsAdminRouter.get('/reports/:platform', async (req, res) => {
@@ -83,7 +89,8 @@ reportsAdminRouter.get('/reports/:platform', async (req, res) => {
   const to = isIsoDate(req.query.to) ? req.query.to : t;
   if (from > to) throw new HttpError(422, 'invalid_period', '"from" depois de "to".');
   if (Date.parse(to) - Date.parse(from) > 400 * 864e5) throw new HttpError(422, 'period_too_long', 'Período máximo de 400 dias.');
-  const all = await accounts(p);
+  const doms = (await adminScope(req))?.domainIds ?? null;
+  const all = await accounts(p, doms);
   const picked = String(req.query.accounts ?? '').split(',').map((x) => x.trim()).filter((x) => /^\d+$/.test(x));
   const ids = mode === 'account' ? all.filter((a) => picked.includes(a.id)).map((a) => a.id) : all.map((a) => a.id);
   const currency = p === 'gam' ? 'USD' : 'BRL';
@@ -91,8 +98,8 @@ reportsAdminRouter.get('/reports/:platform', async (req, res) => {
 
   const acc = ACCOUNT_COL[p];
   const base = `FROM daily_metrics m ${ACCOUNT_JOIN[p]}
-     WHERE m.source = $1 AND m.date BETWEEN $2::date AND $3::date AND ${acc} = ANY($4::bigint[])`;
-  const params = [p, from, to, ids];
+     WHERE m.source = $1 AND m.date BETWEEN $2::date AND $3::date AND ${acc} = ANY($4::bigint[])${doms ? ' AND m.domain_id = ANY($5::bigint[])' : ''}`;
+  const params: unknown[] = doms ? [p, from, to, ids, doms] : [p, from, to, ids];
   const [grouped, tot] = await Promise.all([
     q<Partial<Sums> & { accountId: string; date: string | null }>(mode === 'account'
       ? `SELECT ${acc}::text AS "accountId", m.date::text AS date, ${SUMS_SQL} ${base} GROUP BY 1, 2 ORDER BY 2 DESC, 1`

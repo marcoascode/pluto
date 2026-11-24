@@ -92,7 +92,7 @@ export const finMock = { conv: (a: number, s: T.Currency, d: T.Currency, date: s
 const applies = (c: T.FinanceCost, m: string) => (c.recurrence === 'once' ? c.startMonth === m : c.startMonth <= m && (!c.endMonth || m <= c.endMonth));
 
 export function financeCompanies(u: T.User) {
-  const adm = u.role === 'admin' || u.role === 'superadmin';
+  const adm = u.role === 'superadmin';   // 0.18.11: Admin só nas Empresas em que é sócio
   const list = COMPANIES.filter((c) => adm || c.partnerIds.includes(u.id)).map((c) => ({ id: c.id, name: c.name }));
   if (!adm && !list.length) throw new ApiError(403, 'forbidden_finance', 'O Finance é só para Admin e sócios das Empresas.');
   return list;

@@ -45,7 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const can = (cap: Capability) => !!user && (user.role === 'superadmin' || !!user.permissions?.includes(cap));
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
   // Finance: Admin/SuperAdmin e sócios de alguma Empresa (o servidor confere de novo)
-  const canFinance = isAdmin || !!user?.companyIds?.length;
+  const canFinance = user?.role === 'superadmin' || !!user?.companyIds?.length;   // 0.18.11: Admin só nas Empresas em que é sócio
   return <Ctx.Provider value={{ user, loading, isAdmin, isSuperAdmin: user?.role === 'superadmin', canMetaCampaigns: !!user?.canCreateMetaCampaigns, canFinance, can, login, logout, refresh }}>{children}</Ctx.Provider>;
 }
 export function useAuth() {

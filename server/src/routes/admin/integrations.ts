@@ -6,6 +6,7 @@ import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { encrypt } from '../../lib/crypto.js';
 import { requireSuperAdmin } from '../../auth/session.js';
+import { adminScope } from '../../auth/scope.js';
 import { refreshRates, latest } from '../../services/fx.js';
 import { runProvider } from '../../services/sync/index.js';
 
@@ -67,7 +68,12 @@ const accBody = z.object({
 
 integrationsRouter.get('/integrations/:provider/accounts', async (req, res) => {
   const p = parse(provider, req.params.provider);
-  res.json({ accounts: (await q<AccRow>(`${ACC_SQL} WHERE a.provider = $1 GROUP BY a.id ORDER BY a.name`, [p])).map(toAccount) });
+  const list = (await q<AccRow>(`${ACC_SQL} WHERE a.provider = $1 GROUP BY a.id ORDER BY a.name`, [p])).map(toAccount);
+  // 0.18.11: o Admin não vê os domínios de Empresas das quais não é sócio
+  const sc = await adminScope(req);
+  if (!sc) return res.json({ accounts: list });
+  const hosts = new Set((await q<{ hostname: string }>('SELECT hostname FROM domains WHERE id = ANY($1::bigint[])', [sc.domainIds])).map((r) => r.hostname));
+  res.json({ accounts: list.map((a) => ({ ...a, domains: a.domains.filter((d) => hosts.has(d)) })) });
 });
 
 integrationsRouter.post('/integrations/:provider/accounts', async (req, res) => {

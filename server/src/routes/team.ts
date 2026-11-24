@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { one, q, tx } from '../db.js';
 import { conflict, HttpError, notFound, parse } from '../lib/http.js';
 import { isAdminRole } from '../auth/permissions.js';
-import { allowedDomains } from '../auth/scope.js';
+import { adminScope, adminVisibleUserIds, allowedDomains, assertAdminUser } from '../auth/scope.js';
 import { USER_SQL } from '../auth/session.js';
 import { resyncAccounts, saveGestorLinks, type LinkScope } from '../services/gestorLinks.js';
 
@@ -20,7 +20,13 @@ export const teamRouter = Router();
 
 async function scopeOf(req: Request): Promise<LinkScope | null> {
   const u = req.user!;
-  if (isAdminRole(u.role)) return null;
+  if (u.role === 'superadmin') return null;
+  // 0.18.11: Admin = domínios das Empresas em que é sócio, com qualquer conta de anúncios
+  if (isAdminRole(u.role)) {
+    const sc = (await adminScope(req))!;
+    const acc = await q<{ id: string }>(`SELECT id::text FROM integration_accounts WHERE provider IN ('google-ads', 'meta')`);
+    return { domainIds: new Set(sc.domainIds), accountIds: new Set(acc.map((x) => x.id)) };
+  }
   if (u.role !== 'gerente') throw new HttpError(403, 'forbidden', 'Só Gerente, Admin ou SuperAdmin atribuem domínios e contas aos gestores.');
   const doms = (await allowedDomains(req)).ids;
   const acc = await q<{ id: string }>(`
@@ -41,7 +47,8 @@ teamRouter.get('/', async (req, res) => {
   ]);
   const hosts = new Set(domains.map((d) => d.hostname));
   // Gerente: gestores sem domínio ou com algum domínio do alcance dele; vê só os vínculos desses domínios
-  const list = users.filter((g) => !sc || !g.domains.length || g.domains.some((d) => hosts.has(d.domain)));
+  const vis = await adminVisibleUserIds(req);   // 0.18.12: Admin só os usuários que cadastrou ou dos Squads das Empresas dele
+  const list = users.filter((g) => (!vis || vis.has(g.id)) && (!sc || !g.domains.length || g.domains.some((d) => hosts.has(d.domain))));
   res.json({
     viewer: { role: req.user!.role },
     gestores: list.map((g) => ({ id: g.id, name: g.name, email: g.email, status: g.status,
@@ -57,6 +64,7 @@ teamRouter.put('/gestores/:id', async (req, res) => {
   const sc = await scopeOf(req);
   const uid = parse(z.string().regex(/^\d+$/, 'id inválido'), req.params.id);
   const b = parse(body, req.body);
+  await assertAdminUser(req, uid);
   const g = await one<{ role: string }>('SELECT role FROM users WHERE id = $1', [uid]);
   if (!g) throw notFound('Usuário não encontrado.');
   if (g.role !== 'gestor') throw conflict('not_gestor', 'Só Gestores recebem domínios e contas.');

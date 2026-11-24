@@ -15,7 +15,7 @@ export default function UtmsPage() {
   if (!data) return <PageSkeleton />;
   return (
     <>
-      <PageHead title="Attribution / UTMs" sub="Uma estrutura padrão por plataforma. Use exatamente estes parâmetros em todas as campanhas." />
+      <PageHead title="Atribuição / UTMs" sub="Uma estrutura padrão por plataforma. Use exatamente estes parâmetros em todas as campanhas." />
       <Grid container spacing={1.75}>{(['google', 'meta'] as const).map((k) => (
         <Grid key={k} size={{ xs: 12, md: 6 }}><Card sx={{ height: '100%' }}>
           <CardHeader title={k === 'google' ? 'Google Ads UTM' : 'Meta Ads UTM'} subheader={k === 'google' ? 'Sufixo do URL final (nível da conta ou campanha)' : 'Parâmetros de URL do anúncio'} />

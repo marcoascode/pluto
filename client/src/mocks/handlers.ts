@@ -25,7 +25,7 @@ const CAPS: T.CapabilityDef[] = [
   { key: 'campaigns.google.view', label: 'Google Ads', group: 'Visualização', adminOnly: false, superAdminOnly: false },
   { key: 'campaigns.meta.view', label: 'Meta Ads', group: 'Visualização', adminOnly: false, superAdminOnly: false },
   { key: 'gam.view', label: 'Google Ad Manager', group: 'Visualização', adminOnly: false, superAdminOnly: false },
-  { key: 'attribution.view', label: 'Attribution Health', group: 'Visualização', adminOnly: false, superAdminOnly: false },
+  { key: 'attribution.view', label: 'Diagnóstico da atribuição', group: 'Visualização', adminOnly: false, superAdminOnly: false },
   { key: 'utm.debug', label: 'UTM Debugger', group: 'Visualização', adminOnly: false, superAdminOnly: false },
   { key: 'admin.integrations', label: 'Contas das integrações (cadastrar, editar, importar, excluir)', group: 'Administração', adminOnly: true, superAdminOnly: false },
   { key: 'admin.integrations.connect', label: 'Conectar integrações (OAuth) e editar a frequência do sync', group: 'Administração', adminOnly: true, superAdminOnly: true },
@@ -83,7 +83,7 @@ function visibleCompanies(u: T.User) {
 }
 function scopeOf(u: T.User, company = REQ_COMPANY): Scope {
   let doms: Set<string>; let filter: Scope['filter'] = null;
-  if (isAdm(u)) doms = new Set([...DOMAINS.map((d) => d.hostname), UNKNOWN_DOMAIN]);
+  if (u.role === 'superadmin') doms = new Set([...DOMAINS.map((d) => d.hostname), UNKNOWN_DOMAIN]);
   else {
     const full = new Set(SQUADS.filter((s) => (s.companyId && COMPANIES.find((c) => c.id === s.companyId)?.partnerIds.includes(u.id)) || (u.role === 'gerente' && u.squadIds.includes(s.id))).flatMap((s) => s.domains).filter(activeDom));
     const restricted = u.role === 'gestor' ? u.domains.filter((l) => activeDom(l.domain) && !full.has(l.domain)) : [];

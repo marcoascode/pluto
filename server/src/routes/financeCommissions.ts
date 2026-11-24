@@ -24,6 +24,7 @@ import { HttpError, notFound, parse } from '../lib/http.js';
 import { today } from '../lib/dates.js';
 import { isAdminRole } from '../auth/permissions.js';
 import { listSites, normSite } from '../services/financeSources.js';
+import { adminVisibleUserIds } from '../auth/scope.js';
 import { audit, commissionsFor, loadAssignments, r2 } from '../services/financeResults.js';
 
 export const financeCommissionsRouter = Router();
@@ -38,7 +39,9 @@ const prevMonth = (m: string) => { const [y, mo] = m.split('-').map(Number); ret
 interface Viewer { userId: string; role: 'admin' | 'partner' | 'manager'; companies: { id: string; name: string }[] }
 async function viewer(req: Request, allowManager = false): Promise<Viewer> {
   const u = req.user!;
-  if (isAdminRole(u.role)) return { userId: u.id, role: 'admin', companies: await q('SELECT id::text, name FROM companies ORDER BY name') };
+  if (u.role === 'superadmin') return { userId: u.id, role: 'admin', companies: await q('SELECT id::text, name FROM companies ORDER BY name') };
+  // 0.18.11: Admin aprova/paga, mas só nas Empresas em que é sócio
+  if (isAdminRole(u.role)) return { userId: u.id, role: 'admin', companies: await q('SELECT c.id::text, c.name FROM companies c JOIN company_users cu ON cu.company_id = c.id WHERE cu.user_id = $1 ORDER BY c.name', [u.id]) };
   const own = await q<{ id: string; name: string }>('SELECT c.id::text, c.name FROM companies c JOIN company_users cu ON cu.company_id = c.id WHERE cu.user_id = $1 ORDER BY c.name', [u.id]);
   if (own.length) return { userId: u.id, role: 'partner', companies: own };
   if (allowManager) {
@@ -161,7 +164,8 @@ financeCommissionsRouter.get('/assignments', async (req, res) => {
   const ids = sel.map((c) => c.id);
   const who = typeof req.query.user === 'string' && /^\d+$/.test(req.query.user) ? req.query.user : undefined;
   const [asg, sites] = await Promise.all([loadAssignments(ids, who), sitesOf(ids)]);
-  const managers = v.role === 'admin' ? await q<{ id: string; name: string; role: string }>(`SELECT id::text, name, role FROM users ORDER BY name`) : [];
+  const vis = await adminVisibleUserIds(req);   // 0.18.12
+  const managers = v.role === 'admin' ? (await q<{ id: string; name: string; role: string }>(`SELECT id::text, name, role FROM users WHERE role = 'gestor' ORDER BY name`)).filter((m) => !vis || vis.has(m.id)) : [];
   res.json({
     viewer: { role: v.role }, companies: v.companies, sites: sites.sites, managers,
     assignments: asg.map((a) => ({ id: a.id, userId: a.user_id, userName: a.user_name, companyId: a.company_id, site: a.site, startDate: a.start_date, endDate: a.end_date, sharePct: a.share_pct, note: a.note })),

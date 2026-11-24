@@ -25,7 +25,7 @@ export default function AttributionHealthPage() {
   );
   return (
     <>
-      <PageHead title="Attribution Health" sub="Diagnóstico da atribuição. Receita sem UTM nem rastreador nunca é distribuída entre campanhas; ela fica aqui, separada." right={<TrackerCodeButton />} />
+      <PageHead title="Diagnóstico da atribuição" sub="Receita sem UTM nem rastreador nunca é distribuída entre campanhas; ela fica aqui, separada." right={<TrackerCodeButton />} />
       <Grid container spacing={1.75} sx={{ mb: 1.75 }}>
         {kpi('Attribution Rate', pct(m.attributionRate), undefined, <Box sx={{ mt: 0.5 }}><Tag tone={tone(r)}>{r >= 95 ? 'Confiável' : r >= 90 ? 'Atenção' : 'Verificar UTMs'}</Tag></Box>)}
         {kpi('Revenue total', <Money v={m.revenue} cur="USD" />)}{kpi('Atribuída', <Money v={m.attributedRevenue} cur="USD" />, p.pos)}{kpi('Não atribuída', <Money v={m.unattributedRevenue} cur="USD" />, p.warn)}
