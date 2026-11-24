@@ -1,5 +1,6 @@
 /**
- * Finance 0.14 — Comissões dos gestores (a partir do Caixa Empresa), sites, vínculos gestor × site e regra.
+ * Finance — Comissões dos gestores (0.18.8: ROI dos sites do gestor pelos vínculos de Usuários & Squads × % da modalidade
+ * do gestor: progressiva pelas faixas do painel ou fixa pelo cadastro), sites e faixas da comissão progressiva.
  * Fica separado de lib/finance.ts para a atualização não mexer em arquivos compartilhados do dash.
  */
 import { api } from '@/lib/api/client';
@@ -27,22 +28,29 @@ export const STATUS: Record<CommissionStatus, { label: string; color: string }> 
   approved: { label: 'Aprovada · a pagar', color: '#5b9bff' },
   paid: { label: 'Paga', color: '#34d399' },
 };
-export interface CommissionSite { site: string; sharePct: number; coverage: number; revenue: number; costs: number; result: number; base: number }
+export type CommissionMode = 'progressive' | 'fixed';
+/** ROI do gestor no site: receita (parte dele, R$) − despesas das contas dele no site (R$) */
+/** source: 'rateio' = rateio do domínio · 'periodo' = período de "Gestores e sites" · 'misto' = os dois no mês */
+export type ShareSource = 'rateio' | 'periodo' | 'misto';
+export interface CommissionSite { site: string; sharePct: number; revenue: number; ads: number; result: number; source?: ShareSource; days?: number }
 export interface CommissionLine {
   periodId: string | null; userId: string; userName: string; companyId: string; month: string;
-  sites: CommissionSite[]; revenue: number; costs: number; profit: number; negatives: number; profitTier: number; tierCurrency: 'BRL' | 'USD' | 'EUR';
-  pct: number; calculated: number; adjustments: number; adjustmentNote: string | null; approved: number | null;
+  mode: CommissionMode; fixedPct: number | null;
+  sites: CommissionSite[]; revenue: number; ads: number; profit: number; profitUsd: number; negatives: number; profitTier: number; tierCurrency: 'BRL' | 'USD' | 'EUR';
+  pct: number; calculated: number; calculatedUsd: number; adjustments: number; adjustmentNote: string | null; approved: number | null;
   status: CommissionStatus; frozen: boolean; liveDiff: number | null; incomplete: string[];
   approvedBy: string | null; approvedAt: string | null; paidAt: string | null; paidNote: string | null;
 }
-/** 0.15: revenue = receita líquida do dash · ads = anúncios do dash · otherExpenses = outros gastos do Caixa com o site */
-export interface SiteCard { companyId: string; site: string; month: string; revenue: number; ads?: number; otherExpenses?: number; expenses: number; siteCosts: number; costs: number; result: number; roi: number | null; managers: { userId: string; userName: string; sharePct: number; auto?: boolean }[] }
+export interface SiteManager { userId: string; userName: string; sharePct: number; revenue: number; ads: number; result: number; source: ShareSource; days: number }
+/** revenue = receita líquida (R$, cotação do ROI) · ads = despesas das contas vinculadas aos gestores · allAds = despesa total do site */
+export interface SiteCard { companyId: string; site: string; month: string; revenue: number; revenueUsd: number; ads: number; result: number; roi: number | null; allAds: number; managers: SiteManager[]; equalSplit?: boolean }
 export interface CommissionsResponse {
   viewer: { role: ViewerRole; userId: string }; month: string; months: string[]; companies: Company[]; managers: { id: string; name: string }[];
   rule: { name: string; tiers: Tier[]; tierCurrency: 'BRL' | 'USD' | 'EUR' };
   lines: CommissionLine[]; sites: SiteCard[];
-  totals: { revenue: number; costs: number; result: number; commissions: number; toPay: number; paid: number };
+  totals: { revenue: number; ads: number; result: number; resultUsd: number; commissions: number; toPay: number; paid: number };
 }
+/** Período "Gestores e sites": quem responde por um site, com datas e rateio (editado na edição do gestor em Usuários & Squads). */
 export interface Assignment { id: string; userId: string; userName: string; companyId: string; site: string; startDate: string; endDate: string | null; sharePct: number; note: string | null }
 export interface AssignmentsResponse { viewer: { role: ViewerRole }; companies: Company[]; sites: Site[]; managers: { id: string; name: string; role: string }[]; assignments: Assignment[] }
 
@@ -52,19 +60,25 @@ export const commissionsApi = {
   paid: (a: { id: string; date: string; note: string | null }) => api.post<unknown>(`/finance/commissions/${a.id}/paid`, { date: a.date, note: a.note }),
   unpaid: (id: string) => api.del<void>(`/finance/commissions/${id}/paid`),
   reopen: (a: { id: string; reason: string }) => api.post<void>(`/finance/commissions/${a.id}/reopen`, { reason: a.reason }),
-  assignments: (q: { company?: string }) => get<AssignmentsResponse>('/finance/assignments', q),
+  assignments: (q: { company?: string; user?: string }) => get<AssignmentsResponse>('/finance/assignments', q),
   saveAssignment: ({ id, ...b }: Omit<Assignment, 'id' | 'userName'> & { id?: string }) => (id ? api.put<{ id: string }>(`/finance/assignments/${id}`, b) : api.post<{ id: string }>('/finance/assignments', b)),
   removeAssignment: (id: string) => api.del<void>(`/finance/assignments/${id}`),
   saveRule: (b: { name: string; tiers: Tier[]; tierCurrency: 'BRL' | 'USD' | 'EUR' }) => api.put<unknown>('/finance/commission-rule', b),
 };
 
+export const usd = (v: number | null | undefined) => (v == null || !isFinite(v) ? '—' : `US$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 export const brl = (v: number | null | undefined) => (v == null || !isFinite(v) ? '—' : `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 export const brl0 = (v: number | null | undefined) => (v == null || !isFinite(v) ? '—' : `R$ ${v.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`);
 export const pctFmt = (v: number | null | undefined, d = 1) => (v == null || !isFinite(v) ? '—' : `${v.toLocaleString('pt-BR', { maximumFractionDigits: d })}%`);
 export const parseNum = (s: string) => Number(String(s).trim().replace(/\s/g, '').replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.'));
-/** "Até US$ 20 mil 10% · acima de US$ 20 mil 12% · a partir de US$ 40 mil 15%" */
+/** "até US$ 19.999,99: 10% · US$ 20.000,00 a US$ 39.999,99: 12% · a partir de US$ 40.000,00: 15%" */
 export function tiersText(tiers: Tier[], cur: string) {
   const t = [...tiers].sort((a, b) => a.from - b.from);
-  const k = (v: number) => `${cur === 'USD' ? 'US$' : cur === 'EUR' ? '€' : 'R$'} ${v >= 1000 ? `${(v / 1000).toLocaleString('pt-BR')} mil` : v}`;
-  return t.map((x, i) => (i === 0 ? `até ${k(t[1]?.from ?? 0)} ${pctFmt(x.pct)}` : i === t.length - 1 && i > 1 ? `a partir de ${k(x.from)} ${pctFmt(x.pct)}` : `acima de ${k(x.from)} ${pctFmt(x.pct)}`)).join(' · ');
+  const sym = cur === 'USD' ? 'US$' : cur === 'EUR' ? '€' : 'R$';
+  const k = (v: number) => `${sym} ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return t.map((x, i) => {
+    const next = t[i + 1];
+    const range = !next ? (i === 0 ? 'qualquer ROI' : `a partir de ${k(x.from)}`) : i === 0 ? `até ${k(next.from - 0.01)}` : `${k(x.from)} a ${k(next.from - 0.01)}`;
+    return `${range}: ${pctFmt(x.pct)}`;
+  }).join(' · ');
 }

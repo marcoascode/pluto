@@ -1,4 +1,4 @@
-import { Alert, Avatar, AvatarGroup, Box, Button, Card, CardContent, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, ListItemText, MenuItem, Snackbar, Stack, Switch, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Avatar, AvatarGroup, Box, Button, Card, CardContent, CardHeader, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Grid, IconButton, InputAdornment, ListItemText, MenuItem, Snackbar, Stack, Switch, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
@@ -6,6 +6,10 @@ import ForwardToInboxOutlinedIcon from '@mui/icons-material/ForwardToInboxOutlin
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import ApartmentRoundedIcon from '@mui/icons-material/ApartmentRounded';
 import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import EventNoteOutlinedIcon from '@mui/icons-material/EventNoteOutlined';
+import { teamApi, type TeamGestor, type TeamResponse } from '@/lib/team';
+import { GestorPeriodsDialog } from './GestorPeriods';
 import { useAuth } from '@/context/AuthContext';
 import { ROLE_HELP, ROLE_LABEL, roleTone } from '@/lib/roles';
 import { useAdminCompanies, useAdminDomains, useAdminMutation, useIntegrationAccounts, usePermissions, useSquads, useUsers } from '@/hooks/queries';
@@ -14,7 +18,7 @@ import { ApiError } from '@/lib/api/client';
 import { qk } from '@/lib/api/keys';
 import { ConfirmDialog, ErrorBox, PageHead, PageSkeleton, Tag } from '@/components/ui/States';
 import { initials } from '@/lib/format';
-import type { Capability, Company, DomainLink, Role, User } from '@/types/api';
+import type { Capability, CommissionMode, Company, DomainLink, Role, User } from '@/types/api';
 
 /* =====================================================================
    Usuários & Squads
@@ -28,6 +32,8 @@ const INV = [qk.users, qk.squads, qk.adminCompanies, qk.adminDomains, qk.myCompa
 
 export default function UsersSquadsPage() {
   const [tab, setTab] = useState<TabKey>('users');
+  const { isAdmin } = useAuth();
+  if (!isAdmin) return <TeamPage />;   // 0.18.9: Gerente atribui domínios e contas aos gestores do alcance dele
   return (
     <>
       <PageHead title="Usuários & Squads" sub="Gestor = domínio + contas. Gerente = vários Squads. Empresa = sócios + Squads." />
@@ -63,7 +69,7 @@ function UsersTab() {
     if (u.role === 'admin' || u.role === 'superadmin') return <Typography variant="caption">Todos os domínios</Typography>;
     if (u.role === 'gerente') return u.squadIds.length ? <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{u.squadIds.map((id) => <Tag key={id}>{sq?.squads.find((s) => s.id === id)?.name ?? id}</Tag>)}</Stack> : <Typography variant="caption">Só as Empresas dele</Typography>;
     return u.domains.length
-      ? <Tooltip title={u.domains.map((d) => `${d.domain} (${d.googleAccounts.length} Google · ${d.metaAccounts.length} Meta)`).join('\n')}><Typography variant="body2">{u.domains.length === 1 ? u.domains[0].domain : `${u.domains.length} domínios`}<Typography component="span" variant="caption"> · {u.domains.reduce((a, d) => a + d.googleAccounts.length + d.metaAccounts.length, 0)} contas</Typography></Typography></Tooltip>
+      ? <Tooltip title={u.domains.map((d) => `${d.domain} (${d.googleAccounts.length} Google · ${d.metaAccounts.length} Meta)`).join('\n')}><Typography variant="body2">{u.domains.length === 1 ? u.domains[0].domain : `${u.domains.length} domínios`}<Typography component="span" variant="caption"> · {u.domains.reduce((a, d) => a + d.googleAccounts.length + d.metaAccounts.length, 0)} contas · comissão {u.commissionMode === 'fixed' ? `fixa ${String(u.commissionPct ?? '').replace('.', ',')}%` : 'progressiva'}</Typography></Typography></Tooltip>
       : <Tag tone="warn">Sem domínio</Tag>;
   };
   return (
@@ -137,18 +143,26 @@ function Multi({ label, value, options, onChange, helper, disabled }: { label: s
   );
 }
 
-/** Gestor: cada linha = domínio + contas Google Ads + contas Meta Ads que ele usa nesse domínio. */
-function DomainLinksEditor({ value, onChange }: { value: DomainLink[]; onChange: (v: DomainLink[]) => void }) {
+/** Gestor: cada linha = domínio + contas Google Ads + contas Meta Ads que ele usa nesse domínio.
+ *  0.18.8: é o ÚNICO lugar onde usuário × domínio × conta são ligados. A despesa dessas contas no domínio é a que sai da
+ *  receita do site no ROI do gestor (e na comissão); o site em que o sync põe a despesa da conta vem daqui. */
+interface LinkOptions { domains: { hostname: string; active: boolean }[]; google: { id: string; name: string; externalId: string }[]; meta: { id: string; name: string; externalId: string }[] }
+/** Admin: todos os domínios e contas. */
+function AdminLinksEditor({ value, onChange }: { value: DomainLink[]; onChange: (v: DomainLink[]) => void }) {
   const { data: doms } = useAdminDomains();
   const { data: ga } = useIntegrationAccounts('google-ads');
   const { data: ma } = useIntegrationAccounts('meta');
-  const opts = (list?: { id: string; name: string; externalId: string }[]) => (list ?? []).map((a) => ({ id: a.id, name: a.name, sub: a.externalId }));
-  const free = (doms?.domains ?? []).filter((d) => !d.technical && (d.active || value.some((v) => v.domain === d.hostname)));
+  const options: LinkOptions = { domains: (doms?.domains ?? []).filter((d) => !d.technical), google: ga?.accounts ?? [], meta: ma?.accounts ?? [] };
+  return <DomainLinksEditor value={value} onChange={onChange} options={options} />;
+}
+export function DomainLinksEditor({ value, onChange, options }: { value: DomainLink[]; onChange: (v: DomainLink[]) => void; options: LinkOptions }) {
+  const opts = (list: { id: string; name: string; externalId: string }[]) => list.map((a) => ({ id: a.id, name: a.name, sub: a.externalId }));
+  const free = options.domains.filter((d) => d.active || value.some((v) => v.domain === d.hostname));
   const set = (i: number, patch: Partial<DomainLink>) => onChange(value.map((v, j) => (j === i ? { ...v, ...patch } : v)));
   return (
     <Stack spacing={1.25}>
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="overline">Domínios que gere</Typography>
+        <Box><Typography variant="overline">Domínios que gere</Typography><Typography variant="caption" component="div">As despesas das contas escolhidas saem da receita do domínio no ROI e na comissão do gestor. Mudanças valem a partir de hoje.</Typography></Box>
         <Button size="small" startIcon={<AddRoundedIcon />} disabled={!free.some((d) => !value.some((v) => v.domain === d.hostname))}
           onClick={() => { const d = free.find((x) => !value.some((v) => v.domain === x.hostname)); if (d) onChange([...value, { domain: d.hostname, googleAccounts: [], metaAccounts: [] }]); }}>Adicionar domínio</Button>
       </Stack>
@@ -162,8 +176,8 @@ function DomainLinksEditor({ value, onChange }: { value: DomainLink[]; onChange:
               <Tooltip title="Tirar este domínio"><IconButton size="small" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label={`Tirar ${l.domain}`}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Tooltip>
             </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-              <Multi label="Contas Google Ads" value={l.googleAccounts} options={opts(ga?.accounts)} onChange={(v) => set(i, { googleAccounts: v })} />
-              <Multi label="Contas Meta Ads" value={l.metaAccounts} options={opts(ma?.accounts)} onChange={(v) => set(i, { metaAccounts: v })} />
+              <Multi label="Contas Google Ads" value={l.googleAccounts} options={opts(options.google)} onChange={(v) => set(i, { googleAccounts: v })} />
+              <Multi label="Contas Meta Ads" value={l.metaAccounts} options={opts(options.meta)} onChange={(v) => set(i, { metaAccounts: v })} />
             </Stack>
             {!l.googleAccounts.length && !l.metaAccounts.length && <Typography variant="caption" sx={{ color: 'warning.main' }}>Sem conta, o gestor não vê nenhuma campanha deste domínio.</Typography>}
           </Stack>
@@ -178,8 +192,10 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
   const { data: sq } = useSquads();
   const { data: co } = useAdminCompanies();
   const { isSuperAdmin } = useAuth();
-  const [f, setF] = useState({ name: u?.name ?? '', email: u?.email ?? '', role: u?.role ?? ('gestor' as Role), status: u?.status === 'disabled' ? 'disabled' : 'active', squadIds: u?.squadIds ?? [], companyIds: u?.companyIds ?? [], domains: u?.domains ?? [] });
+  const [f, setF] = useState({ name: u?.name ?? '', email: u?.email ?? '', role: u?.role ?? ('gestor' as Role), status: u?.status === 'disabled' ? 'disabled' : 'active', squadIds: u?.squadIds ?? [], companyIds: u?.companyIds ?? [], domains: u?.domains ?? [],
+    commissionMode: u?.commissionMode ?? ('progressive' as CommissionMode), commissionPct: u?.commissionPct != null ? String(u.commissionPct).replace('.', ',') : '' });
   const [err, setErr] = useState('');
+  const [periods, setPeriods] = useState(false);
   const create = useAdminMutation(adminApi.createUser, INV);
   const save = useAdminMutation((b: Parameters<typeof adminApi.updateUser>[1]) => adminApi.updateUser(u!.id, b), INV);
   const busy = create.isPending || save.isPending;
@@ -189,7 +205,10 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
     const dup = f.domains.find((d, i) => f.domains.findIndex((x) => x.domain === d.domain) !== i);
     if (dup) return setErr(`O domínio ${dup.domain} está repetido.`);
     setErr('');
-    const links = { squadIds: f.role === 'gerente' ? f.squadIds : [], companyIds: f.companyIds, domains: f.role === 'gestor' ? f.domains : [] };
+    const pct = Number(f.commissionPct.trim().replace(',', '.'));
+    if (f.role === 'gestor' && f.commissionMode === 'fixed' && (!Number.isFinite(pct) || pct <= 0 || pct > 100)) return setErr('Na comissão fixa, informe a porcentagem (maior que 0 e até 100%).');
+    const commission = f.role === 'gestor' ? { commissionMode: f.commissionMode, commissionPct: f.commissionMode === 'fixed' ? pct : null } : {};
+    const links = { squadIds: f.role === 'gerente' ? f.squadIds : [], companyIds: f.companyIds, domains: f.role === 'gestor' ? f.domains : [], ...commission };
     const onError = (e: unknown) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.');
     if (!u) return create.mutate({ name: f.name.trim(), email: f.email.trim().toLowerCase(), role: f.role, ...links }, { onSuccess: onCreated, onError });
     save.mutate({ name: f.name.trim(), role: f.role, ...links, ...(u.status !== 'invited' ? { status: f.status as 'active' | 'disabled' } : {}) }, { onSuccess: onClose, onError });
@@ -207,6 +226,19 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
           </TextField>
           <Multi label="Sócio das Empresas" value={f.companyIds} options={(co?.companies ?? []).map((c) => ({ id: c.id, name: c.name, sub: `${c.squadIds.length} Squad(s)` }))} onChange={(v) => setF({ ...f, companyIds: v })}
             helper="Sócio vê todos os Squads e domínios da Empresa, completos." />
+          {f.role === 'gestor' && (
+            <Stack spacing={1.25}>
+              <TextField select label="Modalidade de comissão" value={f.commissionMode} onChange={(e) => setF({ ...f, commissionMode: e.target.value as CommissionMode })} fullWidth
+                helperText={f.commissionMode === 'progressive' ? 'A % depende do ROI total do mês, pelas faixas do painel Finance → Comissões.' : 'Uma % única sobre o ROI total do mês nos sites que ele gere.'}>
+                <MenuItem value="progressive">Progressiva (faixas de ROI)</MenuItem>
+                <MenuItem value="fixed">Fixa</MenuItem>
+              </TextField>
+              {f.commissionMode === 'fixed' && (
+                <TextField label="Comissão fixa" value={f.commissionPct} onChange={(e) => setF({ ...f, commissionPct: e.target.value })} fullWidth placeholder="ex.: 12"
+                  slotProps={{ htmlInput: { inputMode: 'decimal' }, input: { endAdornment: <InputAdornment position="end">%</InputAdornment> } }} helperText="Aplicada ao ROI total do gestor no mês (sem ROI positivo, sem comissão)." />
+              )}
+            </Stack>
+          )}
           {u && u.status !== 'invited' && (
             <TextField select label="Status" value={f.status} disabled={self} onChange={(e) => setF({ ...f, status: e.target.value })} fullWidth helperText="Desativado não consegue entrar, mas o usuário continua cadastrado.">
               <MenuItem value="active">Ativo</MenuItem><MenuItem value="disabled">Desativado</MenuItem>
@@ -214,7 +246,16 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
           )}
         </Stack></Grid>
         <Grid size={{ xs: 12, md: 7 }}>
-          {f.role === 'gestor' && <DomainLinksEditor value={f.domains} onChange={(v) => setF({ ...f, domains: v })} />}
+          {f.role === 'gestor' && <AdminLinksEditor value={f.domains} onChange={(v) => setF({ ...f, domains: v })} />}
+          {f.role === 'gestor' && u?.role === 'gestor' && (
+            <Card variant="outlined" sx={{ p: 1.5, mt: 1.5 }}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}>
+                <Box><Typography variant="overline">Gestores e sites (comissão)</Typography>
+                  <Typography variant="caption" component="div">Períodos com datas e rateio por site. Nos dias que cobrem, valem no lugar do Rateio do domínio.</Typography></Box>
+                <Button size="small" variant="outlined" startIcon={<EventNoteOutlinedIcon />} onClick={() => setPeriods(true)} sx={{ flexShrink: 0 }}>Gestores e sites</Button>
+              </Stack>
+            </Card>
+          )}
           {f.role === 'gerente' && (
             <Stack spacing={1.25}>
               <Typography variant="overline">Squads que vê</Typography>
@@ -227,6 +268,62 @@ function UserDialog({ u, self, onClose, onCreated }: { u: User | null; self: boo
         {err && <Grid size={12}><Alert severity="error" variant="outlined">{err}</Alert></Grid>}
       </Grid></DialogContent>
       <DialogActions><Button variant="outlined" onClick={onClose}>Cancelar</Button><Button variant="contained" onClick={submit} disabled={busy}>{busy ? 'Salvando…' : u ? 'Salvar' : 'Criar usuário e enviar convite'}</Button></DialogActions>
+      {periods && u && <GestorPeriodsDialog userId={u.id} userName={u.name} onClose={() => setPeriods(false)} />}
+    </Dialog>
+  );
+}
+
+/* ---------------- Gerente: domínios e contas dos gestores (0.18.9) ---------------- */
+function TeamPage() {
+  const { data, error, refetch } = useQuery({ queryKey: ['team'], queryFn: teamApi.list });
+  const [edit, setEdit] = useState<TeamGestor | null>(null);
+  if (error) return <ErrorBox error={error} retry={() => refetch()} />;
+  if (!data) return <PageSkeleton />;
+  return (
+    <>
+      <PageHead title="Usuários & Squads · Gestores" sub="Atribua aos gestores os domínios do seu alcance e as contas Google Ads / Meta Ads que eles usam em cada um." />
+      <TableContainer component={Card}><Table>
+        <TableHead><TableRow>{['Nome', 'E-mail', 'Domínios e contas', 'Status', ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
+        <TableBody>
+          {data.gestores.map((g) => (
+            <TableRow key={g.id}>
+              <TableCell><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Avatar sx={avatarSx}>{initials(g.name)}</Avatar><span>{g.name}</span></Stack></TableCell>
+              <TableCell>{g.email}</TableCell>
+              <TableCell sx={{ whiteSpace: 'normal', maxWidth: 320 }}>
+                {g.domains.length ? <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>{g.domains.map((d) => <Tag key={d.domain}>{d.domain} · {d.googleAccounts.length + d.metaAccounts.length} conta(s)</Tag>)}</Stack> : <Tag tone="warn">Sem domínio do seu alcance</Tag>}
+                {g.otherDomains > 0 && <Typography variant="caption" component="div">+ {g.otherDomains} domínio(s) fora do seu alcance</Typography>}
+              </TableCell>
+              <TableCell>{g.status === 'active' ? <Tag tone="pos">Ativo</Tag> : <Tag tone="warn">{g.status === 'invited' ? 'Convite enviado' : 'Desativado'}</Tag>}</TableCell>
+              <TableCell align="right"><Button size="small" startIcon={<EditOutlinedIcon fontSize="small" />} onClick={() => setEdit(g)}>Atribuir</Button></TableCell>
+            </TableRow>
+          ))}
+          {!data.gestores.length && <TableRow><TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.disabled' }}>Nenhum gestor no seu alcance.</TableCell></TableRow>}
+        </TableBody>
+      </Table></TableContainer>
+      {edit && <TeamDialog key={edit.id} g={edit} data={data} onClose={() => setEdit(null)} />}
+    </>
+  );
+}
+function TeamDialog({ g, data, onClose }: { g: TeamGestor; data: TeamResponse; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [domains, setDomains] = useState<DomainLink[]>(g.domains);
+  const [err, setErr] = useState('');
+  const save = useMutation({ mutationFn: teamApi.save, onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['team'] }), qc.invalidateQueries({ queryKey: ['links'] })]); onClose(); },
+    onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
+  const submit = () => {
+    const dup = domains.find((d, i) => domains.findIndex((x) => x.domain === d.domain) !== i);
+    if (dup) return setErr(`O domínio ${dup.domain} está repetido.`);
+    setErr(''); save.mutate({ id: g.id, domains });
+  };
+  return (
+    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>Domínios e contas · {g.name}<Typography variant="caption" component="div">{g.email}</Typography></DialogTitle>
+      <DialogContent>
+        <Box sx={{ pt: 1 }}><DomainLinksEditor value={domains} onChange={setDomains} options={{ domains: data.domains, google: data.accounts.google, meta: data.accounts.meta }} /></Box>
+        {g.otherDomains > 0 && <Alert severity="info" variant="outlined" sx={{ mt: 1.5 }}>{g.otherDomains} domínio(s) deste gestor estão fora do seu alcance e continuam como estão.</Alert>}
+        {err && <Alert severity="error" variant="outlined" sx={{ mt: 1.5 }}>{err}</Alert>}
+      </DialogContent>
+      <DialogActions><Button variant="outlined" onClick={onClose}>Cancelar</Button><Button variant="contained" onClick={submit} disabled={save.isPending}>{save.isPending ? 'Salvando…' : 'Salvar'}</Button></DialogActions>
     </Dialog>
   );
 }

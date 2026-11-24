@@ -1,6 +1,6 @@
 /**
- * 0.17 — Contas de anúncios × Sites (vínculo com data) e atribuição de domínios/contas aos gestores.
- * O servidor confere tudo de novo: o gestor só vê e só liga as contas e os domínios atribuídos a ele.
+ * Contas de anúncios × Sites (vínculo com data). 0.18.8: só consulta e correção da data de uma mudança;
+ * os vínculos usuário × domínio × conta são feitos em Usuários & Squads.
  */
 import { api } from '@/lib/api/client';
 
@@ -15,14 +15,8 @@ export interface LinkAccount {
   history: LinkPeriod[];
 }
 export interface LinksResponse { viewer: { role: LinkRole; canDate: boolean; canAssign: boolean; today: string }; domains: LinkDomain[]; accounts: LinkAccount[] }
-export interface GestorAssign { id: string; name: string; email: string; domains: string[]; accounts: string[]; otherDomains: number; otherAccounts: number }
-export interface AssignmentsResponse { gestores: GestorAssign[]; accounts: { id: string; name: string; provider: string }[]; domains: LinkDomain[] }
 
 export const linksApi = {
   list: () => api.get<LinksResponse>('/links'),
-  link: ({ accountId, ...b }: { accountId: string; domainIds: string[]; from?: string }) => api.put<{ ok: true; from: string; changed: boolean }>(`/links/${accountId}`, b),
   editHistory: ({ id, from }: { id: string; from: string }) => api.patch<{ ok: true }>(`/links/history/${id}`, { from }),
-  deleteHistory: (id: string) => api.del<void>(`/links/history/${id}`),
-  assignments: () => api.get<AssignmentsResponse>('/links/assignments'),
-  saveAssignment: ({ userId, ...b }: { userId: string; domainIds?: string[]; accountIds?: string[] }) => api.put<{ ok: true }>(`/links/assignments/${userId}`, b),
 };

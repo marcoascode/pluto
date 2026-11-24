@@ -19,6 +19,9 @@ export interface SessionUser {
   isMainAdmin: boolean;
   /** 0.18: libera a criação automatizada de campanhas Meta. Só o SuperAdmin atribui. */
   canCreateMetaCampaigns: boolean;
+  /** 0.18.8: Gestor — comissão progressiva (faixas do painel) ou fixa (commissionPct %). */
+  commissionMode: 'progressive' | 'fixed';
+  commissionPct: number | null;
   permissions: Capability[];
 }
 declare global {
@@ -27,6 +30,7 @@ declare global {
 
 export const USER_SQL = `
   SELECT u.id::text, u.name, u.email, u.role, u.status, u.must_change_password AS "mustChangePassword", u.is_main_admin AS "isMainAdmin", u.can_create_meta_campaigns AS "canCreateMetaCampaigns",
+         u.commission_mode AS "commissionMode", u.commission_pct::float AS "commissionPct",
          COALESCE((SELECT array_agg(su.squad_id::text ORDER BY su.squad_id) FROM squad_users su WHERE su.user_id = u.id), '{}') AS "squadIds",
          COALESCE((SELECT array_agg(cu.company_id::text ORDER BY cu.company_id) FROM company_users cu WHERE cu.user_id = u.id), '{}') AS "companyIds",
          COALESCE((SELECT json_agg(json_build_object(

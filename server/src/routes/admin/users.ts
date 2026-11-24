@@ -1,8 +1,8 @@
 import argon2 from 'argon2';
 import { Router } from 'express';
 import { z } from 'zod';
-import { today } from '../../lib/dates.js';
-import { snapshotAccount } from '../../services/accountLinks.js';
+import { accountsOf, clearGestorLinks, resyncAccounts, saveGestorLinks } from '../../services/gestorLinks.js';
+import { deriveAccounts } from '../../services/accountLinks.js';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { tempPassword } from '../../lib/crypto.js';
@@ -20,6 +20,20 @@ const ids = z.array(z.string().regex(/^\d+$/)).max(200);
 /** Gestor: domínio + contas Google Ads + contas Meta Ads que ele usa nesse domínio. */
 const domainLink = z.object({ domain: z.string().trim().toLowerCase().min(3).max(190), googleAccounts: ids.default([]), metaAccounts: ids.default([]) });
 const links = { squadIds: ids.optional(), companyIds: ids.optional(), domains: z.array(domainLink).max(300).optional() };
+/** 0.18.8 · Comissão do gestor: progressiva (faixas do painel de Comissões) ou fixa (% única sobre o ROI total do mês). */
+const commission = { commissionMode: z.enum(['progressive', 'fixed']).optional(), commissionPct: z.number().gt(0).max(100).nullable().optional() };
+
+async function saveCommission(c: C, uid: string, role: string, b: { commissionMode?: 'progressive' | 'fixed'; commissionPct?: number | null }) {
+  if (b.commissionMode === undefined && b.commissionPct === undefined) return;
+  if (role !== 'gestor') return;   // só gestor recebe comissão
+  const cur = await one<{ mode: 'progressive' | 'fixed'; pct: number | null }>('SELECT commission_mode AS mode, commission_pct::float AS pct FROM users WHERE id = $1', [uid], c);
+  const mode = b.commissionMode ?? cur?.mode ?? 'progressive';
+  const pct = b.commissionPct !== undefined ? b.commissionPct : cur?.pct ?? null;
+  if (mode === 'fixed' && (pct == null || !(pct > 0))) throw conflict('commission_pct', 'Na comissão fixa, informe a porcentagem do gestor (maior que 0 e até 100%).');
+  await c.query('UPDATE users SET commission_mode = $2, commission_pct = $3 WHERE id = $1', [uid, mode, mode === 'fixed' ? pct : null]);
+}
+
+const resync = resyncAccounts;
 
 /** Só o SuperAdmin cria, edita, exclui ou promove alguém a SuperAdmin. */
 function guardSuper(actor: SessionUser, target: { role: string } | null, newRole?: string) {
@@ -33,9 +47,11 @@ type C = Parameters<Parameters<typeof tx>[0]>[0];
  * Vínculos do usuário (substitui os que existiam quando o campo vem):
  * - squadIds: só Gerente (vê esses Squads inteiros). Outros papéis ficam sem Squad.
  * - companyIds: Empresas em que é sócio (qualquer papel) — sócio vê a Empresa inteira.
- * - domains: só Gestor — domínio + contas que ele usa ali. As contas entram também na lista de contas do domínio.
+ * - domains: só Gestor — domínio + contas que ele usa ali. 0.18.8: é o ÚNICO lugar que liga usuário × domínio × conta.
+ *   domain_accounts (site em que o sync põe a despesa da conta) e manager_accounts são derivados daqui.
+ * Devolve as contas cujo site mudou (para ressincronizar depois do commit).
  */
-async function saveLinks(c: C, uid: string, newRole: string, b: { squadIds?: string[]; companyIds?: string[]; domains?: z.infer<typeof domainLink>[] }, roleChanged: boolean) {
+async function saveLinks(c: C, uid: string, newRole: string, b: { squadIds?: string[]; companyIds?: string[]; domains?: z.infer<typeof domainLink>[] }, roleChanged: boolean, actor: string | null): Promise<string[]> {
   if (b.squadIds !== undefined || roleChanged) {
     await c.query('DELETE FROM squad_users WHERE user_id = $1', [uid]);
     const sq = newRole === 'gerente' ? [...new Set(b.squadIds ?? [])] : [];
@@ -52,30 +68,9 @@ async function saveLinks(c: C, uid: string, newRole: string, b: { squadIds?: str
     await c.query('DELETE FROM company_users WHERE user_id = $1', [uid]);
     for (const x of co) await c.query('INSERT INTO company_users (company_id, user_id) VALUES ($1, $2)', [x, uid]);
   }
-  if (b.domains !== undefined || roleChanged) {
-    await c.query('DELETE FROM domain_managers WHERE user_id = $1', [uid]);   // contas saem em cascata
-    if (newRole !== 'gestor') return;
-    const seen = new Set<string>();
-    for (const l of b.domains ?? []) {
-      if (seen.has(l.domain)) throw conflict('duplicate_domain', `O domínio ${l.domain} está repetido.`);
-      seen.add(l.domain);
-      const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [l.domain], c);
-      if (!d) throw notFound(`Domínio ${l.domain} não cadastrado.`);
-      await c.query('INSERT INTO domain_managers (domain_id, user_id) VALUES ($1, $2)', [d.id, uid]);
-      for (const [prov, list] of [['google-ads', l.googleAccounts], ['meta', l.metaAccounts]] as const) {
-        const acc = [...new Set(list)];
-        if (!acc.length) continue;
-        const ok = await q<{ id: string }>('SELECT id::text FROM integration_accounts WHERE provider = $1 AND id = ANY($2::bigint[])', [prov, acc], c);
-        if (ok.length !== acc.length) throw conflict('unknown_account', 'Alguma conta da lista não existe.');
-        for (const a of acc) {
-          await c.query('INSERT INTO domain_manager_accounts (domain_id, user_id, account_id) VALUES ($1, $2, $3)', [d.id, uid, a]);
-          await c.query('INSERT INTO manager_accounts (user_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [uid, a]);   // 0.17
-          const r = await c.query('INSERT INTO domain_accounts (domain_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [d.id, a]);
-          if (r.rowCount) await snapshotAccount(c, a, today(), null);   // 0.17: vínculo novo vale a partir de hoje
-        }
-      }
-    }
-  }
+  if (b.domains === undefined && !roleChanged) return [];
+  if (newRole !== 'gestor') return clearGestorLinks(c, uid, actor);
+  return saveGestorLinks(c, uid, b.domains ?? [], actor);
 }
 
 usersRouter.get('/users', async (_req, res) => {
@@ -85,16 +80,19 @@ usersRouter.get('/users', async (_req, res) => {
 
 /** Cria com senha temporária (hash argon2id) e envia o convite por e-mail. A senha nunca volta na resposta. */
 usersRouter.post('/users', async (req, res) => {
-  const b = parse(z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().toLowerCase().email().max(200), role, ...links }), req.body);
+  const b = parse(z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().toLowerCase().email().max(200), role, ...links, ...commission }), req.body);
   guardSuper(req.user!, null, b.role);
   if (await one('SELECT 1 FROM users WHERE lower(email) = $1', [b.email])) throw conflict('email_taken', 'Já existe um usuário com esse e-mail.');
   const pw = tempPassword();
   const hash = await argon2.hash(pw, { type: argon2.argon2id });
+  let moved: string[] = [];
   const uid = await tx(async (c) => {
     const r = await one<{ id: string }>(`INSERT INTO users (name, email, password_hash, role, status, must_change_password) VALUES ($1, $2, $3, $4, 'invited', true) RETURNING id::text`, [b.name, b.email, hash, b.role], c);
-    await saveLinks(c, r!.id, b.role, b, false);
+    moved = await saveLinks(c, r!.id, b.role, b, false, req.user!.id);
+    await saveCommission(c, r!.id, b.role, b);
     return r!.id;
   });
+  if (moved.length) await resync(moved);
   const m = inviteEmail(b.name, b.email, pw);
   const inviteSent = await sendMail(b.email, m.subject, m.html, m.text);
   res.status(201).json({ user: await loadUser(uid), inviteSent });
@@ -102,7 +100,7 @@ usersRouter.post('/users', async (req, res) => {
 
 usersRouter.patch('/users/:id', async (req, res) => {
   const uid = parse(id, req.params.id);
-  const b = parse(z.object({ name: z.string().trim().min(2).max(120).optional(), role: role.optional(), status: z.enum(['active', 'disabled']).optional(), ...links }), req.body);
+  const b = parse(z.object({ name: z.string().trim().min(2).max(120).optional(), role: role.optional(), status: z.enum(['active', 'disabled']).optional(), ...links, ...commission }), req.body);
   const t = await loadUser(uid);
   if (!t) throw notFound('Usuário não encontrado.');
   guardSuper(req.user!, t, b.role);
@@ -111,10 +109,13 @@ usersRouter.patch('/users/:id', async (req, res) => {
   if (t.isMainAdmin && ((b.role && b.role !== 'superadmin') || b.status === 'disabled')) throw conflict('main_admin', 'O admin principal é sempre SuperAdmin e fica ativo.');
   if (b.status && t.status === 'invited') throw conflict('invited', 'O usuário ainda não ativou o convite.');
   const newRole = b.role ?? t.role;
-  await tx(async (c) => {
+  const moved = await tx(async (c) => {
     await c.query(`UPDATE users SET name = COALESCE($2, name), role = $3, status = COALESCE($4, status), updated_at = now() WHERE id = $1`, [uid, b.name ?? null, newRole, b.status ?? null]);
-    await saveLinks(c, uid, newRole, b, newRole !== t.role);
+    const m = await saveLinks(c, uid, newRole, b, newRole !== t.role, req.user!.id);
+    await saveCommission(c, uid, newRole, b);
+    return m;
   });
+  if (moved.length) await resync(moved);
   if (b.status === 'disabled') await killSessions(uid);
   res.json(await loadUser(uid));
 });
@@ -126,7 +127,12 @@ usersRouter.delete('/users/:id', async (req, res) => {
   guardSuper(req.user!, t);
   if (t.isMainAdmin) throw conflict('main_admin', 'O admin principal não pode ser excluído.');
   if (t.id === req.user!.id) throw conflict('self', 'Você não pode excluir a si mesmo.');
-  await q('DELETE FROM users WHERE id = $1', [uid]); // sessões e squad_users saem em cascata
+  const moved = await tx(async (c) => {
+    const acc = await accountsOf(c, uid);
+    await c.query('DELETE FROM users WHERE id = $1', [uid]); // sessões, squad_users e vínculos saem em cascata
+    return deriveAccounts(c, acc, req.user!.id);
+  });
+  if (moved.length) await resync(moved);
   res.status(204).end();
 });
 

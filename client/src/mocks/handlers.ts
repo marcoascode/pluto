@@ -159,6 +159,22 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (path === '/auth/change-password') { u.password = b.newPassword; u.mustChangePassword = false; u.status = 'active'; return out(undefined); }
   if (path === '/me/preferences') { const k = 'pluto_mock_prefs_' + u.id; if (method === 'PUT') LS.set(k, b); return out(LS.get(k) ?? {}); }
 
+  /* ---- 0.18.9 Gerente/Admin atribuem domínios e contas aos gestores ---- */
+  if (path === '/team' || path.startsWith('/team/')) {
+    if (u.role === 'gestor') throw new ApiError(403, 'forbidden', 'Só Gerente, Admin ou SuperAdmin atribuem domínios e contas aos gestores.');
+    const doms = u.role === 'gerente' ? allowed(u) : new Set(DOMAINS.filter((d) => !d.technical).map((d) => d.hostname));
+    const mt = path.match(/^\/team\/gestores\/([^/]+)$/);
+    if (mt && method === 'PUT') {
+      const t = USERS.find((x) => x.id === mt[1] && x.role === 'gestor'); if (!t) throw new ApiError(404, 'not_found', 'Gestor não encontrado.');
+      t.domains = [...t.domains.filter((l) => !doms.has(l.domain)), ...(b.domains as T.DomainLink[]).filter((l) => doms.has(l.domain))];
+      return out({ ok: true });
+    }
+    const acc = (p: string) => ACCTS.filter((a) => a.provider === p).map((a) => ({ id: a.id, name: a.name, externalId: a.externalId }));
+    return out({ viewer: { role: u.role }, domains: DOMAINS.filter((d) => doms.has(d.hostname)).map((d) => ({ id: d.hostname, hostname: d.hostname, active: d.active })),
+      gestores: USERS.filter((x) => x.role === 'gestor' && (u.role !== 'gerente' || !x.domains.length || x.domains.some((l) => doms.has(l.domain))))
+        .map((x) => ({ id: x.id, name: x.name, email: x.email, status: x.status, domains: x.domains.filter((l) => doms.has(l.domain)), otherDomains: x.domains.filter((l) => !doms.has(l.domain)).length })),
+      accounts: { google: acc('google-ads'), meta: acc('meta') } });
+  }
   /* ---- 0.17 Contas × Sites ---- */
   if (path === '/links' || path.startsWith('/links/')) return out(linksMock(u, allowed(u), method, path, b));
   /* ---- Finance ---- */
@@ -399,6 +415,17 @@ export async function mockRequest<R>(method: string, path: string, query: Record
   if (m) {
     const d = DOMAINS.find((x) => x.hostname === decodeURIComponent(m![1])); if (!d) throw new ApiError(404, 'not_found', 'Domínio não encontrado.');
     if (d.technical) throw new ApiError(409, 'technical_domain', 'O domínio técnico "Sem domínio" é do sistema e não pode ser alterado. Para tirar campanhas dele, defina o domínio da campanha.');
+    if (method === 'PATCH' && b.managerShares !== undefined) {   // 0.18.9 · rateio
+      const cur = USERS.filter((x) => x.role === 'gestor' && x.domains.some((l) => l.domain === d.hostname)).map((x) => x.id);
+      for (const id of cur) MGR_SHARES.delete(`${d.hostname}|${id}`);
+      if (b.managerShares) {
+        const list = b.managerShares as { userId: string; sharePct: number }[];
+        if (list.length !== cur.length || list.some((x) => !cur.includes(x.userId))) throw new ApiError(409, 'share_managers', 'O rateio precisa ter todos os gestores do domínio (e só eles).');
+        const sum = list.reduce((a, x) => a + Number(x.sharePct), 0);
+        if (Math.abs(sum - 100) > 0.001) throw new ApiError(409, 'share_sum', `A soma do rateio precisa ser 100% (está em ${sum}%).`);
+        for (const x of list) MGR_SHARES.set(`${d.hostname}|${x.userId}`, Number(x.sharePct));
+      }
+    }
     if (method === 'DELETE') { if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'domain_has_data', 'Este domínio tem dados históricos. Desative em vez de excluir.'); DOMAINS.splice(DOMAINS.indexOf(d), 1); SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); return out(undefined); }
     if (b.hostname && b.hostname !== d.hostname) { if (DOMAINS.find((x) => x.hostname === b.hostname)) throw new ApiError(409, 'domain_exists', 'Já existe um domínio com esse nome.'); if (ROWS.some((r) => r.domain === d.hostname)) throw new ApiError(409, 'rename_mock', 'No modo mock não dá para renomear domínios com dados.'); SQUADS.forEach((s) => (s.domains = s.domains.map((x) => (x === d.hostname ? b.hostname : x)))); d.hostname = b.hostname; }
     if (b.squadId !== undefined) { SQUADS.forEach((s) => (s.domains = s.domains.filter((x) => x !== d.hostname))); const s = SQUADS.find((x) => x.id === b.squadId); if (s) s.domains.push(d.hostname); d.squadId = s?.id ?? null; }
@@ -459,7 +486,9 @@ function fxLatest(source: string, agoMin: number): T.FxLatest {
   return { base: 'USD', rates: { USD: 1, BRL: FX.BRL[0], EUR: FX.EUR[0] }, fetchedAt: new Date(Date.now() - agoMin * 60000).toISOString(), source, brlDiscount: d, brlDiscountFrom: fr?.validFrom ?? null, brlRevenueRate: Math.max(0.0001, FX.BRL[0] - d) };
 }
 const domOut = (d: T.Domain): T.Domain => ({ ...d, hasWpPassword: !!wpPasswordOf(d.hostname), squadId: SQUADS.find((s) => s.domains.includes(d.hostname))?.id ?? null,
-  managers: USERS.filter((x) => x.role === 'gestor' && x.domains.some((l) => l.domain === d.hostname)).map((x) => { const l = x.domains.find((y) => y.domain === d.hostname)!; return { userId: x.id, name: x.name, googleAccounts: l.googleAccounts, metaAccounts: l.metaAccounts }; }) });
+  managers: USERS.filter((x) => x.role === 'gestor' && x.domains.some((l) => l.domain === d.hostname)).map((x) => { const l = x.domains.find((y) => y.domain === d.hostname)!; return { userId: x.id, name: x.name, sharePct: MGR_SHARES.get(`${d.hostname}|${x.id}`) ?? null, googleAccounts: l.googleAccounts, metaAccounts: l.metaAccounts }; }) });
+/** 0.18.9 · rateio do domínio no demo (domínio|usuário → %) */
+export const MGR_SHARES = new Map<string, number>();
 const sqOut = (s: T.Squad): T.Squad => ({ ...s, userIds: USERS.filter((x) => x.role === 'gerente' && x.squadIds.includes(s.id)).map((x) => x.id) });
 /** Mesmas regras de vínculo do servidor (routes/admin/users.ts → saveLinks). */
 function setLinks(t: T.User, b: Record<string, any>, roleChanged = false) {

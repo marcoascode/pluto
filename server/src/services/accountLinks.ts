@@ -12,6 +12,8 @@
  *   - vínculo vigente com vários sites: fica o "achado" se ele estiver entre eles; senão, o primeiro do vínculo;
  *   - vínculo vigente vazio (conta desligada): fica o "achado".
  * domain_accounts continua sendo o vínculo de hoje (= linha vigente), usado pelas telas e pelo fallback dos syncs.
+ * 0.18.8: domain_accounts é derivado dos vínculos de Usuários & Squads (deriveAccounts); não se edita mais por Domínios,
+ * Integrações nem Contas × Sites.
  */
 import type { PoolClient } from 'pg';
 import { one, q } from '../db.js';
@@ -72,6 +74,27 @@ export async function applyCurrent(c: PoolClient, accountId: string) {
   if (!cur) return;
   await c.query('DELETE FROM domain_accounts WHERE account_id = $1', [accountId]);
   for (const d of cur.domains) await c.query('INSERT INTO domain_accounts (domain_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [d, accountId]);
+}
+
+/**
+ * 0.18.8 · Vínculos só em Usuários & Squads: domain_accounts da conta = domínios em que algum gestor a usa
+ * (domain_manager_accounts). Grava o histórico a partir de `from` (padrão hoje) quando muda. Devolve as contas que mudaram.
+ */
+export async function deriveAccounts(c: PoolClient, accountIds: string[], userId: string | null, from: string = today()): Promise<string[]> {
+  const changed: string[] = [];
+  for (const a of [...new Set(accountIds)]) {
+    const acc = await one<{ provider: string }>('SELECT provider FROM integration_accounts WHERE id = $1', [a], c);
+    if (!acc || (acc.provider !== 'google-ads' && acc.provider !== 'meta')) continue;
+    const want = (await q<{ id: string }>(`SELECT DISTINCT x.domain_id::text AS id FROM domain_manager_accounts x JOIN domains d ON d.id = x.domain_id AND NOT d.is_technical
+                                           WHERE x.account_id = $1 ORDER BY 1`, [a], c)).map((r) => r.id);
+    const cur = (await q<{ id: string }>('SELECT domain_id::text AS id FROM domain_accounts WHERE account_id = $1', [a], c)).map((r) => r.id);
+    if (same(want, cur)) continue;
+    await c.query('DELETE FROM domain_accounts WHERE account_id = $1', [a]);
+    for (const d of want) await c.query('INSERT INTO domain_accounts (domain_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [d, a]);
+    await snapshotAccount(c, a, from, userId);
+    changed.push(a);
+  }
+  return changed;
 }
 
 /** Contas Google/Meta afetadas por uma lista de ids (para disparar o sync certo). */

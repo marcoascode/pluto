@@ -1,13 +1,10 @@
 import {
-  Alert, Autocomplete, Avatar, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, IconButton, InputAdornment, MenuItem, Stack,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography, alpha, useTheme,
+  Alert, Avatar, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, IconButton, InputAdornment, MenuItem, Stack,
+  TextField, Typography, alpha, useTheme,
 } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
-import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
-import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
-import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useFilters } from '@/context/FiltersContext';
@@ -16,8 +13,8 @@ import { ApiError } from '@/lib/api/client';
 import { ErrorBox, PageHead, PageSkeleton } from '@/components/ui/States';
 import { ddmmyyyy, monthTitle, shiftMonth } from '@/lib/finance';
 import {
-  brl, brl0, commissionsApi, parseNum, pctFmt, STATUS, tiersText,
-  type Assignment, type AssignmentsResponse, type CommissionLine, type CommissionsResponse, type SiteCard, type Tier,
+  brl, brl0, commissionsApi, parseNum, pctFmt, STATUS, tiersText, usd,
+  type CommissionLine, type CommissionsResponse, type SiteCard, type Tier,
 } from '@/lib/financeOps';
 import { todayISO } from '@/lib/period';
 
@@ -25,9 +22,11 @@ const NOW = todayISO().slice(0, 7);
 const initials = (n: string) => n.split(/\s+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase();
 
 /**
- * Finance → Comissões. Tudo vem do Caixa Empresa: receitas e gastos lançados com site no mês de referência,
- * menos os custos do site (aba Custos). Site negativo desconta da comissão do gestor. A comissão é paga por fora:
- * aqui o Admin aprova e marca como paga (não gera lançamento no Caixa). O gestor vê só os próprios sites.
+ * Finance → Comissões (0.18.8).
+ * ROI do gestor = receita líquida dos sites que ele gere (a mesma da Home, em R$ pela cotação do ROI) − despesas Google +
+ * Meta + IVA SÓ das contas vinculadas a ele em Usuários & Squads. Site negativo desconta.
+ * Comissão = % × ROI total do mês: progressiva (faixas do card "Comissão progressiva", editáveis pelo Admin) ou fixa (% do
+ * cadastro do gestor). Mês encerrado: o Admin confere, aprova e marca como paga (pagamento feito por fora; só registra).
  */
 export default function CommissionsPage() {
   const { pluto: p } = useTheme();
@@ -35,8 +34,6 @@ export default function CommissionsPage() {
   const [company, setCompany] = useState(globalCompany || '');
   const [user, setUser] = useState('');
   const [month, setMonth] = useState(shiftMonth(NOW, -1));
-  const [people, setPeople] = useState(false);
-  const [rule, setRule] = useState(false);
   const q = { company: company || undefined, month, user: user || undefined };
   const { data, error, refetch } = useQuery({ queryKey: ['finance', 'commissions', q], queryFn: () => commissionsApi.list(q), placeholderData: keepPreviousData });
   if (error && !data) return <ErrorBox error={error} retry={() => refetch()} />;
@@ -47,11 +44,7 @@ export default function CommissionsPage() {
   return (
     <>
       <PageHead title="Comissões"
-        sub={mgr ? 'Seus sites no mês e a sua comissão.' : 'Resultado de cada site no mês com a receita líquida do dash (a mesma da Home). A comissão é paga por fora: aqui você aprova e marca como paga.'}
-        right={admin && <Stack direction="row" spacing={1}>
-          <Button size="small" variant="outlined" startIcon={<GroupsOutlinedIcon />} onClick={() => setPeople(true)}>Gestores e sites</Button>
-          <Button size="small" variant="outlined" startIcon={<TuneRoundedIcon />} onClick={() => setRule(true)}>Regra</Button>
-        </Stack>} />
+        sub={mgr ? 'Seus sites no mês, o seu ROI e a sua comissão.' : 'ROI de cada gestor nos sites que ele gere (receita − despesas das contas vinculadas a ele em Usuários & Squads) × % da modalidade dele. A comissão é paga por fora: aqui você confere, aprova e marca como paga.'} />
 
       {/* filtros: Empresa · Gestor · Mês de fechamento */}
       <Card sx={{ p: 1.5, mb: 2 }}>
@@ -69,35 +62,31 @@ export default function CommissionsPage() {
           <TextField select size="small" label="Mês de fechamento" value={month} onChange={(e) => setMonth(e.target.value)} sx={{ minWidth: 200 }}>
             {data.months.map((m) => <MenuItem key={m} value={m}>{monthTitle(m)}{m === NOW ? ' · em apuração' : ''}</MenuItem>)}
           </TextField>
-          <Box sx={{ flex: 1 }} />
-          <Typography variant="caption" sx={{ maxWidth: 420 }}>
-            <b style={{ color: p.fg }}>{data.rule.name}:</b> sem lucro, sem comissão · {tiersText(data.rule.tiers, data.rule.tierCurrency)} (sobre o lucro do mês)
-          </Typography>
         </Stack>
       </Card>
 
       {/* resumo */}
       <Grid container spacing={1.5} sx={{ mb: 2.5 }}>
-        <Kpi label="Resultado dos sites" value={brl(t.result)} tone={t.result >= 0 ? p.pos : p.neg} sub={`receitas ${brl0(t.revenue)} − custos ${brl0(t.costs)}`} />
+        <Kpi label={mgr ? 'Seu ROI no mês' : 'ROI dos gestores'} value={brl(t.result)} tone={t.result >= 0 ? p.pos : p.neg} sub={`≈ ${usd(t.resultUsd)} · receitas ${brl0(t.revenue)} − despesas ${brl0(t.ads)}`} />
         <Kpi label={mgr ? 'Sua comissão' : 'Comissões do mês'} value={brl(t.commissions)} tone={p.accent} />
         <Kpi label="A pagar" value={brl(t.toPay)} tone={t.toPay > 0 ? p.warn : undefined} sub="aprovadas e a aprovar" />
         <Kpi label="Pagas" value={brl(t.paid)} tone={t.paid > 0 ? p.pos : undefined} />
       </Grid>
 
+      <RuleCard rule={data.rule} admin={admin} />
+
       <SectionTitle title={mgr ? 'Sua comissão' : 'Gestores'} sub={`${monthTitle(month)}${month === NOW ? ' · mês em apuração (aprova depois que fechar)' : ''}`} />
       <Grid container spacing={1.5} sx={{ mb: 3 }}>
         {data.lines.map((l) => <Grid key={l.userId + l.companyId} size={{ xs: 12, md: 6, xl: 4 }}><ManagerCard l={l} company={co.get(l.companyId) ?? ''} showCompany={data.companies.length > 1} admin={admin} /></Grid>)}
-        {!data.lines.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhum gestor com site neste filtro.{admin && ' O gestor vem do Squad do domínio (Usuários & Squads) ou de um vínculo em "Gestores e sites".'}</Card></Grid>}
+        {!data.lines.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhum gestor com site neste filtro.{admin && ' Os sites e as contas de cada gestor são vinculados em Configurações → Usuários & Squads (o domínio precisa estar num Squad da Empresa); datas e rateio por período em "Gestores e sites", na edição do gestor.'}</Card></Grid>}
       </Grid>
 
-      <SectionTitle title="Sites no mês" sub="Receita líquida do dash − anúncios (Google + Meta + IVA) − outros gastos do Caixa com o site − custos do site. Negativo desconta da comissão do gestor." />
+      <SectionTitle title="Sites no mês" sub="Receita líquida do dash (R$, cotação do ROI) − despesas Google + Meta + IVA das contas vinculadas ao gestor. Negativo desconta da comissão do gestor." />
       <Grid container spacing={1.5}>
         {data.sites.map((s) => <Grid key={s.companyId + s.site} size={{ xs: 12, sm: 6, lg: 4, xl: 3 }}><SiteTile s={s} company={data.companies.length > 1 ? co.get(s.companyId) : undefined} /></Grid>)}
         {!data.sites.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhum site com receita ou custo neste mês. Os sites vêm dos domínios do Squad de cada Empresa.</Card></Grid>}
       </Grid>
 
-      {people && <PeopleDialog onClose={() => setPeople(false)} />}
-      {rule && <RuleDialog rule={data.rule} onClose={() => setRule(false)} />}
     </>
   );
 }
@@ -130,14 +119,15 @@ function ManagerCard({ l, company, showCompany, admin }: { l: CommissionLine; co
   const [dlg, setDlg] = useState<'approve' | 'paid' | 'reopen' | null>(null);
   const unpaid = useFinanceMutation(commissionsApi.unpaid);
   const value = l.approved ?? l.calculated;
-  const max = Math.max(1, ...l.sites.map((s) => Math.abs(s.base)));
+  const max = Math.max(1, ...l.sites.map((s) => Math.abs(s.result)));
+  const modeLabel = l.mode === 'fixed' ? `Fixa · ${pctFmt(l.fixedPct ?? l.pct)}` : 'Progressiva';
   return (
     <Card sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
       <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
         <Avatar sx={{ width: 36, height: 36, fontSize: 13, fontWeight: 600, bgcolor: alpha(p.accent, 0.2), color: p.accent }}>{initials(l.userName)}</Avatar>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography sx={{ fontWeight: 600 }} noWrap>{l.userName}</Typography>
-          <Typography variant="caption" noWrap component="div">{showCompany ? `${company} · ` : ''}{l.sites.length} site{l.sites.length > 1 ? 's' : ''}</Typography>
+          <Typography variant="caption" noWrap component="div">{showCompany ? `${company} · ` : ''}{l.sites.length} site{l.sites.length > 1 ? 's' : ''} · comissão {modeLabel.toLowerCase()}</Typography>
         </Box>
         <Status s={l.status} />
       </Stack>
@@ -146,11 +136,13 @@ function ManagerCard({ l, company, showCompany, admin }: { l: CommissionLine; co
         <Box>
           <Typography variant="caption">Comissão</Typography>
           <Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 28, lineHeight: 1.1, color: value > 0 ? p.fg : p.fg2, fontVariantNumeric: 'tabular-nums' }}>{brl(value)}</Typography>
+          {l.calculatedUsd > 0 && <Typography variant="caption">≈ {usd(l.calculatedUsd)}</Typography>}
         </Box>
         <Box sx={{ textAlign: 'right' }}>
-          <Typography variant="caption">Lucro dos sites</Typography>
+          <Typography variant="caption">ROI total</Typography>
           <Typography sx={{ fontWeight: 600, color: l.profit >= 0 ? p.pos : p.neg, fontVariantNumeric: 'tabular-nums' }}>{brl(l.profit)}</Typography>
-          <Typography variant="caption">{l.profit > 0 ? `faixa ${pctFmt(l.pct)} · ${l.tierCurrency === 'USD' ? 'US$' : l.tierCurrency} ${Math.round(l.profitTier).toLocaleString('pt-BR')}` : 'sem lucro, sem comissão'}</Typography>
+          <Typography variant="caption" component="div">≈ {usd(l.profitUsd)}</Typography>
+          <Typography variant="caption">{l.profit > 0 ? (l.mode === 'fixed' ? `fixa ${pctFmt(l.pct)}` : `progressiva · faixa ${pctFmt(l.pct)}`) : 'sem ROI positivo, sem comissão'}</Typography>
         </Box>
       </Stack>
 
@@ -158,26 +150,27 @@ function ManagerCard({ l, company, showCompany, admin }: { l: CommissionLine; co
         {l.sites.map((s) => (
           <Box key={s.site}>
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
-              <Typography sx={{ fontSize: 13 }} noWrap>{s.site}{(s.sharePct < 100 || s.coverage < 1) && <Typography component="span" variant="caption"> · {s.sharePct < 100 ? `${pctFmt(s.sharePct, 0)} do site` : `${Math.round(s.coverage * 100)}% do mês`}</Typography>}</Typography>
-              <Typography sx={{ fontSize: 13, fontWeight: 600, color: s.base < 0 ? p.neg : undefined, fontVariantNumeric: 'tabular-nums' }}>{brl(s.base)}</Typography>
+              <Typography sx={{ fontSize: 13 }} noWrap>{s.site}{(s.sharePct < 100 || (s.source && s.source !== 'rateio')) && <Typography component="span" variant="caption"> · {srcLabel(s.sharePct, s.source, s.days)}</Typography>}</Typography>
+              <Typography sx={{ fontSize: 13, fontWeight: 600, color: s.result < 0 ? p.neg : undefined, fontVariantNumeric: 'tabular-nums' }}>{brl(s.result)}</Typography>
             </Stack>
-            <Box sx={{ height: 4, borderRadius: 2, bgcolor: p.panel3, overflow: 'hidden' }}><Box sx={{ height: '100%', width: `${(Math.abs(s.base) / max) * 100}%`, bgcolor: s.base < 0 ? p.neg : p.pos }} /></Box>
+            <Typography variant="caption" component="div" sx={{ fontSize: 11 }}>receita {brl0(s.revenue)} − despesas {brl0(s.ads)}</Typography>
+            <Box sx={{ height: 4, borderRadius: 2, bgcolor: p.panel3, overflow: 'hidden' }}><Box sx={{ height: '100%', width: `${(Math.abs(s.result) / max) * 100}%`, bgcolor: s.result < 0 ? p.neg : p.pos }} /></Box>
           </Box>
         ))}
       </Stack>
-      {l.negatives < 0 && <Typography variant="caption" sx={{ color: p.neg }}>Site negativo descontou {brl(Math.abs(l.negatives))} do lucro.</Typography>}
+      {l.negatives < 0 && <Typography variant="caption" sx={{ color: p.neg }}>Site negativo descontou {brl(Math.abs(l.negatives))} do ROI.</Typography>}
       {l.adjustments !== 0 && <Typography variant="caption">Ajuste {l.adjustments > 0 ? '+' : '−'}{brl(Math.abs(l.adjustments))}{l.adjustmentNote ? ` · ${l.adjustmentNote}` : ''}</Typography>}
       {!l.frozen && l.incomplete.length > 0 && l.status !== 'open' && (
         <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}><ErrorOutlineRoundedIcon sx={{ fontSize: 16, color: p.warn }} /><Typography variant="caption" sx={{ color: p.warn }}>{l.incomplete.join(' · ')}</Typography></Stack>
       )}
-      {l.liveDiff != null && <Typography variant="caption" sx={{ color: p.warn }}>O Caixa mudou depois da aprovação: hoje daria {l.liveDiff > 0 ? '+' : '−'}{brl(Math.abs(l.liveDiff))}. O aprovado não muda sozinho.</Typography>}
+      {l.liveDiff != null && <Typography variant="caption" sx={{ color: p.warn }}>Os números mudaram depois da aprovação: hoje daria {l.liveDiff > 0 ? '+' : '−'}{brl(Math.abs(l.liveDiff))}. O aprovado não muda sozinho.</Typography>}
 
       <Box sx={{ flex: 1 }} />
       <Divider />
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minHeight: 32 }}>
         {l.status === 'paid' && <Typography variant="caption" sx={{ flex: 1, color: p.pos }}>Paga em {ddmmyyyy(l.paidAt!)}{l.paidNote ? ` · ${l.paidNote}` : ''}</Typography>}
         {l.status === 'approved' && <Typography variant="caption" sx={{ flex: 1 }}>Aprovada{l.approvedBy ? ` por ${l.approvedBy}` : ''}</Typography>}
-        {l.status === 'open' && <Typography variant="caption" sx={{ flex: 1 }}>Mês em andamento: o valor muda conforme o Caixa.</Typography>}
+        {l.status === 'open' && <Typography variant="caption" sx={{ flex: 1 }}>Mês em andamento: o valor muda até o mês fechar.</Typography>}
         {l.status === 'to_approve' && <Typography variant="caption" sx={{ flex: 1 }}>Mês fechado, pronto para aprovar.</Typography>}
         {admin && l.status === 'to_approve' && <Button size="small" variant="contained" onClick={() => setDlg('approve')}>Aprovar</Button>}
         {admin && l.status === 'approved' && <><Button size="small" onClick={() => setDlg('reopen')}>Reabrir</Button><Button size="small" variant="contained" color="success" onClick={() => setDlg('paid')}>Marcar como paga</Button></>}
@@ -206,18 +199,18 @@ function ActionDialog({ kind, l, onClose }: { kind: 'approve' | 'paid' | 'reopen
       <DialogContent>
         <Stack spacing={1.5} sx={{ mt: 0.5 }}>
           {kind === 'approve' && (<>
-            <Typography sx={{ fontSize: 14 }}>{monthTitle(l.month)} · lucro {brl(l.profit)} × {pctFmt(l.pct)} = <b>{brl(l.calculated)}</b></Typography>
+            <Typography sx={{ fontSize: 14 }}>{monthTitle(l.month)} · ROI total {brl(l.profit)} (≈ {usd(l.profitUsd)}) × {pctFmt(l.pct)} ({l.mode === 'fixed' ? 'fixa' : 'progressiva'}) = <b>{brl(l.calculated)}</b> (≈ {usd(l.calculatedUsd)})</Typography>
             <TextField size="small" label="Ajuste (opcional)" value={adj} onChange={(e) => setAdj(e.target.value)} placeholder="ex.: 200 ou -150" slotProps={{ input: { startAdornment: <InputAdornment position="start">R$</InputAdornment> } }} />
             {!!a && <TextField size="small" label="Motivo do ajuste" value={note} onChange={(e) => setNote(e.target.value)} />}
             <Typography sx={{ fontWeight: 600 }}>Total aprovado: {brl(Math.max(0, l.calculated + (a || 0)))}</Typography>
-            <Typography variant="caption">Os valores do mês ficam gravados. Se o Caixa mudar depois, aparece a diferença sem alterar o aprovado.</Typography>
+            <Typography variant="caption">Os valores do mês ficam gravados. Se os números mudarem depois (sync, vínculos), aparece a diferença sem alterar o aprovado.</Typography>
           </>)}
           {kind === 'paid' && (<>
             <Typography sx={{ fontSize: 14 }}>Valor: <b>{brl(l.approved)}</b> · pago por fora (não entra no Caixa Empresa).</Typography>
             <TextField size="small" type="date" label="Data do pagamento" value={date} onChange={(e) => setDate(e.target.value)} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: todayISO() } }} />
             <TextField size="small" label="Observação (opcional)" value={note} onChange={(e) => setNote(e.target.value)} placeholder="ex.: PIX" />
           </>)}
-          {kind === 'reopen' && <TextField size="small" label="Motivo" value={note} onChange={(e) => setNote(e.target.value)} autoFocus helperText="Volta a calcular pelo Caixa de hoje." />}
+          {kind === 'reopen' && <TextField size="small" label="Motivo" value={note} onChange={(e) => setNote(e.target.value)} autoFocus helperText="Volta a calcular com os números e vínculos de hoje." />}
           {err && <Alert severity="error" variant="outlined">{err}</Alert>}
         </Stack>
       </DialogContent>
@@ -231,137 +224,111 @@ function ActionDialog({ kind, l, onClose }: { kind: 'approve' | 'paid' | 'reopen
   );
 }
 
+/** "40% · rateio", "100% · período (12 dias)", "rateio + período" */
+function srcLabel(pct: number, source?: string, days?: number) {
+  const p = pctFmt(pct, 3);
+  if (source === 'periodo') return `${p} · período${days ? ` (${days} dia${days > 1 ? 's' : ''})` : ''}`;
+  if (source === 'misto') return `${p} · rateio + período`;
+  return `${p} da receita · rateio`;
+}
+
 /* ---------------- card do site ---------------- */
 function SiteTile({ s, company }: { s: SiteCard; company?: string }) {
   const { pluto: p } = useTheme();
   const neg = s.result < 0;
   const tone = neg ? p.neg : p.pos;
+  const unlinked = s.managers.length > 0 && s.allAds - s.ads >= 0.01;
   return (
     <Card sx={{ p: 1.75, height: '100%', borderColor: neg ? alpha(p.neg, 0.55) : undefined, bgcolor: neg ? alpha(p.neg, 0.06) : undefined }}>
       <Stack direction="row" sx={{ alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
         <Box sx={{ minWidth: 0 }}>
           <Typography sx={{ fontWeight: 600 }} noWrap>{s.site}</Typography>
-          <Typography variant="caption" noWrap component="div">{company ? `${company} · ` : ''}{s.managers.length ? s.managers.map((m) => m.userName + (m.sharePct < 100 ? ` (${pctFmt(m.sharePct, 0)})` : '')).join(', ') + (s.managers.every((m) => m.auto) ? ' · Squad' : '') : 'sem gestor'}</Typography>
+          <Typography variant="caption" noWrap component="div">{company ? `${company} · ` : ''}{s.managers.length ? s.managers.map((m) => m.userName + (m.sharePct < 100 || m.source !== 'rateio' ? ` (${srcLabel(m.sharePct, m.source, m.days)})` : '')).join(', ') : 'sem gestor'}</Typography>
         </Box>
         {neg && <Chip size="small" label="negativo" sx={{ height: 20, fontSize: 11, fontWeight: 600, color: p.neg, bgcolor: alpha(p.neg, 0.15) }} />}
       </Stack>
       <Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 22, color: tone, my: 0.75, fontVariantNumeric: 'tabular-nums' }}>{brl(s.result)}</Typography>
       <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
         <Box><Typography variant="caption" component="div">Receita</Typography><Typography sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{brl0(s.revenue)}</Typography></Box>
-        <Box sx={{ textAlign: 'right' }}><Typography variant="caption" component="div">Custos</Typography><Typography sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{brl0(s.costs)}</Typography></Box>
+        <Box sx={{ textAlign: 'right' }}><Typography variant="caption" component="div">{s.managers.length ? 'Despesas (contas do gestor)' : 'Despesas'}</Typography><Typography sx={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{brl0(s.ads)}</Typography></Box>
       </Stack>
-      {(s.ads != null || s.siteCosts > 0) && (
-        <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
-          anúncios {brl0(s.ads ?? s.expenses)}{s.otherExpenses ? ` · outros gastos ${brl0(s.otherExpenses)}` : ''}{s.siteCosts ? ` · custos do site ${brl0(s.siteCosts)}` : ''}
-        </Typography>
-      )}
-      {neg && s.managers.length > 0 && <Typography variant="caption" component="div" sx={{ mt: 1, color: p.neg }}>Desconta {brl0(Math.abs(s.result))} da comissão de {s.managers.map((m) => m.userName).join(' e ')}.</Typography>}
+      {s.roi != null && <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>ROI % {pctFmt(s.roi)}</Typography>}
+      {unlinked && <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>{brl0(s.allAds - s.ads)} de despesa de contas sem vínculo com o gestor ficam fora.</Typography>}
+      {!s.managers.length && <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>Sem gestor: vincule em Usuários &amp; Squads.</Typography>}
+      {s.equalSplit && <Typography variant="caption" component="div" sx={{ mt: 0.5, color: p.warn }}>Rateio não definido: receita dividida igualmente (Admin → Domínios → Rateio).</Typography>}
+      {neg && s.managers.length > 0 && <Typography variant="caption" component="div" sx={{ mt: 1, color: p.neg }}>Desconta {brl0(Math.abs(s.result))} do ROI de {s.managers.map((m) => m.userName).join(' e ')}.</Typography>}
     </Card>
   );
 }
 
-/* ---------------- gestores × sites ---------------- */
-function PeopleDialog({ onClose }: { onClose: () => void }) {
+/* ---------------- comissão progressiva (faixas) ---------------- */
+const curSym = (c: string) => (c === 'USD' ? 'US$' : c === 'EUR' ? '€' : 'R$');
+function RuleCard({ rule, admin }: { rule: CommissionsResponse['rule']; admin: boolean }) {
   const { pluto: p } = useTheme();
-  const { data } = useQuery({ queryKey: ['finance', 'assignments'], queryFn: () => commissionsApi.assignments({}) });
-  const [edit, setEdit] = useState<Assignment | 'new' | null>(null);
-  const [err, setErr] = useState('');
-  const remove = useFinanceMutation(commissionsApi.removeAssignment);
-  const co = new Map((data?.companies ?? []).map((c) => [c.id, c.name]));
-  return (
-    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Gestores e sites</DialogTitle>
-      <DialogContent>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>Quem responde por cada site e desde quando. Trocou o responsável? Coloque a data de fim e crie outro vínculo: os meses anteriores não mudam.</Typography>
-        {!data ? <PageSkeleton /> : edit ? <AssignmentForm data={data} initial={edit === 'new' ? null : edit} onDone={() => setEdit(null)} /> : (<>
-          <TableContainer><Table size="small" sx={{ '& td, & th': { whiteSpace: 'nowrap' } }}>
-            <TableHead><TableRow><TableCell>Gestor</TableCell><TableCell>Site</TableCell>{data.companies.length > 1 && <TableCell>Empresa</TableCell>}<TableCell>Período</TableCell><TableCell align="right">Rateio</TableCell><TableCell /></TableRow></TableHead>
-            <TableBody>
-              {data.assignments.map((a) => (
-                <TableRow key={a.id} sx={{ opacity: a.endDate && a.endDate < todayISO() ? 0.55 : 1 }}>
-                  <TableCell><b>{a.userName}</b></TableCell><TableCell>{a.site}</TableCell>{data.companies.length > 1 && <TableCell>{co.get(a.companyId)}</TableCell>}
-                  <TableCell>{ddmmyyyy(a.startDate)} → {a.endDate ? ddmmyyyy(a.endDate) : 'atual'}</TableCell>
-                  <TableCell align="right">{pctFmt(a.sharePct, 0)}</TableCell>
-                  <TableCell align="right">
-                    <IconButton size="small" onClick={() => setEdit(a)} aria-label={`Editar ${a.userName} ${a.site}`}><EditOutlinedIcon fontSize="small" /></IconButton>
-                    <IconButton size="small" onClick={() => remove.mutate(a.id, { onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível excluir.') })} aria-label="Excluir vínculo"><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!data.assignments.length && <TableRow><TableCell colSpan={6} sx={{ color: 'text.disabled', py: 3 }} align="center">Nenhum gestor vinculado ainda.</TableCell></TableRow>}
-            </TableBody>
-          </Table></TableContainer>
-          {err && <Alert severity="error" variant="outlined" sx={{ mt: 1.5 }} onClose={() => setErr('')}>{err}</Alert>}
-          <Button startIcon={<AddRoundedIcon />} onClick={() => setEdit('new')} sx={{ mt: 1.5, color: p.accent }}>Vincular gestor a um site</Button>
-        </>)}
-      </DialogContent>
-      <DialogActions><Button variant="outlined" onClick={onClose}>Fechar</Button></DialogActions>
-    </Dialog>
-  );
-}
-function AssignmentForm({ data, initial, onDone }: { data: AssignmentsResponse; initial: Assignment | null; onDone: () => void }) {
-  const [f, setF] = useState({
-    userId: initial?.userId ?? data.managers.find((m) => m.role === 'gestor')?.id ?? data.managers[0]?.id ?? '', companyId: initial?.companyId ?? data.companies[0]?.id ?? '',
-    site: initial?.site ?? '', startDate: initial?.startDate ?? `${NOW}-01`, endDate: initial?.endDate ?? '', sharePct: String(initial?.sharePct ?? 100), note: initial?.note ?? '',
-  });
-  const [err, setErr] = useState('');
-  const save = useFinanceMutation(commissionsApi.saveAssignment);
-  const submit = () => save.mutate({ id: initial?.id, userId: f.userId, companyId: f.companyId, site: f.site.trim(), startDate: f.startDate, endDate: f.endDate || null, sharePct: parseNum(f.sharePct), note: f.note.trim() || null },
-    { onSuccess: onDone, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
-  return (
-    <Stack spacing={1.5}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
-        <TextField select size="small" label="Gestor" value={f.userId} onChange={(e) => setF({ ...f, userId: e.target.value })} sx={{ flex: 1 }}>{data.managers.map((m) => <MenuItem key={m.id} value={m.id}>{m.name}</MenuItem>)}</TextField>
-        {data.companies.length > 1 && <TextField select size="small" label="Empresa" value={f.companyId} onChange={(e) => setF({ ...f, companyId: e.target.value })} sx={{ flex: 1 }}>{data.companies.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</TextField>}
-        <Autocomplete freeSolo size="small" sx={{ flex: 1.3 }} options={data.sites.filter((s) => s.companyId === f.companyId).map((s) => s.site)} value={f.site} onInputChange={(_, v) => setF({ ...f, site: v })} renderInput={(pr) => <TextField {...pr} label="Site" placeholder="dominiox.com" />} />
-      </Stack>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
-        <TextField size="small" type="date" label="Responsável desde" value={f.startDate} onChange={(e) => setF({ ...f, startDate: e.target.value })} sx={{ flex: 1 }} slotProps={{ inputLabel: { shrink: true } }} />
-        <TextField size="small" type="date" label="Até (opcional)" value={f.endDate} onChange={(e) => setF({ ...f, endDate: e.target.value })} sx={{ flex: 1 }} slotProps={{ inputLabel: { shrink: true } }} />
-        <TextField size="small" label="Rateio" value={f.sharePct} onChange={(e) => setF({ ...f, sharePct: e.target.value })} sx={{ width: { sm: 120 } }} helperText="100% = só ele" slotProps={{ input: { endAdornment: <InputAdornment position="end">%</InputAdornment> } }} />
-      </Stack>
-      <TextField size="small" label="Observação" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
-      {err && <Alert severity="error" variant="outlined">{err}</Alert>}
-      <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}><Button onClick={onDone}>Voltar</Button><Button variant="contained" onClick={submit} disabled={save.isPending}>Salvar vínculo</Button></Stack>
-    </Stack>
-  );
-}
-
-/* ---------------- regra ---------------- */
-function RuleDialog({ rule, onClose }: { rule: CommissionsResponse['rule']; onClose: () => void }) {
-  const [name, setName] = useState(rule.name);
-  const [tiers, setTiers] = useState<Tier[]>(rule.tiers);
+  const [edit, setEdit] = useState(false);
+  const [tiers, setTiers] = useState<{ from: string; pct: string }[]>([]);
   const [cur, setCur] = useState(rule.tierCurrency);
   const [err, setErr] = useState('');
   const save = useFinanceMutation(commissionsApi.saveRule);
-  const set = (i: number, k: keyof Tier, v: string) => setTiers(tiers.map((t, j) => (j === i ? { ...t, [k]: parseNum(v) || 0 } : t)));
+  const reset = () => { setTiers([...rule.tiers].sort((a, b) => a.from - b.from).map((t) => ({ from: String(t.from).replace('.', ','), pct: String(t.pct).replace('.', ',') }))); setCur(rule.tierCurrency); setErr(''); };
+  const set = (i: number, k: 'from' | 'pct', v: string) => setTiers(tiers.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
+  const submit = () => {
+    const list: Tier[] = tiers.map((t) => ({ from: parseNum(t.from), pct: parseNum(t.pct) }));
+    if (list.some((t) => !Number.isFinite(t.from) || t.from < 0 || !Number.isFinite(t.pct) || t.pct < 0 || t.pct > 100)) return setErr('Confira os valores: patamar a partir de 0 e % entre 0 e 100.');
+    if (new Set(list.map((t) => t.from)).size !== list.length) return setErr('Dois patamares não podem começar no mesmo valor.');
+    setErr('');
+    save.mutate({ name: rule.name || 'Progressiva', tiers: list.map((t, i) => (i === 0 ? { ...t, from: 0 } : t)), tierCurrency: cur },
+      { onSuccess: () => setEdit(false), onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
+  };
+  const sorted = [...rule.tiers].sort((a, b) => a.from - b.from);
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Regra de comissão</DialogTitle>
-      <DialogContent>
-        <Stack spacing={1.5} sx={{ mt: 0.5 }}>
-          <TextField size="small" label="Nome" value={name} onChange={(e) => setName(e.target.value)} />
-          <Typography variant="body2" color="text.secondary">Sem lucro, sem comissão. A faixa que o lucro do mês atingir vale para o lucro todo.</Typography>
+    <Card sx={{ p: 2, mb: 2.5 }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between', mb: 1.25 }}>
+        <Box>
+          <Typography sx={{ fontFamily: 'Sora', fontWeight: 600, fontSize: 16 }}>Comissão progressiva</Typography>
+          <Typography variant="caption">Vale para os gestores com modalidade Progressiva. A faixa atingida pelo ROI total do mês vale para o ROI todo; sem ROI positivo, sem comissão. Gestores com comissão Fixa usam a % do cadastro (Usuários &amp; Squads).</Typography>
+        </Box>
+        {admin && !edit && <Button size="small" variant="outlined" onClick={() => { reset(); setEdit(true); }}>Editar faixas</Button>}
+      </Stack>
+      {!edit ? (
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25}>
+          {sorted.map((t, i) => {
+            const next = sorted[i + 1];
+            const k = (v: number) => `${curSym(rule.tierCurrency)} ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            const range = !next ? (i === 0 ? 'Qualquer ROI' : `A partir de ${k(t.from)}`) : i === 0 ? `Até ${k(next.from - 0.01)}` : `${k(t.from)} a ${k(next.from - 0.01)}`;
+            return (
+              <Box key={i} sx={{ flex: 1, p: 1.5, borderRadius: 2, bgcolor: alpha(p.accent, 0.06 + i * 0.04), border: `1px solid ${alpha(p.accent, 0.25)}` }}>
+                <Typography variant="caption" component="div">ROI no mês · {range}</Typography>
+                <Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 22, color: p.accent }}>{pctFmt(t.pct)}</Typography>
+              </Box>
+            );
+          })}
+        </Stack>
+      ) : (
+        <Stack spacing={1.25} sx={{ maxWidth: 560 }}>
           {tiers.map((t, i) => (
             <Stack key={i} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-              <TextField size="small" label={i === 0 ? 'Até a próxima faixa' : 'A partir de'} value={String(t.from)} disabled={i === 0} onChange={(e) => set(i, 'from', e.target.value)} sx={{ flex: 1 }}
-                slotProps={{ input: { startAdornment: <InputAdornment position="start">{cur === 'USD' ? 'US$' : cur === 'EUR' ? '€' : 'R$'}</InputAdornment> } }} />
-              <TextField size="small" label="%" value={String(t.pct)} onChange={(e) => set(i, 'pct', e.target.value)} sx={{ width: 96 }} />
+              <TextField size="small" label={i === 0 ? 'Patamar inicial' : 'ROI a partir de'} value={i === 0 ? '0' : t.from} disabled={i === 0} onChange={(e) => set(i, 'from', e.target.value)} sx={{ flex: 1 }}
+                slotProps={{ input: { startAdornment: <InputAdornment position="start">{curSym(cur)}</InputAdornment> } }} />
+              <TextField size="small" label="Comissão" value={t.pct} onChange={(e) => set(i, 'pct', e.target.value)} sx={{ width: 120 }}
+                slotProps={{ htmlInput: { inputMode: 'decimal' }, input: { endAdornment: <InputAdornment position="end">%</InputAdornment> } }} />
               <IconButton size="small" disabled={i === 0} onClick={() => setTiers(tiers.filter((_, j) => j !== i))} aria-label="Remover faixa"><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
             </Stack>
           ))}
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <Button size="small" onClick={() => setTiers([...tiers, { from: (tiers[tiers.length - 1]?.from ?? 0) + 20000, pct: (tiers[tiers.length - 1]?.pct ?? 10) + 2 }])}>+ faixa</Button>
+            <Button size="small" startIcon={<AddRoundedIcon />} disabled={tiers.length >= 10}
+              onClick={() => { const last = tiers[tiers.length - 1]; setTiers([...tiers, { from: String((parseNum(last?.from ?? '0') || 0) + 20000), pct: String((parseNum(last?.pct ?? '10') || 10) + 2) }]); }}>Faixa</Button>
             <Box sx={{ flex: 1 }} />
-            <TextField select size="small" label="Moeda das faixas" value={cur} onChange={(e) => setCur(e.target.value as typeof cur)} sx={{ width: 150 }}>{['USD', 'BRL', 'EUR'].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}</TextField>
+            <TextField select size="small" label="Moeda dos patamares" value={cur} onChange={(e) => setCur(e.target.value as typeof cur)} sx={{ width: 170 }}>{['USD', 'BRL', 'EUR'].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}</TextField>
           </Stack>
-          <Typography variant="caption">Comissões já aprovadas mantêm a regra da época.</Typography>
+          <Typography variant="caption">Prévia: {tiersText(tiers.map((t, i) => ({ from: i === 0 ? 0 : parseNum(t.from) || 0, pct: parseNum(t.pct) || 0 })), cur)}. Comissões já aprovadas mantêm a % da época.</Typography>
           {err && <Alert severity="error" variant="outlined">{err}</Alert>}
+          <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
+            <Button onClick={() => { reset(); setEdit(false); }}>Cancelar</Button>
+            <Button variant="contained" disabled={save.isPending} onClick={submit}>{save.isPending ? 'Salvando…' : 'Salvar faixas'}</Button>
+          </Stack>
         </Stack>
-      </DialogContent>
-      <DialogActions><Button variant="outlined" onClick={onClose}>Cancelar</Button>
-        <Button variant="contained" disabled={save.isPending} onClick={() => save.mutate({ name, tiers, tierCurrency: cur }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') })}>Salvar</Button>
-      </DialogActions>
-    </Dialog>
+      )}
+    </Card>
   );
 }

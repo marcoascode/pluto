@@ -5,8 +5,6 @@ import { config } from '../../config.js';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { encrypt } from '../../lib/crypto.js';
-import { today } from '../../lib/dates.js';
-import { snapshotAccount } from '../../services/accountLinks.js';
 import { requireSuperAdmin } from '../../auth/session.js';
 import { refreshRates, latest } from '../../services/fx.js';
 import { runProvider } from '../../services/sync/index.js';
@@ -63,16 +61,9 @@ const accBody = z.object({
   currency: z.enum(['USD', 'BRL', 'EUR']).default('USD'),
   timezone: z.string().trim().min(2).max(60).default(config.appTz),
   imported: z.boolean().default(true),
-  domains: z.array(z.string().trim().toLowerCase()).max(200).default([]),
 });
 
-async function setDomains(c: Parameters<Parameters<typeof tx>[0]>[0], accountId: string, hosts: string[], from: string = today(), userId: string | null = null) {
-  const ids = (await q<{ id: string }>('SELECT id::text FROM domains WHERE hostname = ANY($1)', [hosts], c)).map((r) => r.id);
-  if (ids.length !== new Set(hosts).size) throw conflict('unknown_domain', 'Algum domínio da lista não está cadastrado.');
-  await c.query('DELETE FROM domain_accounts WHERE account_id = $1', [accountId]);
-  for (const d of ids) await c.query('INSERT INTO domain_accounts (domain_id, account_id) VALUES ($1, $2)', [d, accountId]);
-  await snapshotAccount(c, accountId, from, userId);   // 0.17: histórico do vínculo
-}
+/* 0.18.8: domínios da conta não se editam mais aqui: vêm dos vínculos de Usuários & Squads (gestor → domínio → contas). */
 
 integrationsRouter.get('/integrations/:provider/accounts', async (req, res) => {
   const p = parse(provider, req.params.provider);
@@ -87,7 +78,6 @@ integrationsRouter.post('/integrations/:provider/accounts', async (req, res) => 
   const id = await tx(async (c) => {
     const r = await one<{ id: string }>(`INSERT INTO integration_accounts (provider, external_id, name, currency, timezone, imported, status, message)
       VALUES ($1, $2, $3, $4, $5, $6, 'late', 'Aguardando o primeiro sync') RETURNING id::text`, [p, ext, b.name, b.currency, b.timezone, b.imported], c);
-    if (p !== 'gam') await setDomains(c, r!.id, b.domains, today(), req.user!.id);
     return r!.id;
   });
   res.status(201).json(await getAccount(p, id));
@@ -96,13 +86,11 @@ integrationsRouter.post('/integrations/:provider/accounts', async (req, res) => 
 integrationsRouter.patch('/integrations/:provider/accounts/:id', async (req, res) => {
   const p = parse(provider, req.params.provider);
   const id = parse(z.string().regex(/^\d+$/), req.params.id);
-  const b = parse(accBody.omit({ externalId: true }).partial().extend({ domainsFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }), req.body);
-  if (b.domainsFrom && b.domainsFrom > today()) throw conflict('future_date', 'A data do vínculo não pode ser no futuro.');
+  const b = parse(accBody.omit({ externalId: true }).partial(), req.body);
   if (!(await one('SELECT 1 FROM integration_accounts WHERE provider = $1 AND id = $2', [p, id]))) throw notFound('Conta não encontrada.');
   await tx(async (c) => {
     await c.query(`UPDATE integration_accounts SET name = COALESCE($2, name), currency = COALESCE($3, currency), timezone = COALESCE($4, timezone), imported = COALESCE($5, imported) WHERE id = $1`,
       [id, b.name ?? null, b.currency ?? null, b.timezone ?? null, b.imported ?? null]);
-    if (b.domains && p !== 'gam') await setDomains(c, id, b.domains, b.domainsFrom ?? today(), req.user!.id);
   });
   res.json(await getAccount(p, id));
 });

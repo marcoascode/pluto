@@ -1,11 +1,12 @@
 /**
- * Modo demo das Comissões (0.14): as mesmas contas do servidor (services/financeResults.ts), lendo o Caixa do mock.
+ * Modo demo das Comissões (0.18.8): as mesmas contas do servidor (services/financeResults.ts). Os gestores de cada site
+ * simulam os vínculos de Usuários & Squads (gestor → domínio → contas) e a modalidade de comissão do cadastro.
  * GETs chegam como POST `…/__q` (o roteador de mocks só repassa o corpo).
  * u2 e u3 são os gestores do login de demonstração (mocks/db.ts): entrando como eles, só aparecem os sites deles.
  */
 import type * as T from '@/types/api';
 import { ApiError } from '@/lib/api/client';
-import type { Assignment, CommissionLine, CommissionSite, SiteCard, Tier } from '@/lib/financeOps';
+import type { Assignment, CommissionLine, CommissionMode, CommissionSite, SiteCard, Tier } from '@/lib/financeOps';
 import { FIN_CASH, FIN_COSTS, FIN_SITES, financeCompanies, finMock } from './finance';
 import { TODAY } from './db';
 
@@ -18,26 +19,27 @@ const sh = (m: string, n: number) => finMock.shift(m, n);
 const mEnd = (m: string) => finMock.monthEnd(m);
 const id = (p: string) => p + finMock.seq();
 const day = (m: string, d: number) => `${m}-${String(d).padStart(2, '0')}`;
-const norm = (s: unknown) => { const h = String(s ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0]; return h && h.includes('.') ? h : null; };
 
-const MANAGERS = [
-  { id: 'u2', name: 'Gestor Exemplo', role: 'gestor' }, { id: 'u3', name: 'Ana Exemplo', role: 'gestor' },
-  { id: 'g3', name: 'Gestor Gama', role: 'gestor' }, { id: 'g4', name: 'Gestor Delta', role: 'gestor' },
+const MANAGERS: { id: string; name: string; mode: CommissionMode; fixedPct: number | null }[] = [
+  { id: 'u2', name: 'Gestor Exemplo', mode: 'progressive', fixedPct: null }, { id: 'u3', name: 'Ana Exemplo', mode: 'fixed', fixedPct: 11 },
+  { id: 'g3', name: 'Gestor Gama', mode: 'progressive', fixedPct: null }, { id: 'g4', name: 'Gestor Delta', mode: 'progressive', fixedPct: null },
 ];
-const RULE = { name: 'Meritocracia', tiers: [{ from: 0, pct: 10 }, { from: 20000, pct: 12 }, { from: 40000, pct: 15 }] as Tier[], tierCurrency: 'USD' as T.Currency };
-const ASG: Assignment[] = [];
+const RULE = { name: 'Progressiva', tiers: [{ from: 0, pct: 10 }, { from: 20000, pct: 12 }, { from: 40000, pct: 15 }] as Tier[], tierCurrency: 'USD' as T.Currency };
+/** gestor × site (no dash real: Usuários & Squads → gestor → Domínios) */
+interface Asg { userId: string; companyId: string; site: string }
+const ASG: Asg[] = [];
 interface Period { id: string; userId: string; companyId: string; month: string; base: CommissionLine; calculated: number; adjustments: number; adjustmentNote: string | null; approved: number; approvedBy: string; approvedAt: string; paidAt: string | null; paidNote: string | null }
 const PER: Period[] = [];
+/** períodos "Gestores e sites" do demo (só listagem e edição; o cálculo do demo usa o rateio) */
+const PERIODS: Assignment[] = [];
 
 let ready = false;
 function init() {
   if (ready) return; ready = true;
-  const N = M(), P = sh(N, -1);
-  const A = (userId: string, companyId: string, site: string, startDate: string, sharePct = 100) =>
-    ASG.push({ id: id('a'), userId, userName: MANAGERS.find((m) => m.id === userId)!.name, companyId, site, startDate, endDate: null, sharePct, note: null });
-  A('u2', 'c1', 'dominiox.com', day(sh(N, -8), 1)); A('u2', 'c1', 'dominiot.com', day(sh(N, -8), 1));
-  A('u3', 'c1', 'dominioy.com', day(sh(N, -8), 1)); A('g4', 'c1', 'dominiov.com', day(sh(N, -6), 1));
-  A('u3', 'c2', 'dominioz.com', day(sh(N, -8), 1)); A('g3', 'c2', 'dominiow.com', day(P, 16));
+  const N = M();
+  const A = (userId: string, companyId: string, site: string) => ASG.push({ userId, companyId, site });
+  A('u2', 'c1', 'dominiox.com'); A('u2', 'c1', 'dominiot.com'); A('u3', 'c1', 'dominioy.com'); A('g4', 'c1', 'dominiov.com');
+  A('u3', 'c2', 'dominioz.com'); A('g3', 'c2', 'dominiow.com');
   // meses anteriores já aprovados e pagos por fora (dia 10 do mês seguinte); o retrasado da Ana ainda a pagar
   for (const m of [sh(N, -4), sh(N, -3), sh(N, -2)]) for (const l of commissionsFor(['c1', 'c2'], m)) {
     PER.push({ id: id('p'), userId: l.userId, companyId: l.companyId, month: m, base: l, calculated: l.calculated, adjustments: 0, adjustmentNote: null, approved: l.calculated,
@@ -46,63 +48,58 @@ function init() {
 }
 
 /* ---------- mesmas contas do servidor ---------- */
-function siteResults(ids: string[], month: string) {
-  const map = new Map<string, Omit<SiteCard, 'managers'>>();
-  const get = (c: string, s: string) => { let x = map.get(`${c}|${s}`); if (!x) { x = { companyId: c, site: s, month, revenue: 0, ads: 0, otherExpenses: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null }; map.set(`${c}|${s}`, x); } return x; };
-  // 0.15: receita líquida e anúncios "do dash" (no demo, os números de cada site por mês, mês corrente proporcional até hoje)
+const USD_RATE = 5.3;   // cotação do ROI no demo
+function siteResults(ids: string[], month: string): SiteCard[] {
+  // receita líquida e despesas "do dash" (no demo, os números de cada site por mês, mês corrente proporcional até hoje)
   const k = Math.round((Date.parse(`${month}-15`) - Date.parse(`${M()}-15`)) / (30.44 * 864e5));
   const grow = [0.82, 0.88, 0.94, 1, 1.03][Math.max(0, Math.min(4, k + 4))];
   const part = month === M() ? Number(TODAY.slice(8, 10)) / Number(mEnd(month).slice(8, 10)) : month > M() ? 0 : 1;
+  const out: SiteCard[] = [];
   for (const x of FIN_SITES) {
     if (!ids.includes(x.companyId) || k < x.from) continue;
     const g = grow * (1 + ((x.site.length + (k + 4) * 3) % 5 - 2) / 100) * part;
-    const y = get(x.companyId, x.site); y.revenue += x.income * g; y.ads = (y.ads ?? 0) + (x.google + x.meta) * g;
+    const revenue = x.income * g, allAds = (x.google + x.meta) * g;
+    const own = ASG.filter((a) => a.companyId === x.companyId && a.site === x.site);
+    const share = own.length ? 1 / own.length : 0;
+    // contas vinculadas ao gestor: ~95% da despesa do site (o resto é de conta sem vínculo, fica fora do ROI dele)
+    const managers = own.map((a) => { const ads = allAds * 0.95 / own.length; return { userId: a.userId, userName: MANAGERS.find((m) => m.id === a.userId)?.name ?? '', sharePct: r2(share * 100), revenue: r2(revenue * share), ads: r2(ads), result: r2(revenue * share - ads), source: 'rateio' as const, days: 30 }; });
+    const ads = own.length ? managers.reduce((a, m) => a + m.ads, 0) : allAds;
+    if (!revenue && !allAds) continue;
+    out.push({ companyId: x.companyId, site: x.site, month, revenue: r2(revenue), revenueUsd: r2(revenue / USD_RATE), ads: r2(ads), result: r2(revenue - ads), roi: ads > 0 ? r2(((revenue - ads) / ads) * 100) : null, allAds: r2(allAds), managers });
   }
-  for (const e of FIN_CASH) {
-    if (!e.site || !ids.includes(e.companyId) || e.kind !== 'expense' || e.category === 'google_ads' || e.category === 'meta_ads') continue;
-    if ((e.competence ?? e.date.slice(0, 7)) !== month) continue;
-    get(e.companyId, e.site).otherExpenses! += finMock.conv(e.amount, e.currency, 'BRL', e.date);
-  }
-  const rd = [mEnd(month), TODAY].sort()[0];
-  for (const c of FIN_COSTS) if (c.site && ids.includes(c.companyId) && finMock.applies(c, month)) get(c.companyId, c.site).siteCosts += finMock.conv(finMock.amountIn(c, month), c.currency, 'BRL', rd);
-  for (const x of map.values()) { x.revenue = r2(x.revenue); x.ads = r2(x.ads!); x.otherExpenses = r2(x.otherExpenses!); x.siteCosts = r2(x.siteCosts); x.expenses = r2(x.ads + x.otherExpenses); x.costs = r2(x.expenses + x.siteCosts); x.result = r2(x.revenue - x.costs); x.roi = x.costs > 0 ? r2((x.result / x.costs) * 100) : null; }
-  return [...map.values()].sort((a, b) => b.result - a.result);
+  return out.sort((a, b) => b.result - a.result);
 }
-const coverage = (a: Assignment, m: string) => {
-  const s = [a.startDate, `${m}-01`].sort()[1], e = [a.endDate ?? '9999-12-31', mEnd(m)].sort()[0];
-  if (s > e) return 0;
-  const d = (x: string) => Date.UTC(+x.slice(0, 4), +x.slice(5, 7) - 1, +x.slice(8, 10));
-  return ((d(e) - d(s)) / 864e5 + 1) / +mEnd(m).slice(8, 10);
-};
 function commissionsFor(ids: string[], month: string, userId?: string): CommissionLine[] {
   const res = siteResults(ids, month);
-  const rateDay = [mEnd(month), TODAY].sort()[0];
-  const groups = new Map<string, Assignment[]>();
-  for (const a of ASG) if (ids.includes(a.companyId) && (!userId || a.userId === userId) && coverage(a, month) > 0) groups.set(`${a.userId}|${a.companyId}`, [...(groups.get(`${a.userId}|${a.companyId}`) ?? []), a]);
+  const groups = new Map<string, CommissionSite[]>();
+  for (const s of res) for (const m of s.managers) if (!userId || m.userId === userId) {
+    const k = `${m.userId}|${s.companyId}`;
+    groups.set(k, [...(groups.get(k) ?? []), { site: s.site, sharePct: m.sharePct, revenue: m.revenue, ads: m.ads, result: m.result }]);
+  }
   for (const p of PER) if (ids.includes(p.companyId) && p.month === month && (!userId || p.userId === userId) && !groups.has(`${p.userId}|${p.companyId}`)) groups.set(`${p.userId}|${p.companyId}`, []);
   const out: CommissionLine[] = [];
-  for (const [k, list] of groups) {
+  for (const [k, sites] of groups) {
     const [uid, companyId] = k.split('|');
-    const sites: CommissionSite[] = list.map((a) => {
-      const r = res.find((x) => x.companyId === companyId && x.site === a.site), cov = coverage(a, month);
-      return { site: a.site, sharePct: a.sharePct, coverage: r2(cov), revenue: r?.revenue ?? 0, costs: r?.costs ?? 0, result: r?.result ?? 0, base: r2((r?.result ?? 0) * (a.sharePct / 100) * cov) };
-    });
-    const w = (f: (s: CommissionSite) => number) => r2(sites.reduce((a, s) => a + f(s) * (s.sharePct / 100) * s.coverage, 0));
-    const profit = r2(sites.reduce((a, s) => a + s.base, 0));
-    const profitTier = r2(finMock.conv(profit, 'BRL', RULE.tierCurrency, rateDay));
+    const mgr = MANAGERS.find((m) => m.id === uid);
+    const mode = mgr?.mode ?? 'progressive';
+    const profit = r2(sites.reduce((a, s) => a + s.result, 0));
+    const profitUsd = r2(profit / USD_RATE);
+    const profitTier = RULE.tierCurrency === 'USD' ? profitUsd : RULE.tierCurrency === 'BRL' ? profit : r2(finMock.conv(profit, 'BRL', RULE.tierCurrency, [mEnd(month), TODAY].sort()[0]));
     const tier = profitTier > 0 ? [...RULE.tiers].sort((a, b) => a.from - b.from).filter((x) => profitTier >= x.from).pop() : null;
-    const pct = tier?.pct ?? 0, calculated = r2(Math.max(0, profit) * pct / 100);
+    const pct = mode === 'fixed' ? (profit > 0 ? mgr?.fixedPct ?? 0 : 0) : tier?.pct ?? 0;
+    const calculated = r2(Math.max(0, profit) * pct / 100);
     const live: CommissionLine = {
-      periodId: null, userId: uid, userName: list[0]?.userName ?? '', companyId, month, sites, revenue: w((s) => s.revenue), costs: w((s) => s.costs), profit,
-      negatives: r2(sites.filter((s) => s.base < 0).reduce((a, s) => a + s.base, 0)), profitTier, tierCurrency: RULE.tierCurrency as CommissionLine['tierCurrency'], pct, calculated,
+      periodId: null, userId: uid, userName: mgr?.name ?? '', companyId, month, mode, fixedPct: mgr?.fixedPct ?? null, sites,
+      revenue: r2(sites.reduce((a, s) => a + s.revenue, 0)), ads: r2(sites.reduce((a, s) => a + s.ads, 0)), profit, profitUsd,
+      negatives: r2(sites.filter((s) => s.result < 0).reduce((a, s) => a + s.result, 0)), profitTier, tierCurrency: RULE.tierCurrency as CommissionLine['tierCurrency'], pct, calculated, calculatedUsd: r2(calculated / USD_RATE),
       adjustments: 0, adjustmentNote: null, approved: null, status: month >= M() ? 'open' : 'to_approve', frozen: false, liveDiff: null,
-      incomplete: sites.filter((s) => !res.some((x) => x.companyId === companyId && x.site === s.site && x.revenue > 0)).map((s) => `${s.site}: sem receita no dash para o mês`),
+      incomplete: sites.filter((s) => !(s.revenue > 0)).map((s) => `${s.site}: sem receita no dash para o mês`),
       approvedBy: null, approvedAt: null, paidAt: null, paidNote: null,
     };
     const per = PER.find((p) => p.userId === uid && p.companyId === companyId && p.month === month);
     out.push(per ? { ...per.base, periodId: per.id, frozen: true, calculated: per.calculated, adjustments: per.adjustments, adjustmentNote: per.adjustmentNote, approved: per.approved,
       status: per.paidAt ? 'paid' : 'approved', approvedBy: per.approvedBy, approvedAt: per.approvedAt, paidAt: per.paidAt, paidNote: per.paidNote,
-      liveDiff: list.length && Math.abs(live.calculated - per.calculated) >= 0.01 ? r2(live.calculated - per.calculated) : null } : live);
+      liveDiff: sites.length && Math.abs(live.calculated - per.calculated) >= 0.01 ? r2(live.calculated - per.calculated) : null } : live);
   }
   return out.sort((a, b) => b.profit - a.profit);
 }
@@ -128,7 +125,7 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
   const sitesList = () => {
     const m = new Map<string, { site: string; companyId: string; revshare: number | null }>();
     // % de revshare do domínio (no dash real vem de Admin → Domínios); um site com 9% para mostrar a diferença
-    for (const x of [...FIN_SITES, ...ASG, ...FIN_CASH.filter((e) => e.site), ...FIN_COSTS.filter((c) => c.site)] as { site?: string | null; companyId: string }[]) if (x.site && ids.includes(x.companyId)) m.set(`${x.companyId}|${x.site}`, { site: x.site, companyId: x.companyId, revshare: FIN_SITES.some((s) => s.site === x.site) ? (x.site === 'dominioz.com' ? 9 : 7.5) : null });
+    for (const x of [...FIN_SITES, ...FIN_CASH.filter((e) => e.site), ...FIN_COSTS.filter((c) => c.site)] as { site?: string | null; companyId: string }[]) if (x.site && ids.includes(x.companyId)) m.set(`${x.companyId}|${x.site}`, { site: x.site, companyId: x.companyId, revshare: FIN_SITES.some((s) => s.site === x.site) ? (x.site === 'dominioz.com' ? 9 : 7.5) : null });
     return [...m.values()].sort((a, z) => a.site.localeCompare(z.site));
   };
   let m: RegExpMatchArray | null;
@@ -140,9 +137,7 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
     const mine = role === 'manager' ? u.id : undefined;
     const allLines = commissionsFor(ids, month, mine);
     const lines = b.user ? allLines.filter((l) => l.userId === b.user) : allLines;
-    const owners = (c: string, s: string) => ASG.filter((a) => a.companyId === c && a.site === s && allLines.some((l) => l.userId === a.userId && l.companyId === c && l.sites.some((x) => x.site === s))).map((a) => ({ userId: a.userId, userName: a.userName, sharePct: a.sharePct }));
-    let cards: SiteCard[] = siteResults(ids, month).map((s) => ({ ...s, managers: owners(s.companyId, s.site) }));
-    for (const l of allLines) for (const s of l.sites) if (!cards.some((c) => c.companyId === l.companyId && c.site === s.site)) cards.push({ companyId: l.companyId, site: s.site, month, revenue: 0, ads: 0, otherExpenses: 0, expenses: 0, siteCosts: 0, costs: 0, result: 0, roi: null, managers: owners(l.companyId, s.site) });
+    let cards = siteResults(ids, month);
     if (mine) cards = cards.filter((c) => c.managers.some((x) => x.userId === mine));
     if (b.user) cards = cards.filter((c) => c.managers.some((x) => x.userId === b.user));
     const sum = (f: (x: CommissionLine) => number) => r2(lines.reduce((a, x) => a + f(x), 0));
@@ -150,7 +145,7 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
     return {
       viewer: { role, userId: u.id }, month, months, companies: all, managers: [...new Map(allLines.map((l) => [l.userId, l.userName])).entries()].map(([i, name]) => ({ id: i, name })),
       rule: RULE, lines, sites: cards,
-      totals: { revenue: r2(cards.reduce((a, c) => a + c.revenue, 0)), costs: r2(cards.reduce((a, c) => a + c.costs, 0)), result: r2(cards.reduce((a, c) => a + c.result, 0)),
+      totals: { revenue: sum((l) => l.revenue), ads: sum((l) => l.ads), result: sum((l) => l.profit), resultUsd: sum((l) => l.profitUsd),
         commissions: sum((l) => l.approved ?? l.calculated), toPay: sum((l) => (l.status === 'paid' ? 0 : l.approved ?? l.calculated)), paid: sum((l) => (l.status === 'paid' ? l.approved ?? 0 : 0)) },
     };
   }
@@ -175,25 +170,19 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
     PER.splice(PER.indexOf(p), 1); return undefined;
   }
   if (path === '/finance/assignments' && method === 'GET')
-    return { viewer: { role }, companies: all, sites: sitesList(), managers: role === 'admin' ? MANAGERS : [], assignments: ASG.filter((a) => ids.includes(a.companyId)) };
+    return { viewer: { role }, companies: all, sites: sitesList(), managers: role === 'admin' ? MANAGERS.map((x) => ({ id: x.id, name: x.name, role: 'gestor' })) : [], assignments: PERIODS.filter((a) => ids.includes(a.companyId) && (!b.user || a.userId === b.user)) };
   if ((m = path.match(/^\/finance\/assignments(?:\/([^/]+))?$/))) {
-    const i = m[1] ? ASG.findIndex((a) => a.id === m![1]) : -1;
+    const i = m[1] ? PERIODS.findIndex((a) => a.id === m![1]) : -1;
     if (m[1] && i < 0) throw new ApiError(404, 'not_found', 'Vínculo não encontrado.');
-    const locked = i >= 0 && PER.some((p) => p.userId === ASG[i].userId && p.companyId === ASG[i].companyId && p.month >= ASG[i].startDate.slice(0, 7) && (!ASG[i].endDate || p.month <= ASG[i].endDate!.slice(0, 7)));
-    if (method === 'DELETE') { if (locked) throw new ApiError(409, 'history_locked', 'Este vínculo já tem comissão aprovada. Coloque uma data de fim em vez de excluir.'); ASG.splice(i, 1); return undefined; }
-    const site = norm(b.site); if (!site) throw new ApiError(422, 'invalid_input', 'Site inválido. Use o domínio, ex.: dominiox.com');
+    if (method === 'DELETE') { PERIODS.splice(i, 1); return undefined; }
     if (b.endDate && b.endDate < b.startDate) throw new ApiError(422, 'invalid_input', 'O fim não pode ser antes do início.');
-    const old = i >= 0 ? ASG[i] : null;
-    if (old && locked && (old.userId !== b.userId || old.site !== site || old.startDate !== b.startDate || old.sharePct !== Number(b.sharePct)))
-      throw new ApiError(409, 'history_locked', 'Este vínculo já tem comissão aprovada. Para trocar gestor, site ou rateio, coloque a data de fim e crie um vínculo novo (os meses anteriores não mudam).');
-    const overlap = ASG.filter((a) => a.id !== old?.id && a.companyId === b.companyId && a.site === site && a.startDate <= (b.endDate || '9999') && (a.endDate ?? '9999') >= b.startDate).reduce((x, a) => x + a.sharePct, 0);
-    if (overlap + Number(b.sharePct) > 100.0001) throw new ApiError(422, 'share_over_100', `Neste período o site já tem ${overlap}% com outro(s) gestor(es). A soma do rateio não pode passar de 100%.`);
-    const row: Assignment = { id: old?.id ?? id('a'), userId: b.userId, userName: MANAGERS.find((x) => x.id === b.userId)?.name ?? 'Gestor', companyId: b.companyId, site, startDate: b.startDate, endDate: b.endDate || null, sharePct: Number(b.sharePct), note: b.note || null };
-    if (old) ASG[i] = row; else ASG.push(row);
+    const row: Assignment = { id: m[1] ?? id('a'), userId: b.userId, userName: MANAGERS.find((x) => x.id === b.userId)?.name ?? 'Gestor', companyId: b.companyId, site: String(b.site).toLowerCase(), startDate: b.startDate, endDate: b.endDate || null, sharePct: Number(b.sharePct), note: b.note || null };
+    if (i >= 0) PERIODS[i] = row; else PERIODS.push(row);
     return { id: row.id };
   }
   if (path === '/finance/commission-rule') {
     if (!(b.tiers ?? []).some((t: Tier) => t.from === 0)) throw new ApiError(422, 'invalid_input', 'A primeira faixa precisa começar em 0.');
+    if (new Set((b.tiers as Tier[]).map((t) => t.from)).size !== b.tiers.length) throw new ApiError(422, 'invalid_input', 'Duas faixas não podem começar no mesmo valor.');
     RULE.name = b.name; RULE.tiers = [...b.tiers].sort((x: Tier, y: Tier) => x.from - y.from); RULE.tierCurrency = b.tierCurrency;
     return { ok: true };
   }

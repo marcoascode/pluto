@@ -1,4 +1,4 @@
-import { Alert, Button, Card, CardHeader, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel, Grid, IconButton, InputAdornment, ListItemText, MenuItem, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Button, Card, CardHeader, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel, Grid, IconButton, InputAdornment, MenuItem, Stack, Switch, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
@@ -33,7 +33,7 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const { data: ma } = useIntegrationAccounts('meta');
   const { data: gam } = useIntegrationAccounts('gam');
   const today = todayISO();   // data no fuso da organização (não UTC)
-  const [f, setF] = useState<Pick<Required<DomainInput>, 'hostname' | 'active' | 'squadId' | 'googleAccounts' | 'metaAccounts' | 'gamAccountId'>>({ hostname: d.hostname, active: d.active, squadId: d.squadId, googleAccounts: d.googleAccounts, metaAccounts: d.metaAccounts, gamAccountId: d.gamAccountId });
+  const [f, setF] = useState<Pick<Required<DomainInput>, 'hostname' | 'active' | 'squadId' | 'gamAccountId'>>({ hostname: d.hostname, active: d.active, squadId: d.squadId, gamAccountId: d.gamAccountId });
   const [rs, setRs] = useState(String(d.revShare ?? 0).replace('.', ','));
   const [rsFrom, setRsFrom] = useState(today);
   const [err, setErr] = useState('');
@@ -43,19 +43,19 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const [shown, setShown] = useState<string | null>(null);
   const [clearPw, setClearPw] = useState(false);
   const [pwErr, setPwErr] = useState('');
-  const [accFrom, setAccFrom] = useState(today);   // 0.17: a partir de quando a mudança de contas vale
-  const accChanged = [...f.googleAccounts].sort().join() !== [...d.googleAccounts].sort().join() || [...f.metaAccounts].sort().join() !== [...d.metaAccounts].sort().join();
+  // 0.18.9: rateio da receita entre os gestores do domínio (só com 2+ gestores; soma = 100%)
+  const multiMgr = d.managers.length > 1;
+  const hasShares = multiMgr && d.managers.every((m) => m.sharePct != null);
+  const [shares, setShares] = useState<Record<string, string>>(() => Object.fromEntries(d.managers.map((m) => [m.userId, m.sharePct != null ? String(m.sharePct).replace('.', ',') : String(Math.round((100 / Math.max(1, d.managers.length)) * 1000) / 1000).replace('.', ',')])));
+  const [useShares, setUseShares] = useState(hasShares);
+  const shareNum = (id: string) => Number((shares[id] ?? '').trim().replace(',', '.'));
+  const shareSum = Math.round(d.managers.reduce((a, m) => a + (Number.isFinite(shareNum(m.userId)) ? shareNum(m.userId) : 0), 0) * 1000) / 1000;
+  const sharesChanged = useShares !== hasShares || (useShares && d.managers.some((m) => Math.abs(shareNum(m.userId) - (m.sharePct ?? -1)) > 1e-9));
   const reveal = async () => {
     setPwErr('');
     try { const r = await adminApi.revealWpPassword(d.hostname); setShown(r.password); } catch (e) { setPwErr(e instanceof ApiError ? e.message : 'Não foi possível abrir a senha.'); }
   };
   const save = useAdminMutation((b: DomainInput) => adminApi.updateDomain(d.hostname, b), INV);
-  const multi = (label: string, key: 'googleAccounts' | 'metaAccounts', opts: { id: string; name: string }[]) => (
-    <TextField select label={label} value={f[key]} fullWidth onChange={(e) => setF({ ...f, [key]: typeof e.target.value === 'string' ? e.target.value.split(',') : (e.target.value as string[]) })}
-      slotProps={{ inputLabel: { shrink: true }, select: { multiple: true, displayEmpty: true, renderValue: (v) => (v as string[]).map((id) => opts.find((o) => o.id === id)?.name ?? id).join(', ') || 'Nenhuma' } }}>
-      {opts.map((o) => <MenuItem key={o.id} value={o.id}><Checkbox size="small" checked={f[key].includes(o.id)} /><ListItemText primary={o.name} /></MenuItem>)}
-    </TextField>
-  );
   const submit = () => {
     const h = clean(f.hostname);
     if (!HOST_RE.test(h)) return setErr('Digite um domínio válido, ex.: novodominio.com');
@@ -63,10 +63,14 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
     if (!Number.isFinite(share) || share < 0 || share >= 100) return setErr('revShare precisa ser um percentual entre 0 e 99,999.');
     setErr('');
     const changed = Math.abs(share - (d.revShare ?? 0)) > 1e-9;
-    if (accChanged && accFrom > today) return setErr('A data do vínculo das contas não pode ser no futuro.');
+    if (multiMgr && useShares && sharesChanged) {
+      if (d.managers.some((m) => !Number.isFinite(shareNum(m.userId)) || shareNum(m.userId) <= 0 || shareNum(m.userId) > 100)) return setErr('Rateio: cada gestor precisa ter uma porcentagem maior que 0 e até 100%.');
+      if (Math.abs(shareSum - 100) > 0.001) return setErr(`Rateio: a soma das porcentagens precisa ser 100% (está em ${String(shareSum).replace('.', ',')}%).`);
+    }
     const n = (v: string) => v.trim() || null;
     save.mutate({
-      ...f, hostname: h, ...(changed ? { revShare: share, revShareFrom: rsFrom } : {}), ...(accChanged ? { accountsFrom: accFrom } : {}),
+      ...(multiMgr && sharesChanged ? { managerShares: useShares ? d.managers.map((m) => ({ userId: m.userId, sharePct: shareNum(m.userId) })) : null } : {}),
+      ...f, hostname: h, ...(changed ? { revShare: share, revShareFrom: rsFrom } : {}),
       registrar: n(reg.registrar), expiresOn: reg.expiresOn || null, hosting: n(reg.hosting), wpUser: n(reg.wpUser),
       ...(clearPw ? { wpPassword: null } : pw ? { wpPassword: pw } : {}),
     }, { onSuccess: onClose, onError: (e) => setErr(e instanceof ApiError ? e.message : 'Não foi possível salvar.') });
@@ -92,12 +96,6 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
           <MenuItem value="">Automático (primeira rede que mostrar o site)</MenuItem>
           {gam?.accounts.map((a) => <MenuItem key={a.id} value={a.id}>{a.name} · {a.externalId}</MenuItem>)}
         </TextField>
-        {multi('Contas Google Ads', 'googleAccounts', (ga?.accounts ?? []).map((a) => ({ id: a.id, name: `${a.name} · ${a.externalId}` })))}
-        {multi('Contas Meta Ads', 'metaAccounts', (ma?.accounts ?? []).map((a) => ({ id: a.id, name: `${a.name} · ${a.externalId}` })))}
-        {accChanged && (
-          <TextField label="Mudança das contas vale a partir de" type="date" value={accFrom} onChange={(e) => setAccFrom(e.target.value)} slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: today } }}
-            helperText="A despesa das contas até o dia anterior continua no site em que estavam (ex.: site penalizado e conta passada para outro site). O histórico fica em Contas × Sites." />
-        )}
         <Divider />
         <Typography variant="overline" sx={{ mb: -1 }}>Registro do domínio</Typography>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
@@ -127,18 +125,39 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
         <Typography variant="caption" sx={{ mt: -0.75 }}>A senha WP fica criptografada (não aparece na lista nem nas respostas da API). “Mostrar senha” abre uma vez e registra quem abriu.</Typography>
         <Divider />
         <Stack spacing={0.75}>
-          <Typography variant="overline">Gestores do domínio</Typography>
+          <Typography variant="overline">Gestores e contas de anúncios do domínio</Typography>
           {d.managers.length ? d.managers.map((m) => {
             const nm = (ids: string[], list?: { id: string; name: string }[]) => ids.map((id) => list?.find((a) => a.id === id)?.name ?? id).join(', ');
             return (
               <Stack key={m.userId} direction="row" spacing={1} sx={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
-                <Typography sx={{ fontWeight: 600, fontSize: 13.5 }}>{m.name}</Typography>
+                <Typography sx={{ fontWeight: 600, fontSize: 13.5 }}>{m.name}{m.sharePct != null && d.managers.length > 1 ? ` · ${String(m.sharePct).replace('.', ',')}%` : ''}</Typography>
                 <Typography variant="caption">Google: {nm(m.googleAccounts, ga?.accounts) || '—'} · Meta: {nm(m.metaAccounts, ma?.accounts) || '—'}</Typography>
               </Stack>
             );
           }) : <Typography variant="caption">Nenhum gestor ainda.</Typography>}
-          <Typography variant="caption">Gestores e as contas de cada um são definidos em Usuários & Squads → editar o gestor → Domínios.</Typography>
+          <Typography variant="caption">Os vínculos de gestores e contas Google Ads / Meta Ads são feitos só em Configurações → Usuários & Squads → editar o gestor → Domínios. A despesa dessas contas é a que entra no ROI do domínio e na comissão do gestor.</Typography>
         </Stack>
+        {multiMgr && (
+          <Stack spacing={1}>
+            <Divider />
+            <Typography variant="overline" sx={{ mb: -0.5 }}>Rateio</Typography>
+            <Typography variant="caption">Quanto da receita do domínio vai para cada gestor no ROI e na comissão. Cada um desconta só as despesas das próprias contas. Os períodos de “Gestores e sites” (edição do gestor) valem por cima deste rateio nos dias que cobrem.</Typography>
+            <FormControlLabel control={<Switch checked={useShares} onChange={(e) => setUseShares(e.target.checked)} />} label={<Typography sx={{ fontSize: 13.5 }}>{useShares ? 'Porcentagens definidas' : 'Dividir igualmente entre os gestores'}</Typography>} />
+            {useShares && (<>
+              {d.managers.map((m) => (
+                <Stack key={m.userId} direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+                  <Typography sx={{ flex: 1, fontSize: 13.5, fontWeight: 600 }}>{m.name}</Typography>
+                  <TextField size="small" value={shares[m.userId] ?? ''} onChange={(e) => setShares({ ...shares, [m.userId]: e.target.value })} sx={{ width: 130 }}
+                    slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': `Rateio de ${m.name}` }, input: { endAdornment: <InputAdornment position="end">%</InputAdornment> } }} />
+                </Stack>
+              ))}
+              <Typography variant="caption" sx={{ color: Math.abs(shareSum - 100) > 0.001 ? 'error.main' : 'success.main', fontWeight: 600 }}>
+                Soma: {String(shareSum).replace('.', ',')}% {Math.abs(shareSum - 100) > 0.001 ? '· precisa ser 100%' : '✓'}
+              </Typography>
+            </>)}
+            {!hasShares && <Typography variant="caption">Hoje: dividido igualmente ({String(Math.round((100 / d.managers.length) * 1000) / 1000).replace('.', ',')}% cada). Ao entrar ou sair um gestor do domínio, o rateio volta para partes iguais.</Typography>}
+          </Stack>
+        )}
         <FormControlLabel control={<Switch checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} />} label="Ativo" />
         {err && <Alert severity="error" variant="outlined">{err}</Alert>}
       </Stack></DialogContent>
