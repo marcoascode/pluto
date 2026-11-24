@@ -22,7 +22,7 @@ const DOMAIN_SQL = `
          d.gam_account_id::text AS "gamAccountId",
          d.registrar, d.expires_on::text AS "expiresOn", d.hosting, d.wp_user AS "wpUser", (d.wp_password_enc IS NOT NULL) AS "hasWpPassword",
          d.wp_updated_at AS "wpUpdatedAt",
-         COALESCE((SELECT json_agg(json_build_object('userId', u.id::text, 'name', u.name,
+         COALESCE((SELECT json_agg(json_build_object('userId', u.id::text, 'name', u.name, 'sharePct', dm.share_pct::float,
              'googleAccounts', COALESCE((SELECT array_agg(x.account_id::text) FROM domain_manager_accounts x JOIN integration_accounts ia ON ia.id = x.account_id WHERE x.domain_id = dm.domain_id AND x.user_id = dm.user_id AND ia.provider = 'google-ads'), '{}'),
              'metaAccounts',   COALESCE((SELECT array_agg(x.account_id::text) FROM domain_manager_accounts x JOIN integration_accounts ia ON ia.id = x.account_id WHERE x.domain_id = dm.domain_id AND x.user_id = dm.user_id AND ia.provider = 'meta'), '{}')
            ) ORDER BY u.name) FROM domain_managers dm JOIN users u ON u.id = dm.user_id WHERE dm.domain_id = d.id), '[]'::json) AS "managers"
@@ -78,6 +78,8 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
     registrar: z.string().trim().max(120).nullable().optional(), expiresOn: ISO.nullable().optional(),
     hosting: z.string().trim().max(160).nullable().optional(), wpUser: z.string().trim().max(160).nullable().optional(),
     wpPassword: z.string().max(300).nullable().optional(),   // texto = troca · null = apaga · ausente = mantém
+    // 0.18.9: rateio da receita do domínio entre os gestores (todos os gestores atuais, soma = 100%; null = dividir igualmente)
+    managerShares: z.array(z.object({ userId: z.string().regex(/^\d+$/), sharePct: z.number().gt(0).max(100) })).max(50).nullable().optional(),
   }), req.body);
   const d = await one<{ id: string }>('SELECT id::text FROM domains WHERE hostname = $1', [host]);
   if (!d) throw notFound('Domínio não encontrado.');
@@ -101,6 +103,18 @@ domainsRouter.patch('/domains/:hostname', async (req, res) => {
       if (b.squadId) {
         if (!(await one('SELECT 1 FROM squads WHERE id = $1', [b.squadId], c))) throw notFound('Squad não encontrado.');
         await c.query('INSERT INTO squad_domains (squad_id, domain_id) VALUES ($1, $2)', [b.squadId, d.id]);
+      }
+    }
+    if (b.managerShares !== undefined) {
+      const cur = (await q<{ id: string }>('SELECT user_id::text AS id FROM domain_managers WHERE domain_id = $1', [d.id], c)).map((r) => r.id);
+      if (b.managerShares === null) await c.query('UPDATE domain_managers SET share_pct = NULL WHERE domain_id = $1', [d.id]);
+      else {
+        const got = b.managerShares.map((x) => x.userId);
+        if (got.length !== cur.length || new Set(got).size !== got.length || got.some((u) => !cur.includes(u)))
+          throw conflict('share_managers', 'O rateio precisa ter todos os gestores do domínio (e só eles). Recarregue a tela e tente de novo.');
+        const sum = b.managerShares.reduce((a, x) => a + x.sharePct, 0);
+        if (Math.abs(sum - 100) > 0.001) throw conflict('share_sum', `A soma do rateio precisa ser 100% (está em ${Math.round(sum * 1000) / 1000}%).`);
+        for (const x of b.managerShares) await c.query('UPDATE domain_managers SET share_pct = $3 WHERE domain_id = $1 AND user_id = $2', [d.id, x.userId, x.sharePct]);
       }
     }
     // 0.18.8: contas de anúncios NÃO se ligam mais por aqui: só em Usuários & Squads (gestor → domínio → contas).

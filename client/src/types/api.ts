@@ -447,6 +447,8 @@ export interface DomainInput {
   active?: boolean;
   squadId?: string | null;
   // 0.18.8: contas Google/Meta do domínio não se editam aqui (só em Usuários & Squads → gestor → Domínios)
+  /** 0.18.9: rateio entre os gestores do domínio (todos, soma = 100). null = dividir igualmente. */
+  managerShares?: { userId: string; sharePct: number }[] | null;
   /** 0.17: registro do domínio */
   registrar?: string | null; expiresOn?: string | null; hosting?: string | null; wpUser?: string | null;
   /** texto = troca a senha · null = apaga · ausente = mantém (a senha nunca volta na lista) */
@@ -465,7 +467,8 @@ export interface Domain {
   metaAccounts: string[];
   gamAccountId: string | null;
   /** Gestores do domínio e as contas de cada um (editado em Usuários). */
-  managers: { userId: string; name: string; googleAccounts: string[]; metaAccounts: string[] }[];
+  /** sharePct: 0.18.9 rateio da receita do domínio (null = dividido igualmente) */
+  managers: { userId: string; name: string; sharePct: number | null; googleAccounts: string[]; metaAccounts: string[] }[];
   lastDataAt: string | null;
   /** 0.17: registro do domínio (a senha WP só por adminApi.revealWpPassword) */
   registrar?: string | null; expiresOn?: string | null; hosting?: string | null; wpUser?: string | null; hasWpPassword?: boolean;

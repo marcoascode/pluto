@@ -94,8 +94,8 @@ function LinksTab({ data }: { data: LinksResponse }) {
         <TextField size="small" placeholder="Buscar conta, ID ou site" value={s} onChange={(e) => setS(e.target.value)} sx={{ maxWidth: 320 }}
           slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> } }} />
       </Stack>
-      {gestor && !data.accounts.length && <Alert severity="info" sx={{ mb: 1.5 }}>Nenhuma conta de anúncios vinculada a você ainda. O Admin vincula em Usuários & Squads.</Alert>}
-      {gestor && !!data.accounts.length && !data.domains.length && <Alert severity="info" sx={{ mb: 1.5 }}>Nenhum domínio vinculado a você ainda. O Admin vincula em Usuários & Squads.</Alert>}
+      {gestor && !data.accounts.length && <Alert severity="info" sx={{ mb: 1.5 }}>Nenhuma conta de anúncios vinculada a você ainda. O Admin ou o Gerente vinculam em Usuários & Squads.</Alert>}
+      {gestor && !!data.accounts.length && !data.domains.length && <Alert severity="info" sx={{ mb: 1.5 }}>Nenhum domínio vinculado a você ainda. O Admin ou o Gerente vinculam em Usuários & Squads.</Alert>}
       <Card>
         <TableContainer>
           <Table size="small">
@@ -139,7 +139,7 @@ export default function Links() {
       <PageHead title="Contas × Sites"
         sub="Qual site cada conta de anúncios paga e desde quando. A despesa até a data da mudança fica no site antigo; a partir dela, no novo." />
       <Alert severity="info" variant="outlined" sx={{ mb: 1.75 }}>
-        Os vínculos entre usuários, domínios e contas de anúncios são feitos só em <b>Configurações → Usuários &amp; Squads</b> (editar o gestor → Domínios).
+        Os vínculos entre usuários, domínios e contas de anúncios são feitos só em <b>Usuários &amp; Squads</b> (Admin: editar o gestor → Domínios; Gerente: menu Gestores).
         A despesa das contas vinculadas ao gestor é a que entra no ROI dos sites dele e na comissão.
       </Alert>
       <LinksTab data={data} />

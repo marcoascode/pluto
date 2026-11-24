@@ -54,6 +54,11 @@ function RequireFinance({ children }: { children: ReactNode }) {
   const { canFinance } = useAuth();
   return canFinance ? <>{children}</> : <NoAccess msg="O Finance é só para Admin e sócios das Empresas." />;
 }
+/** 0.18.9: Usuários & Squads — o Gerente entra só na lista de gestores (atribui domínios e contas do alcance dele). */
+function RequireAdminOrGerente({ children }: { children: ReactNode }) {
+  const { isAdmin, user } = useAuth();
+  return isAdmin || user?.role === 'gerente' ? <>{children}</> : <NoAccess msg="Esta área é exclusiva de Admin, SuperAdmin e Gerente." />;
+}
 const S = (el: ReactNode) => <Suspense fallback={<PageSkeleton />}>{el}</Suspense>;
 const F = (el: ReactNode) => S(<RequireFinance>{el}</RequireFinance>);
 const C = (cap: Capability, el: ReactNode) => S(<RequireCap cap={cap}>{el}</RequireCap>);
@@ -93,7 +98,7 @@ export default function App() {
           <Route path="dominios" element={A(<AdminDomains />)} />
           <Route path="utms" element={A(<Utms />)} />
           <Route path="moedas" element={A(<Currency />)} />
-          <Route path="usuarios" element={A(<UsersSquads />)} />
+          <Route path="usuarios" element={S(<RequireAdminOrGerente><UsersSquads /></RequireAdminOrGerente>)} />
           <Route path="integracoes/google-ads" element={A(<IntegrationGoogle />)} />
           <Route path="integracoes/meta-ads" element={A(<IntegrationMeta />)} />
           <Route path="integracoes/ad-manager" element={A(<IntegrationGam />)} />

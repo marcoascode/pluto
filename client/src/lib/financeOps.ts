@@ -30,7 +30,9 @@ export const STATUS: Record<CommissionStatus, { label: string; color: string }> 
 };
 export type CommissionMode = 'progressive' | 'fixed';
 /** ROI do gestor no site: receita (parte dele, R$) − despesas das contas dele no site (R$) */
-export interface CommissionSite { site: string; sharePct: number; revenue: number; ads: number; result: number }
+/** source: 'rateio' = rateio do domínio · 'periodo' = período de "Gestores e sites" · 'misto' = os dois no mês */
+export type ShareSource = 'rateio' | 'periodo' | 'misto';
+export interface CommissionSite { site: string; sharePct: number; revenue: number; ads: number; result: number; source?: ShareSource; days?: number }
 export interface CommissionLine {
   periodId: string | null; userId: string; userName: string; companyId: string; month: string;
   mode: CommissionMode; fixedPct: number | null;
@@ -39,15 +41,18 @@ export interface CommissionLine {
   status: CommissionStatus; frozen: boolean; liveDiff: number | null; incomplete: string[];
   approvedBy: string | null; approvedAt: string | null; paidAt: string | null; paidNote: string | null;
 }
-export interface SiteManager { userId: string; userName: string; sharePct: number; revenue: number; ads: number; result: number }
+export interface SiteManager { userId: string; userName: string; sharePct: number; revenue: number; ads: number; result: number; source: ShareSource; days: number }
 /** revenue = receita líquida (R$, cotação do ROI) · ads = despesas das contas vinculadas aos gestores · allAds = despesa total do site */
-export interface SiteCard { companyId: string; site: string; month: string; revenue: number; revenueUsd: number; ads: number; result: number; roi: number | null; allAds: number; managers: SiteManager[] }
+export interface SiteCard { companyId: string; site: string; month: string; revenue: number; revenueUsd: number; ads: number; result: number; roi: number | null; allAds: number; managers: SiteManager[]; equalSplit?: boolean }
 export interface CommissionsResponse {
   viewer: { role: ViewerRole; userId: string }; month: string; months: string[]; companies: Company[]; managers: { id: string; name: string }[];
   rule: { name: string; tiers: Tier[]; tierCurrency: 'BRL' | 'USD' | 'EUR' };
   lines: CommissionLine[]; sites: SiteCard[];
   totals: { revenue: number; ads: number; result: number; resultUsd: number; commissions: number; toPay: number; paid: number };
 }
+/** Período "Gestores e sites": quem responde por um site, com datas e rateio (editado na edição do gestor em Usuários & Squads). */
+export interface Assignment { id: string; userId: string; userName: string; companyId: string; site: string; startDate: string; endDate: string | null; sharePct: number; note: string | null }
+export interface AssignmentsResponse { viewer: { role: ViewerRole }; companies: Company[]; sites: Site[]; managers: { id: string; name: string; role: string }[]; assignments: Assignment[] }
 
 export const commissionsApi = {
   list: (q: { company?: string; month: string; user?: string }) => get<CommissionsResponse>('/finance/commissions', q),
@@ -55,6 +60,9 @@ export const commissionsApi = {
   paid: (a: { id: string; date: string; note: string | null }) => api.post<unknown>(`/finance/commissions/${a.id}/paid`, { date: a.date, note: a.note }),
   unpaid: (id: string) => api.del<void>(`/finance/commissions/${id}/paid`),
   reopen: (a: { id: string; reason: string }) => api.post<void>(`/finance/commissions/${a.id}/reopen`, { reason: a.reason }),
+  assignments: (q: { company?: string; user?: string }) => get<AssignmentsResponse>('/finance/assignments', q),
+  saveAssignment: ({ id, ...b }: Omit<Assignment, 'id' | 'userName'> & { id?: string }) => (id ? api.put<{ id: string }>(`/finance/assignments/${id}`, b) : api.post<{ id: string }>('/finance/assignments', b)),
+  removeAssignment: (id: string) => api.del<void>(`/finance/assignments/${id}`),
   saveRule: (b: { name: string; tiers: Tier[]; tierCurrency: 'BRL' | 'USD' | 'EUR' }) => api.put<unknown>('/finance/commission-rule', b),
 };
 

@@ -19,6 +19,7 @@ import { placementsRouter } from './routes/placements.js';
 import { companiesReadRouter } from './routes/companies.js';
 import { adminRouter } from './routes/admin/index.js';
 import { linksRouter } from './routes/links.js';
+import { teamRouter } from './routes/team.js';
 import { metaRouter, oauthCallbackErrors } from './routes/meta.js';
 import { collectRouter, flushCollect } from './routes/collect.js';
 import { backfillIfEmpty } from './services/fx.js';
@@ -57,6 +58,7 @@ export function createApp() {
   app.use(companiesReadRouter);
   app.use('/placements', placementsRouter);
   app.use('/finance', financeRouter);
+  app.use('/team', teamRouter);     // 0.18.9: Gerente atribui domínios e contas aos gestores
   app.use('/links', linksRouter);   // 0.17: Contas × Sites (gestor, gerente, admin)
   app.use('/meta', requireMetaCampaigns, metaRouter);   // 0.18: só com can_create_meta_campaigns
   app.use('/meta/oauth/callback', oauthCallbackErrors);   // callback do Facebook Login: erro (até 401/403) volta para a tela de Perfis

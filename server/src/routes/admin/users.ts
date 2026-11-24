@@ -1,8 +1,8 @@
 import argon2 from 'argon2';
 import { Router } from 'express';
 import { z } from 'zod';
-import { deriveAccounts, providersOf } from '../../services/accountLinks.js';
-import { requestRun } from '../../services/sync/index.js';
+import { accountsOf, clearGestorLinks, resyncAccounts, saveGestorLinks } from '../../services/gestorLinks.js';
+import { deriveAccounts } from '../../services/accountLinks.js';
 import { one, q, tx } from '../../db.js';
 import { conflict, HttpError, notFound, parse } from '../../lib/http.js';
 import { tempPassword } from '../../lib/crypto.js';
@@ -33,12 +33,7 @@ async function saveCommission(c: C, uid: string, role: string, b: { commissionMo
   await c.query('UPDATE users SET commission_mode = $2, commission_pct = $3 WHERE id = $1', [uid, mode, mode === 'fixed' ? pct : null]);
 }
 
-/** Contas que o gestor usa hoje (para refazer domain_accounts das que saírem ou entrarem). */
-const accountsOf = async (c: C, uid: string) => (await q<{ id: string }>('SELECT DISTINCT account_id::text AS id FROM domain_manager_accounts WHERE user_id = $1', [uid], c)).map((r) => r.id);
-/** Depois do commit: ressincroniza a despesa das plataformas das contas que mudaram de site. */
-async function resync(accountIds: string[]) {
-  for (const p of await providersOf(accountIds)) { requestRun(p === 'meta' ? 'meta.metrics' : 'google-ads.metrics'); if (p === 'google-ads') requestRun('google-ads.placements'); }
-}
+const resync = resyncAccounts;
 
 /** Só o SuperAdmin cria, edita, exclui ou promove alguém a SuperAdmin. */
 function guardSuper(actor: SessionUser, target: { role: string } | null, newRole?: string) {
@@ -74,31 +69,8 @@ async function saveLinks(c: C, uid: string, newRole: string, b: { squadIds?: str
     for (const x of co) await c.query('INSERT INTO company_users (company_id, user_id) VALUES ($1, $2)', [x, uid]);
   }
   if (b.domains === undefined && !roleChanged) return [];
-  const before = await accountsOf(c, uid);
-  await c.query('DELETE FROM domain_managers WHERE user_id = $1', [uid]);   // contas (domain_manager_accounts) saem em cascata
-  if (newRole === 'gestor') {
-    const seen = new Set<string>();
-    for (const l of b.domains ?? []) {
-      if (seen.has(l.domain)) throw conflict('duplicate_domain', `O domínio ${l.domain} está repetido.`);
-      seen.add(l.domain);
-      const d = await one<{ id: string; technical: boolean }>('SELECT id::text, is_technical AS technical FROM domains WHERE hostname = $1', [l.domain], c);
-      if (!d) throw notFound(`Domínio ${l.domain} não cadastrado.`);
-      if (d.technical) throw conflict('technical_domain', '"Sem domínio" não recebe gestor.');
-      await c.query('INSERT INTO domain_managers (domain_id, user_id) VALUES ($1, $2)', [d.id, uid]);
-      for (const [prov, list] of [['google-ads', l.googleAccounts], ['meta', l.metaAccounts]] as const) {
-        const acc = [...new Set(list)];
-        if (!acc.length) continue;
-        const ok = await q<{ id: string }>('SELECT id::text FROM integration_accounts WHERE provider = $1 AND id = ANY($2::bigint[])', [prov, acc], c);
-        if (ok.length !== acc.length) throw conflict('unknown_account', 'Alguma conta da lista não existe.');
-        for (const a of acc) await c.query('INSERT INTO domain_manager_accounts (domain_id, user_id, account_id) VALUES ($1, $2, $3)', [d.id, uid, a]);
-      }
-    }
-  }
-  // contas atribuídas ao gestor (wizard Meta, Contas × Sites) = as que ele usa em algum domínio
-  const after = await accountsOf(c, uid);
-  await c.query('DELETE FROM manager_accounts WHERE user_id = $1 AND NOT (account_id = ANY($2::bigint[]))', [uid, after]);
-  for (const a of after) await c.query('INSERT INTO manager_accounts (user_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [uid, a]);
-  return deriveAccounts(c, [...before, ...after], actor);
+  if (newRole !== 'gestor') return clearGestorLinks(c, uid, actor);
+  return saveGestorLinks(c, uid, b.domains ?? [], actor);
 }
 
 usersRouter.get('/users', async (_req, res) => {

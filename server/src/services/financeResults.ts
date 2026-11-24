@@ -1,10 +1,10 @@
 /**
  * Finance 0.18.8 · resultado por site e comissão dos gestores.
  *
- * Gestor do site = vínculo de Usuários & Squads (gestor → domínio → contas Google/Meta). É o ÚNICO vínculo usado.
- * ROI do gestor no site (R$) = receita líquida do site no mês (Ad Manager sem revShare × cotação do ROI do mês, a mesma
- *   da Home; dividida igualmente quando o site tem mais de um gestor) − despesas (Google + Meta + IVA) SÓ das campanhas
- *   das contas que o gestor usa naquele site.
+ * Gestor do site = vínculos de Usuários & Squads: gestor → domínio → contas Google/Meta, com o Rateio do domínio
+ *   (Admin → Domínios) e, por cima, os períodos de "Gestores e sites" (datas e rateio, na edição do gestor).
+ * ROI do gestor no site (R$) = receita líquida do site (Ad Manager sem revShare × cotação do ROI do mês, a mesma da Home)
+ *   × % dele em cada dia − despesas (Google + Meta + IVA) SÓ das campanhas das contas que ele usa naquele site.
  * ROI total do gestor (por Empresa e mês) = soma do ROI dos sites dele (site negativo desconta).
  * Comissão = % × ROI total (sem ROI positivo, sem comissão), com a % pela modalidade do cadastro do gestor:
  *   progressiva → faixa atingida pelo ROI total (faixas do painel de Comissões, padrão em US$: até 19.999,99 = 10% ·
@@ -47,68 +47,111 @@ export function tierFor(rule: Pick<Rule, 'tiers'>, profitInTierCur: number) {
   return tiers.filter((x) => profitInTierCur >= x.from).pop() ?? tiers[0];
 }
 
+/* ---------------- períodos "Gestores e sites" (edição do gestor em Usuários & Squads) ---------------- */
+export interface Assignment { id: string; user_id: string; user_name: string; company_id: string; site: string; start_date: string; end_date: string | null; share_pct: number; note: string | null }
+export async function loadAssignments(companyIds: string[], userId?: string) {
+  return q<Assignment>(`SELECT a.id::text, a.user_id::text, u.name AS user_name, a.company_id::text, a.site, a.start_date::text, a.end_date::text, a.share_pct::float AS share_pct, a.note
+      FROM finance_manager_assignments a JOIN users u ON u.id = a.user_id
+     WHERE a.company_id = ANY($1::bigint[]) ${userId ? 'AND a.user_id = $2' : ''} ORDER BY u.name, a.site, a.start_date`, userId ? [companyIds, userId] : [companyIds]);
+}
+/** Dias do mês até `to` (YYYY-MM-DD). */
+function daysOf(month: string, to: string) {
+  const out: string[] = [];
+  for (let d = new Date(`${month}-01T12:00:00Z`); ; d.setUTCDate(d.getUTCDate() + 1)) {
+    const iso = d.toISOString().slice(0, 10);
+    if (iso > to || iso.slice(0, 7) !== month) break;
+    out.push(iso);
+  }
+  return out;
+}
+
 /* ---------------- ROI por gestor × site ---------------- */
 interface Manager { userId: string; userName: string; mode: CommissionMode; fixedPct: number | null }
-/** Gestor no site: receita (parte dele) − despesas das contas dele naquele site. */
-export interface SiteManager { userId: string; userName: string; sharePct: number; revenue: number; ads: number; result: number }
+/** Gestor no site: receita (parte dele) − despesas das contas dele no site.
+ *  source: 'rateio' = rateio do domínio (ou divisão igual) · 'periodo' = período de "Gestores e sites" · 'misto' = os dois no mês */
+export interface SiteManager { userId: string; userName: string; sharePct: number; revenue: number; ads: number; result: number; source: 'rateio' | 'periodo' | 'misto'; days: number }
 /** Card do site: receita líquida (R$), despesas das contas vinculadas aos gestores, ROI e gestores. */
 export interface SiteMonth {
   companyId: string; site: string; month: string; revenue: number; revenueUsd: number; ads: number; result: number; roi: number | null;
   /** despesa total do site no mês (todas as contas), para comparar com a das contas vinculadas */
   allAds: number; managers: SiteManager[];
+  /** rateio do domínio inválido (gestores sem % ou soma ≠ 100): receita dividida igualmente */
+  equalSplit: boolean;
 }
 
-async function siteManagers(companyIds: string[], month: string) {
+/**
+ * Receita do site em cada dia vai para:
+ *   - os gestores dos períodos de "Gestores e sites" que cobrem o dia (× % do período), se houver algum;
+ *   - senão, os gestores do domínio em Usuários & Squads (× % do Rateio do domínio; sem rateio válido, partes iguais).
+ * Despesas de cada gestor = só as campanhas das contas que ele usa no site, nos dias em que ele responde pelo site.
+ */
+export async function siteResults(companyIds: string[], month: string): Promise<{ sites: SiteMonth[]; managers: Map<string, Manager>; to: string; usdRate: number | null }> {
   const t = today();
   const to = [monthEnd(month), t].sort()[0];
+  const empty = { sites: [] as SiteMonth[], managers: new Map<string, Manager>(), to, usdRate: null };
+  if (!companyIds.length || month > t.slice(0, 7)) return empty;
   const doms = await companyDomains(companyIds);
   const ids = doms.map((d) => d.id);
-  if (!ids.length || month > t.slice(0, 7)) return { doms, mgrs: [] as (Manager & { domainId: string })[], dash: new Map(), linked: new Map(), to };
-  const [mgrs, dash, linked] = await Promise.all([
-    q<Manager & { domainId: string }>(`
-      SELECT dm.domain_id::text AS "domainId", u.id::text AS "userId", u.name AS "userName", u.commission_mode AS mode, u.commission_pct::float AS "fixedPct"
+  if (!ids.length) return empty;
+  const [mgrs, manualAll, dash, linked] = await Promise.all([
+    q<{ domainId: string; userId: string; share: number | null }>(`
+      SELECT dm.domain_id::text AS "domainId", dm.user_id::text AS "userId", dm.share_pct::float AS share
         FROM domain_managers dm JOIN users u ON u.id = dm.user_id AND u.role = 'gestor' AND u.status <> 'disabled'
-       WHERE dm.domain_id = ANY($1::bigint[]) ORDER BY u.name`, [ids]),
-    // mês fechado inteiro (ou até hoje, no mês corrente): mesmos números da Home
-    aggregate({ from: `${month}-01`, to, domainIds: ids, filter: null, groupBy: 'm.domain_id' }),
+       WHERE dm.domain_id = ANY($1::bigint[])`, [ids]),
+    loadAssignments(companyIds),
+    // por dia: mesmos números da Home
+    aggregate({ from: `${month}-01`, to, domainIds: ids, filter: null, groupBy: `m.domain_id::text || '|' || m.date::text` }),
     // despesas só das campanhas das contas que cada gestor usa no site (vínculo de Usuários & Squads)
     aggregate({
-      from: `${month}-01`, to, domainIds: ids, filter: null, groupBy: `dmx.user_id::text || '|' || m.domain_id::text`,
+      from: `${month}-01`, to, domainIds: ids, filter: null, groupBy: `dmx.user_id::text || '|' || m.domain_id::text || '|' || m.date::text`,
       joins: `JOIN campaigns lc ON lc.id = m.campaign_id
               JOIN domain_manager_accounts dmx ON dmx.domain_id = m.domain_id AND dmx.account_id = lc.account_id`,
     }),
   ]);
-  return { doms, mgrs, dash, linked, to };
-}
-
-export async function siteResults(companyIds: string[], month: string): Promise<{ sites: SiteMonth[]; managers: Map<string, Manager>; to: string; usdRate: number | null }> {
-  if (!companyIds.length) return { sites: [], managers: new Map(), to: monthEnd(month), usdRate: null };
-  const { doms, mgrs, dash, linked, to } = await siteManagers(companyIds, month);
+  const manual = manualAll.filter((a) => a.start_date <= to && (a.end_date ?? '9999-12-31') >= `${month}-01`);
+  const userIds = [...new Set([...mgrs.map((m) => m.userId), ...manual.map((a) => a.user_id)])];
   const managers = new Map<string, Manager>();
-  for (const m of mgrs) managers.set(m.userId, { userId: m.userId, userName: m.userName, mode: m.mode, fixedPct: m.fixedPct });
+  if (userIds.length) for (const u of await q<Manager>(`SELECT id::text AS "userId", name AS "userName", commission_mode AS mode, commission_pct::float AS "fixedPct" FROM users WHERE id = ANY($1::bigint[])`, [userIds])) managers.set(u.userId, u);
+  const days = daysOf(month, to);
   let revBrl = 0, revUsd = 0;
   const sites: SiteMonth[] = [];
   for (const d of doms) {
-    const m = dash.get(d.id);
-    const revenue = m?.revenueBrl ?? 0, revenueUsd = m?.revenue ?? 0, allAds = m?.spend ?? 0;
-    revBrl += revenue; revUsd += revenueUsd;
     const own = mgrs.filter((x) => x.domainId === d.id);
-    const share = own.length ? 1 / own.length : 0;
-    const sm: SiteManager[] = own.map((x) => {
-      const ads = linked.get(`${x.userId}|${d.id}`)?.spend ?? 0;
-      return { userId: x.userId, userName: x.userName, sharePct: r2(share * 100), revenue: r2(revenue * share), ads: r2(ads), result: r2(revenue * share - ads) };
-    });
-    const ads = own.length ? sm.reduce((a, x) => a + x.ads, 0) : allAds;
-    const result = revenue - ads;
+    const valid = own.length > 0 && own.every((x) => x.share != null) && Math.abs(own.reduce((a, x) => a + (x.share ?? 0), 0) - 100) < 0.001;
+    const rateio = own.map((x) => ({ userId: x.userId, pct: valid ? x.share! : 100 / own.length }));
+    const here = manual.filter((a) => a.company_id === d.company_id && a.site === d.site);
+    const acc = new Map<string, { revenue: number; ads: number; pcts: Set<number>; src: Set<'rateio' | 'periodo'>; days: number }>();
+    let revenue = 0, revenueUsd = 0, allAds = 0;
+    for (const day of days) {
+      const m = dash.get(`${d.id}|${day}`);
+      const r = m?.revenueBrl ?? 0;
+      revenue += r; revenueUsd += m?.revenue ?? 0; allAds += m?.spend ?? 0;
+      const per = here.filter((a) => a.start_date <= day && (a.end_date ?? '9999-12-31') >= day);
+      const who = per.length ? per.map((a) => ({ userId: a.user_id, pct: a.share_pct, src: 'periodo' as const })) : rateio.map((x) => ({ ...x, src: 'rateio' as const }));
+      for (const w of who) {
+        const x = acc.get(w.userId) ?? { revenue: 0, ads: 0, pcts: new Set<number>(), src: new Set<'rateio' | 'periodo'>(), days: 0 };
+        x.revenue += r * w.pct / 100;
+        x.ads += linked.get(`${w.userId}|${d.id}|${day}`)?.spend ?? 0;
+        x.pcts.add(Math.round(w.pct * 1000) / 1000); x.src.add(w.src); x.days++;
+        acc.set(w.userId, x);
+      }
+    }
+    revBrl += revenue; revUsd += revenueUsd;
+    const sm: SiteManager[] = [...acc.entries()].map(([userId, x]): SiteManager => ({
+      userId, userName: managers.get(userId)?.userName ?? '', sharePct: r2(x.pcts.size === 1 ? [...x.pcts][0] : [...x.pcts].reduce((a, b) => a + b, 0) / x.pcts.size),
+      revenue: r2(x.revenue), ads: r2(x.ads), result: r2(x.revenue - x.ads), source: x.src.size > 1 ? 'misto' : [...x.src][0], days: x.days,
+    })).sort((a, b) => b.result - a.result);
+    const ads = sm.length ? sm.reduce((a, x) => a + x.ads, 0) : allAds;
     if (!revenue && !ads && !allAds) continue;   // site sem nenhum movimento no mês não vira card
-    sites.push({ companyId: d.company_id, site: d.site, month, revenue: r2(revenue), revenueUsd: r2(revenueUsd), ads: r2(ads), result: r2(result), roi: ads > 0 ? r2((result / ads) * 100) : null, allAds: r2(allAds), managers: sm });
+    sites.push({ companyId: d.company_id, site: d.site, month, revenue: r2(revenue), revenueUsd: r2(revenueUsd), ads: r2(ads), result: r2(revenue - ads),
+      roi: ads > 0 ? r2(((revenue - ads) / ads) * 100) : null, allAds: r2(allAds), managers: sm, equalSplit: own.length > 1 && !valid });
   }
   return { sites: sites.sort((a, b) => b.result - a.result), managers, to, usdRate: revUsd > 0 ? revBrl / revUsd : null };
 }
 
 /* ---------------- comissões ---------------- */
 export type CommissionStatus = 'open' | 'to_approve' | 'approved' | 'paid';
-export interface CommissionSite { site: string; sharePct: number; revenue: number; ads: number; result: number }
+export interface CommissionSite { site: string; sharePct: number; revenue: number; ads: number; result: number; source?: SiteManager['source']; days?: number }
 export interface CommissionLine {
   periodId: string | null; userId: string; userName: string; companyId: string; month: string;
   mode: CommissionMode; fixedPct: number | null;
@@ -137,7 +180,7 @@ export async function commissionsFor(companyIds: string[], month: string, opts: 
   for (const s of res.sites) for (const m of s.managers) {
     if (opts.userId && m.userId !== opts.userId) continue;
     const k = `${m.userId}|${s.companyId}`;
-    groups.set(k, [...(groups.get(k) ?? []), { site: s.site, sharePct: m.sharePct, revenue: m.revenue, ads: m.ads, result: m.result }]);
+    groups.set(k, [...(groups.get(k) ?? []), { site: s.site, sharePct: m.sharePct, revenue: m.revenue, ads: m.ads, result: m.result, source: m.source, days: m.days }]);
   }
   for (const p of periods) if (!groups.has(`${p.user_id}|${p.company_id}`)) groups.set(`${p.user_id}|${p.company_id}`, []);
   const lines: CommissionLine[] = [];

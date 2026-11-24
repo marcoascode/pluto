@@ -6,11 +6,11 @@
  */
 import type * as T from '@/types/api';
 import { ApiError } from '@/lib/api/client';
-import type { CommissionLine, CommissionMode, CommissionSite, SiteCard, Tier } from '@/lib/financeOps';
+import type { Assignment, CommissionLine, CommissionMode, CommissionSite, SiteCard, Tier } from '@/lib/financeOps';
 import { FIN_CASH, FIN_COSTS, FIN_SITES, financeCompanies, finMock } from './finance';
 import { TODAY } from './db';
 
-const OPS = /^\/finance\/(sites|commissions|commission-rule)(\/|$)/;
+const OPS = /^\/finance\/(sites|commissions|assignments|commission-rule)(\/|$)/;
 export const isOpsPath = (p: string) => OPS.test(p);
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -30,6 +30,8 @@ interface Asg { userId: string; companyId: string; site: string }
 const ASG: Asg[] = [];
 interface Period { id: string; userId: string; companyId: string; month: string; base: CommissionLine; calculated: number; adjustments: number; adjustmentNote: string | null; approved: number; approvedBy: string; approvedAt: string; paidAt: string | null; paidNote: string | null }
 const PER: Period[] = [];
+/** períodos "Gestores e sites" do demo (só listagem e edição; o cálculo do demo usa o rateio) */
+const PERIODS: Assignment[] = [];
 
 let ready = false;
 function init() {
@@ -60,7 +62,7 @@ function siteResults(ids: string[], month: string): SiteCard[] {
     const own = ASG.filter((a) => a.companyId === x.companyId && a.site === x.site);
     const share = own.length ? 1 / own.length : 0;
     // contas vinculadas ao gestor: ~95% da despesa do site (o resto é de conta sem vínculo, fica fora do ROI dele)
-    const managers = own.map((a) => { const ads = allAds * 0.95 / own.length; return { userId: a.userId, userName: MANAGERS.find((m) => m.id === a.userId)?.name ?? '', sharePct: r2(share * 100), revenue: r2(revenue * share), ads: r2(ads), result: r2(revenue * share - ads) }; });
+    const managers = own.map((a) => { const ads = allAds * 0.95 / own.length; return { userId: a.userId, userName: MANAGERS.find((m) => m.id === a.userId)?.name ?? '', sharePct: r2(share * 100), revenue: r2(revenue * share), ads: r2(ads), result: r2(revenue * share - ads), source: 'rateio' as const, days: 30 }; });
     const ads = own.length ? managers.reduce((a, m) => a + m.ads, 0) : allAds;
     if (!revenue && !allAds) continue;
     out.push({ companyId: x.companyId, site: x.site, month, revenue: r2(revenue), revenueUsd: r2(revenue / USD_RATE), ads: r2(ads), result: r2(revenue - ads), roi: ads > 0 ? r2(((revenue - ads) / ads) * 100) : null, allAds: r2(allAds), managers });
@@ -166,6 +168,17 @@ export function financeOpsMock(u: T.User, method0: string, path0: string, b: Rec
     }
     if (p.paidAt) throw new ApiError(409, 'already_paid', 'Comissão já marcada como paga. Desmarque o pagamento antes de reabrir.');
     PER.splice(PER.indexOf(p), 1); return undefined;
+  }
+  if (path === '/finance/assignments' && method === 'GET')
+    return { viewer: { role }, companies: all, sites: sitesList(), managers: role === 'admin' ? MANAGERS.map((x) => ({ id: x.id, name: x.name, role: 'gestor' })) : [], assignments: PERIODS.filter((a) => ids.includes(a.companyId) && (!b.user || a.userId === b.user)) };
+  if ((m = path.match(/^\/finance\/assignments(?:\/([^/]+))?$/))) {
+    const i = m[1] ? PERIODS.findIndex((a) => a.id === m![1]) : -1;
+    if (m[1] && i < 0) throw new ApiError(404, 'not_found', 'Vínculo não encontrado.');
+    if (method === 'DELETE') { PERIODS.splice(i, 1); return undefined; }
+    if (b.endDate && b.endDate < b.startDate) throw new ApiError(422, 'invalid_input', 'O fim não pode ser antes do início.');
+    const row: Assignment = { id: m[1] ?? id('a'), userId: b.userId, userName: MANAGERS.find((x) => x.id === b.userId)?.name ?? 'Gestor', companyId: b.companyId, site: String(b.site).toLowerCase(), startDate: b.startDate, endDate: b.endDate || null, sharePct: Number(b.sharePct), note: b.note || null };
+    if (i >= 0) PERIODS[i] = row; else PERIODS.push(row);
+    return { id: row.id };
   }
   if (path === '/finance/commission-rule') {
     if (!(b.tiers ?? []).some((t: Tier) => t.from === 0)) throw new ApiError(422, 'invalid_input', 'A primeira faixa precisa começar em 0.');

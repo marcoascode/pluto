@@ -15,6 +15,7 @@
  *   POST /finance/commissions/:id/paid   { date, note? }          marca como paga (pagamento feito por fora; não mexe no Caixa)
  *   DELETE /finance/commissions/:id/paid                          desmarca
  *   POST /finance/commissions/:id/reopen { reason }               volta a calcular ao vivo (só se não estiver paga)
+ *   GET  /finance/assignments?company&user · POST · PUT /:id · DELETE /:id   períodos "Gestores e sites" (só Admin edita)
  *   PUT  /finance/commission-rule        { name, tiers, tierCurrency }
  */
 import { Router, type Request } from 'express';
@@ -23,13 +24,14 @@ import { one, q } from '../db.js';
 import { HttpError, notFound, parse } from '../lib/http.js';
 import { today } from '../lib/dates.js';
 import { isAdminRole } from '../auth/permissions.js';
-import { listSites } from '../services/financeSources.js';
-import { audit, commissionsFor, loadRule, r2 } from '../services/financeResults.js';
+import { listSites, normSite } from '../services/financeSources.js';
+import { audit, commissionsFor, loadAssignments, loadRule, r2 } from '../services/financeResults.js';
 
 export const financeCommissionsRouter = Router();
 const YM = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'use YYYY-MM');
 const DAY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 const ID = z.string().regex(/^\d+$/);
+const SITE = z.string().trim().max(120).transform((s, ctx) => { const n = normSite(s); if (!n) { ctx.addIssue({ code: 'custom', message: 'Site inválido. Use o domínio, ex.: dominiox.com' }); return z.NEVER; } return n; });
 const NOWM = () => today().slice(0, 7);
 const prevMonth = (m: string) => { const [y, mo] = m.split('-').map(Number); return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`; };
 
@@ -44,7 +46,8 @@ async function viewer(req: Request, allowManager = false): Promise<Viewer> {
     // gestor com domínio (Usuários & Squads) num Squad da Empresa (é o gestor do site para as comissões)
     const m = await q<{ id: string; name: string }>(`
       SELECT DISTINCT c.id::text, c.name FROM companies c WHERE c.id IN (
-        SELECT sq.company_id FROM domain_managers dm JOIN squad_domains sd ON sd.domain_id = dm.domain_id JOIN squads sq ON sq.id = sd.squad_id WHERE dm.user_id = $1
+        SELECT a.company_id FROM finance_manager_assignments a WHERE a.user_id = $1
+        UNION SELECT sq.company_id FROM domain_managers dm JOIN squad_domains sd ON sd.domain_id = dm.domain_id JOIN squads sq ON sq.id = sd.squad_id WHERE dm.user_id = $1
         UNION SELECT sq.company_id FROM squad_users su JOIN squads sq ON sq.id = su.squad_id WHERE su.user_id = $1)
        ORDER BY c.name`, [u.id]);
     if (m.length) return { userId: u.id, role: 'manager', companies: m };
@@ -66,7 +69,7 @@ async function sitesOf(ids: string[]) {
   const src = await listSites(ids);
   const used = await q<{ site: string; companyId: string }>(`
     SELECT DISTINCT site, company_id::text AS "companyId" FROM (
-      SELECT site, company_id FROM finance_cash_entries UNION ALL SELECT site, company_id FROM finance_costs) x
+      SELECT site, company_id FROM finance_cash_entries UNION ALL SELECT site, company_id FROM finance_costs UNION ALL SELECT site, company_id FROM finance_manager_assignments) x
      WHERE site IS NOT NULL AND company_id = ANY($1::bigint[])`, [ids]);
   const all = new Map<string, { site: string; companyId: string; revshare?: number | null }>();
   for (const s of [...used, ...src.rows]) all.set(`${s.companyId}|${s.site}`, s);   // o do dash (com revshare) por último, prevalece
@@ -153,7 +156,68 @@ financeCommissionsRouter.post('/commissions/:id/reopen', async (req, res) => {
   res.status(204).end();
 });
 
-/* 0.18.8: "Gestores e sites" (finance_manager_assignments) saiu: o gestor do site vem só de Usuários & Squads. */
+/* ---------- períodos gestor × site ("Gestores e sites", na edição do gestor em Usuários & Squads) ----------
+   Datas e rateio de quem responde por um site; nos dias que cobrem, valem por cima do Rateio do domínio. */
+financeCommissionsRouter.get('/assignments', async (req, res) => {
+  const { v, sel } = await scope(req);
+  const ids = sel.map((c) => c.id);
+  const who = typeof req.query.user === 'string' && /^\d+$/.test(req.query.user) ? req.query.user : undefined;
+  const [asg, sites] = await Promise.all([loadAssignments(ids, who), sitesOf(ids)]);
+  const managers = v.role === 'admin' ? await q<{ id: string; name: string; role: string }>(`SELECT id::text, name, role FROM users ORDER BY name`) : [];
+  res.json({
+    viewer: { role: v.role }, companies: v.companies, sites: sites.sites, managers,
+    assignments: asg.map((a) => ({ id: a.id, userId: a.user_id, userName: a.user_name, companyId: a.company_id, site: a.site, startDate: a.start_date, endDate: a.end_date, sharePct: a.share_pct, note: a.note })),
+  });
+});
+const asgBody = z.object({ userId: ID, companyId: ID, site: SITE, startDate: DAY, endDate: DAY.nullable().optional(), sharePct: z.number().gt(0).max(100).default(100), note: z.string().trim().max(300).nullable().optional() })
+  .refine((b) => !b.endDate || b.endDate >= b.startDate, { message: 'O fim não pode ser antes do início.' });
+async function checkShare(b: z.infer<typeof asgBody>, ignoreId?: string) {
+  const r = await one<{ total: number }>(`SELECT coalesce(sum(share_pct), 0)::float AS total FROM finance_manager_assignments
+    WHERE company_id = $1 AND site = $2 AND ($3::bigint IS NULL OR id <> $3::bigint)
+      AND start_date <= coalesce($5::date, '9999-12-31') AND coalesce(end_date, '9999-12-31') >= $4::date`, [b.companyId, b.site, ignoreId ?? null, b.startDate, b.endDate ?? null]);
+  if ((r?.total ?? 0) + b.sharePct > 100.0001)
+    throw new HttpError(422, 'share_over_100', `Neste período o site já tem ${r!.total}% com outro(s) gestor(es). A soma do rateio não pode passar de 100%.`);
+}
+async function getAsg(id: string) {
+  const a = await one<{ id: string; user_id: string; company_id: string; site: string; start_date: string; end_date: string | null; share_pct: number }>(
+    `SELECT id::text, user_id::text, company_id::text, site, start_date::text, end_date::text, share_pct::float AS share_pct FROM finance_manager_assignments WHERE id = $1`, [id]);
+  if (!a) throw notFound('Vínculo não encontrado.');
+  return a;
+}
+const hasApproved = async (a: { user_id: string; company_id: string; start_date: string; end_date: string | null }) =>
+  !!(await one(`SELECT 1 FROM finance_commission_periods WHERE user_id = $1 AND company_id = $2 AND month BETWEEN date_trunc('month', $3::date) AND coalesce($4::date, '9999-12-31')`, [a.user_id, a.company_id, a.start_date, a.end_date]));
+financeCommissionsRouter.post('/assignments', async (req, res) => {
+  const v = await viewer(req); adminOnly(v);
+  const b = parse(asgBody, req.body); canSee(v, b.companyId);
+  if (!(await one('SELECT 1 FROM users WHERE id = $1', [b.userId]))) throw notFound('Usuário não encontrado.');
+  await checkShare(b);
+  const r = await one<{ id: string }>(`INSERT INTO finance_manager_assignments (user_id, company_id, site, start_date, end_date, share_pct, note, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text`,
+    [b.userId, b.companyId, b.site, b.startDate, b.endDate ?? null, b.sharePct, b.note || null, v.userId]);
+  await audit(v.userId, b.companyId, 'create', 'assignment', r!.id, null, b);
+  res.status(201).json({ id: r!.id });
+});
+financeCommissionsRouter.put('/assignments/:id', async (req, res) => {
+  const v = await viewer(req); adminOnly(v);
+  const id = parse(ID, req.params.id);
+  const old = await getAsg(id); canSee(v, old.company_id);
+  const b = parse(asgBody, req.body); canSee(v, b.companyId);
+  const core = old.user_id !== b.userId || old.company_id !== b.companyId || old.site !== b.site || old.start_date !== b.startDate || old.share_pct !== b.sharePct;
+  if (core && (await hasApproved(old))) throw new HttpError(409, 'history_locked', 'Este vínculo já tem comissão aprovada. Para trocar gestor, site ou rateio, coloque a data de fim e crie um vínculo novo (os meses anteriores não mudam).');
+  await checkShare(b, id);
+  await q(`UPDATE finance_manager_assignments SET user_id=$1, company_id=$2, site=$3, start_date=$4, end_date=$5, share_pct=$6, note=$7 WHERE id = $8`,
+    [b.userId, b.companyId, b.site, b.startDate, b.endDate ?? null, b.sharePct, b.note || null, id]);
+  await audit(v.userId, b.companyId, 'update', 'assignment', id, old, b);
+  res.json({ id });
+});
+financeCommissionsRouter.delete('/assignments/:id', async (req, res) => {
+  const v = await viewer(req); adminOnly(v);
+  const id = parse(ID, req.params.id);
+  const old = await getAsg(id); canSee(v, old.company_id);
+  if (await hasApproved(old)) throw new HttpError(409, 'history_locked', 'Este vínculo já tem comissão aprovada. Coloque uma data de fim em vez de excluir.');
+  await q('DELETE FROM finance_manager_assignments WHERE id = $1', [id]);
+  await audit(v.userId, old.company_id, 'delete', 'assignment', id, old, null);
+  res.status(204).end();
+});
 
 /* ---------- regra ---------- */
 financeCommissionsRouter.put('/commission-rule', async (req, res) => {

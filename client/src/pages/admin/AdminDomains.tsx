@@ -43,6 +43,14 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
   const [shown, setShown] = useState<string | null>(null);
   const [clearPw, setClearPw] = useState(false);
   const [pwErr, setPwErr] = useState('');
+  // 0.18.9: rateio da receita entre os gestores do domínio (só com 2+ gestores; soma = 100%)
+  const multiMgr = d.managers.length > 1;
+  const hasShares = multiMgr && d.managers.every((m) => m.sharePct != null);
+  const [shares, setShares] = useState<Record<string, string>>(() => Object.fromEntries(d.managers.map((m) => [m.userId, m.sharePct != null ? String(m.sharePct).replace('.', ',') : String(Math.round((100 / Math.max(1, d.managers.length)) * 1000) / 1000).replace('.', ',')])));
+  const [useShares, setUseShares] = useState(hasShares);
+  const shareNum = (id: string) => Number((shares[id] ?? '').trim().replace(',', '.'));
+  const shareSum = Math.round(d.managers.reduce((a, m) => a + (Number.isFinite(shareNum(m.userId)) ? shareNum(m.userId) : 0), 0) * 1000) / 1000;
+  const sharesChanged = useShares !== hasShares || (useShares && d.managers.some((m) => Math.abs(shareNum(m.userId) - (m.sharePct ?? -1)) > 1e-9));
   const reveal = async () => {
     setPwErr('');
     try { const r = await adminApi.revealWpPassword(d.hostname); setShown(r.password); } catch (e) { setPwErr(e instanceof ApiError ? e.message : 'Não foi possível abrir a senha.'); }
@@ -55,8 +63,13 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
     if (!Number.isFinite(share) || share < 0 || share >= 100) return setErr('revShare precisa ser um percentual entre 0 e 99,999.');
     setErr('');
     const changed = Math.abs(share - (d.revShare ?? 0)) > 1e-9;
+    if (multiMgr && useShares && sharesChanged) {
+      if (d.managers.some((m) => !Number.isFinite(shareNum(m.userId)) || shareNum(m.userId) <= 0 || shareNum(m.userId) > 100)) return setErr('Rateio: cada gestor precisa ter uma porcentagem maior que 0 e até 100%.');
+      if (Math.abs(shareSum - 100) > 0.001) return setErr(`Rateio: a soma das porcentagens precisa ser 100% (está em ${String(shareSum).replace('.', ',')}%).`);
+    }
     const n = (v: string) => v.trim() || null;
     save.mutate({
+      ...(multiMgr && sharesChanged ? { managerShares: useShares ? d.managers.map((m) => ({ userId: m.userId, sharePct: shareNum(m.userId) })) : null } : {}),
       ...f, hostname: h, ...(changed ? { revShare: share, revShareFrom: rsFrom } : {}),
       registrar: n(reg.registrar), expiresOn: reg.expiresOn || null, hosting: n(reg.hosting), wpUser: n(reg.wpUser),
       ...(clearPw ? { wpPassword: null } : pw ? { wpPassword: pw } : {}),
@@ -117,13 +130,34 @@ function DomainDialog({ d, onClose }: { d: Domain; onClose: () => void }) {
             const nm = (ids: string[], list?: { id: string; name: string }[]) => ids.map((id) => list?.find((a) => a.id === id)?.name ?? id).join(', ');
             return (
               <Stack key={m.userId} direction="row" spacing={1} sx={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
-                <Typography sx={{ fontWeight: 600, fontSize: 13.5 }}>{m.name}</Typography>
+                <Typography sx={{ fontWeight: 600, fontSize: 13.5 }}>{m.name}{m.sharePct != null && d.managers.length > 1 ? ` · ${String(m.sharePct).replace('.', ',')}%` : ''}</Typography>
                 <Typography variant="caption">Google: {nm(m.googleAccounts, ga?.accounts) || '—'} · Meta: {nm(m.metaAccounts, ma?.accounts) || '—'}</Typography>
               </Stack>
             );
           }) : <Typography variant="caption">Nenhum gestor ainda.</Typography>}
           <Typography variant="caption">Os vínculos de gestores e contas Google Ads / Meta Ads são feitos só em Configurações → Usuários & Squads → editar o gestor → Domínios. A despesa dessas contas é a que entra no ROI do domínio e na comissão do gestor.</Typography>
         </Stack>
+        {multiMgr && (
+          <Stack spacing={1}>
+            <Divider />
+            <Typography variant="overline" sx={{ mb: -0.5 }}>Rateio</Typography>
+            <Typography variant="caption">Quanto da receita do domínio vai para cada gestor no ROI e na comissão. Cada um desconta só as despesas das próprias contas. Os períodos de “Gestores e sites” (edição do gestor) valem por cima deste rateio nos dias que cobrem.</Typography>
+            <FormControlLabel control={<Switch checked={useShares} onChange={(e) => setUseShares(e.target.checked)} />} label={<Typography sx={{ fontSize: 13.5 }}>{useShares ? 'Porcentagens definidas' : 'Dividir igualmente entre os gestores'}</Typography>} />
+            {useShares && (<>
+              {d.managers.map((m) => (
+                <Stack key={m.userId} direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+                  <Typography sx={{ flex: 1, fontSize: 13.5, fontWeight: 600 }}>{m.name}</Typography>
+                  <TextField size="small" value={shares[m.userId] ?? ''} onChange={(e) => setShares({ ...shares, [m.userId]: e.target.value })} sx={{ width: 130 }}
+                    slotProps={{ htmlInput: { inputMode: 'decimal', 'aria-label': `Rateio de ${m.name}` }, input: { endAdornment: <InputAdornment position="end">%</InputAdornment> } }} />
+                </Stack>
+              ))}
+              <Typography variant="caption" sx={{ color: Math.abs(shareSum - 100) > 0.001 ? 'error.main' : 'success.main', fontWeight: 600 }}>
+                Soma: {String(shareSum).replace('.', ',')}% {Math.abs(shareSum - 100) > 0.001 ? '· precisa ser 100%' : '✓'}
+              </Typography>
+            </>)}
+            {!hasShares && <Typography variant="caption">Hoje: dividido igualmente ({String(Math.round((100 / d.managers.length) * 1000) / 1000).replace('.', ',')}% cada). Ao entrar ou sair um gestor do domínio, o rateio volta para partes iguais.</Typography>}
+          </Stack>
+        )}
         <FormControlLabel control={<Switch checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} />} label="Ativo" />
         {err && <Alert severity="error" variant="outlined">{err}</Alert>}
       </Stack></DialogContent>

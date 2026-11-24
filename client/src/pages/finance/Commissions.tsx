@@ -78,7 +78,7 @@ export default function CommissionsPage() {
       <SectionTitle title={mgr ? 'Sua comissão' : 'Gestores'} sub={`${monthTitle(month)}${month === NOW ? ' · mês em apuração (aprova depois que fechar)' : ''}`} />
       <Grid container spacing={1.5} sx={{ mb: 3 }}>
         {data.lines.map((l) => <Grid key={l.userId + l.companyId} size={{ xs: 12, md: 6, xl: 4 }}><ManagerCard l={l} company={co.get(l.companyId) ?? ''} showCompany={data.companies.length > 1} admin={admin} /></Grid>)}
-        {!data.lines.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhum gestor com site neste filtro.{admin && ' Os sites e as contas de cada gestor são vinculados em Configurações → Usuários & Squads (o domínio precisa estar num Squad da Empresa).'}</Card></Grid>}
+        {!data.lines.length && <Grid size={12}><Card sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>Nenhum gestor com site neste filtro.{admin && ' Os sites e as contas de cada gestor são vinculados em Configurações → Usuários & Squads (o domínio precisa estar num Squad da Empresa); datas e rateio por período em "Gestores e sites", na edição do gestor.'}</Card></Grid>}
       </Grid>
 
       <SectionTitle title="Sites no mês" sub="Receita líquida do dash (R$, cotação do ROI) − despesas Google + Meta + IVA das contas vinculadas ao gestor. Negativo desconta da comissão do gestor." />
@@ -150,7 +150,7 @@ function ManagerCard({ l, company, showCompany, admin }: { l: CommissionLine; co
         {l.sites.map((s) => (
           <Box key={s.site}>
             <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
-              <Typography sx={{ fontSize: 13 }} noWrap>{s.site}{s.sharePct < 100 && <Typography component="span" variant="caption"> · {pctFmt(s.sharePct, 0)} da receita</Typography>}</Typography>
+              <Typography sx={{ fontSize: 13 }} noWrap>{s.site}{(s.sharePct < 100 || (s.source && s.source !== 'rateio')) && <Typography component="span" variant="caption"> · {srcLabel(s.sharePct, s.source, s.days)}</Typography>}</Typography>
               <Typography sx={{ fontSize: 13, fontWeight: 600, color: s.result < 0 ? p.neg : undefined, fontVariantNumeric: 'tabular-nums' }}>{brl(s.result)}</Typography>
             </Stack>
             <Typography variant="caption" component="div" sx={{ fontSize: 11 }}>receita {brl0(s.revenue)} − despesas {brl0(s.ads)}</Typography>
@@ -224,6 +224,14 @@ function ActionDialog({ kind, l, onClose }: { kind: 'approve' | 'paid' | 'reopen
   );
 }
 
+/** "40% · rateio", "100% · período (12 dias)", "rateio + período" */
+function srcLabel(pct: number, source?: string, days?: number) {
+  const p = pctFmt(pct, 3);
+  if (source === 'periodo') return `${p} · período${days ? ` (${days} dia${days > 1 ? 's' : ''})` : ''}`;
+  if (source === 'misto') return `${p} · rateio + período`;
+  return `${p} da receita · rateio`;
+}
+
 /* ---------------- card do site ---------------- */
 function SiteTile({ s, company }: { s: SiteCard; company?: string }) {
   const { pluto: p } = useTheme();
@@ -235,7 +243,7 @@ function SiteTile({ s, company }: { s: SiteCard; company?: string }) {
       <Stack direction="row" sx={{ alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
         <Box sx={{ minWidth: 0 }}>
           <Typography sx={{ fontWeight: 600 }} noWrap>{s.site}</Typography>
-          <Typography variant="caption" noWrap component="div">{company ? `${company} · ` : ''}{s.managers.length ? s.managers.map((m) => m.userName + (m.sharePct < 100 ? ` (${pctFmt(m.sharePct, 0)})` : '')).join(', ') : 'sem gestor'}</Typography>
+          <Typography variant="caption" noWrap component="div">{company ? `${company} · ` : ''}{s.managers.length ? s.managers.map((m) => m.userName + (m.sharePct < 100 || m.source !== 'rateio' ? ` (${srcLabel(m.sharePct, m.source, m.days)})` : '')).join(', ') : 'sem gestor'}</Typography>
         </Box>
         {neg && <Chip size="small" label="negativo" sx={{ height: 20, fontSize: 11, fontWeight: 600, color: p.neg, bgcolor: alpha(p.neg, 0.15) }} />}
       </Stack>
@@ -247,6 +255,7 @@ function SiteTile({ s, company }: { s: SiteCard; company?: string }) {
       {s.roi != null && <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>ROI % {pctFmt(s.roi)}</Typography>}
       {unlinked && <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>{brl0(s.allAds - s.ads)} de despesa de contas sem vínculo com o gestor ficam fora.</Typography>}
       {!s.managers.length && <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>Sem gestor: vincule em Usuários &amp; Squads.</Typography>}
+      {s.equalSplit && <Typography variant="caption" component="div" sx={{ mt: 0.5, color: p.warn }}>Rateio não definido: receita dividida igualmente (Admin → Domínios → Rateio).</Typography>}
       {neg && s.managers.length > 0 && <Typography variant="caption" component="div" sx={{ mt: 1, color: p.neg }}>Desconta {brl0(Math.abs(s.result))} do ROI de {s.managers.map((m) => m.userName).join(' e ')}.</Typography>}
     </Card>
   );
