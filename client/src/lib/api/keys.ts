@@ -2,6 +2,11 @@
 import type { PeriodQuery, PlacementQuery, Platform, ReportQuery } from '@/types/api';
 export const qk = {
   metaProfiles: ['metaProfiles'] as const,
+  /** 0.18.15 · Fluxo de caixa: prefixo 'cashflow' — invalidar ['cashflow'] atualiza tudo do módulo */
+  cashflow: ['cashflow'] as const,
+  cashflowCards: ['cashflow', 'cards'] as const,
+  cashflowEntries: (month: string, card: string) => ['cashflow', 'entries', month, card] as const,
+  cashflowMonths: (to: string) => ['cashflow', 'months', to] as const,
   metaAdAccounts: (id: string) => ['metaAdAccounts', id] as const,
   metaPages: (id: string) => ['metaPages', id] as const,
   metaDatasets: (id: string, account: string) => ['metaDatasets', id, account] as const,

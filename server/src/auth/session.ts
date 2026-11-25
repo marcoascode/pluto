@@ -19,6 +19,8 @@ export interface SessionUser {
   isMainAdmin: boolean;
   /** 0.18: libera a criação automatizada de campanhas Meta. Só o SuperAdmin atribui. */
   canCreateMetaCampaigns: boolean;
+  /** 0.18.14: libera o Fluxo de caixa (faturas de cartão). Só o SuperAdmin atribui. */
+  canUseCashflow: boolean;
   /** 0.18.8: Gestor — comissão progressiva (faixas do painel) ou fixa (commissionPct %). */
   commissionMode: 'progressive' | 'fixed';
   commissionPct: number | null;
@@ -32,7 +34,7 @@ declare global {
 }
 
 export const USER_SQL = `
-  SELECT u.id::text, u.name, u.email, u.role, u.status, u.must_change_password AS "mustChangePassword", u.is_main_admin AS "isMainAdmin", u.can_create_meta_campaigns AS "canCreateMetaCampaigns",
+  SELECT u.id::text, u.name, u.email, u.role, u.status, u.must_change_password AS "mustChangePassword", u.is_main_admin AS "isMainAdmin", u.can_create_meta_campaigns AS "canCreateMetaCampaigns", u.can_use_cashflow AS "canUseCashflow",
          u.commission_mode AS "commissionMode", u.commission_pct::float AS "commissionPct",
          u.commission_tiers AS "commissionTiers", u.commission_tier_currency AS "commissionTierCurrency",
          COALESCE((SELECT array_agg(su.squad_id::text ORDER BY su.squad_id) FROM squad_users su WHERE su.user_id = u.id), '{}') AS "squadIds",
@@ -96,6 +98,10 @@ export const requireSuperAdmin = (req: Request, _res: Response, next: NextFuncti
 /** Criação automatizada de campanhas Meta (0.18): exige a flag can_create_meta_campaigns no usuário (atribuída só pelo SuperAdmin). */
 export const requireMetaCampaigns = (req: Request, _res: Response, next: NextFunction) =>
   req.user?.canCreateMetaCampaigns ? next() : next(new HttpError(403, 'meta_campaigns_disabled', 'A criação de campanhas Meta não está liberada para o seu usuário.'));
+
+/** Fluxo de caixa por faturas de cartão (0.18.14): exige a flag can_use_cashflow no usuário (atribuída só pelo SuperAdmin). */
+export const requireCashflow = (req: Request, _res: Response, next: NextFunction) =>
+  req.user?.canUseCashflow ? next() : next(new HttpError(403, 'cashflow_disabled', 'O Fluxo de caixa não está liberado para o seu usuário.'));
 
 /** Senha nova precisa: 10+ caracteres, letra e número. */
 export function checkPasswordStrength(p: string) {

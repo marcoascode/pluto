@@ -15,7 +15,7 @@ const Head = ({ children, mini }: { children: string; mini: boolean }) => (mini 
 
 export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () => void }) {
   const { pathname } = useLocation();
-  const { user, isAdmin, canFinance, can, canMetaCampaigns } = useAuth();
+  const { user, isAdmin, canFinance, can, canMetaCampaigns, canCashflow } = useAuth();
   const { prefs, update } = usePrefs();
   const [adminOpen, setAdminOpen] = useState(true);
   const open = adminOpen || pathname.startsWith('/admin') || pathname.startsWith('/finance');
@@ -36,7 +36,7 @@ export function Sidebar({ mini, onNavigate }: { mini: boolean; onNavigate?: () =
         {!mini && <Box><Typography sx={{ fontFamily: 'Sora', fontWeight: 700, fontSize: 16.5, lineHeight: 1.2 }}>Pluto Mídia</Typography><Typography variant="caption" sx={{ fontSize: 10.5 }}>Media Intelligence<Box component="span" aria-label={`Versão do painel: ${__APP_VERSION__}`}> · v{__APP_VERSION__}</Box></Typography></Box>}
       </Stack>
       <List sx={{ flex: 1, overflowY: 'auto', px: 1.25, pt: 0 }}>
-        {NAV_MAIN.map((g) => ({ ...g, items: g.items.filter((it) => (!it.cap || can(it.cap)) && (!it.metaCampaigns || canMetaCampaigns) && (!it.gerente || user?.role === 'gerente')) })).filter((g) => g.items.length).map((g, i) => <Box key={i}>{g.title && <Head mini={mini}>{g.title}</Head>}{g.items.map(item)}</Box>)}
+        {NAV_MAIN.map((g) => ({ ...g, items: g.items.filter((it) => (!it.cap || can(it.cap)) && (!it.metaCampaigns || canMetaCampaigns) && (!it.cashflow || canCashflow) && (!it.gerente || user?.role === 'gerente')) })).filter((g) => g.items.length).map((g, i) => <Box key={i}>{g.title && <Head mini={mini}>{g.title}</Head>}{g.items.map(item)}</Box>)}
         {/* 0.18.12: Finanças fica dentro de Administração (sócios e gestores veem só o que podem abrir) */}
         {admGroups.length > 0 && (
           <>

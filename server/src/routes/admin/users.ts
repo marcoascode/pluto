@@ -198,6 +198,19 @@ usersRouter.put('/users/:id/meta-campaigns', requireSuperAdmin, async (req, res)
   res.json(await loadUser(uid));
 });
 
+/** 0.18.14: libera/revoga o Fluxo de caixa (faturas de cartão). EXCLUSIVO do SuperAdmin (Admin recebe 403). */
+usersRouter.put('/users/:id/cashflow', requireSuperAdmin, async (req, res) => {
+  const uid = parse(id, req.params.id);
+  const b = parse(z.object({ enabled: z.boolean() }), req.body);
+  await assertAdminUser(req, uid);
+  const t = await loadUser(uid);
+  if (!t) throw notFound('Usuário não encontrado.');
+  if (b.enabled && t.status === 'disabled') throw conflict('disabled', 'Usuário desativado não pode receber essa permissão.');
+  await q(`UPDATE users SET can_use_cashflow = $2, cashflow_granted_by = $3, cashflow_granted_at = now(), updated_at = now() WHERE id = $1`,
+    [uid, b.enabled, req.user!.id]);
+  res.json(await loadUser(uid));
+});
+
 /* ---------------- permissões por papel ---------------- */
 usersRouter.get('/permissions', async (_req, res) => {
   res.json({ capabilities: CAPABILITIES, roles: await rolesMatrix() });

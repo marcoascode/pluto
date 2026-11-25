@@ -30,6 +30,7 @@ const IntegrationGam = lazy(() => import('@/pages/admin/IntegrationGam'));
 const AdminReports = lazy(() => import('@/pages/admin/AdminReports'));
 const MetaProfiles = lazy(() => import('@/pages/meta/MetaProfiles'));
 const MetaCampaignWizard = lazy(() => import('@/pages/meta/MetaCampaignWizard'));
+const CashFlow = lazy(() => import('@/pages/cashflow/CashFlow'));
 const FinanceCash = lazy(() => import('@/pages/finance/Cash'));
 const FinanceCosts = lazy(() => import('@/pages/finance/Costs'));
 const FinanceCommissions = lazy(() => import('@/pages/finance/Commissions'));
@@ -49,6 +50,11 @@ function RequireMetaCampaigns({ children }: { children: ReactNode }) {
   const { canMetaCampaigns } = useAuth();
   return canMetaCampaigns ? <>{children}</> : <NoAccess msg="A criação automatizada de campanhas Meta não está liberada para o seu usuário. Peça a um SuperAdmin." />;
 }
+/** 0.18.14: Fluxo de caixa (faturas de cartão) — só com a flag atribuída pelo SuperAdmin. O servidor também responde 403. */
+function RequireCashflow({ children }: { children: ReactNode }) {
+  const { canCashflow } = useAuth();
+  return canCashflow ? <>{children}</> : <NoAccess msg="O Fluxo de caixa não está liberado para o seu usuário. Peça a um SuperAdmin." />;
+}
 /** Finance: Admin/SuperAdmin e sócios das Empresas. O servidor também responde 403. */
 function RequireFinance({ children }: { children: ReactNode }) {
   const { canFinance } = useAuth();
@@ -63,6 +69,7 @@ const S = (el: ReactNode) => <Suspense fallback={<PageSkeleton />}>{el}</Suspens
 const F = (el: ReactNode) => S(<RequireFinance>{el}</RequireFinance>);
 const C = (cap: Capability, el: ReactNode) => S(<RequireCap cap={cap}>{el}</RequireCap>);
 const M = (el: ReactNode) => S(<RequireMetaCampaigns>{el}</RequireMetaCampaigns>);
+const CF = (el: ReactNode) => S(<RequireCashflow>{el}</RequireCashflow>);
 const A = (el: ReactNode) => S(<RequireAdmin>{el}</RequireAdmin>);
 
 export default function App() {
@@ -81,6 +88,7 @@ export default function App() {
         <Route path="meta-ads" element={C('campaigns.meta.view', <Campaigns key="meta" platform="meta" />)} />
         <Route path="criar-campanha-meta" element={M(<MetaCampaignWizard />)} />
         <Route path="perfis-meta" element={M(<MetaProfiles />)} />
+        <Route path="fluxo-caixa" element={CF(<CashFlow />)} />
         <Route path="empresas/:id" element={S(<CompanyOverview />)} />
         <Route path="placements" element={C('campaigns.google.view', <Placements />)} />
         <Route path="ad-manager" element={C('gam.view', <AdManager />)} />

@@ -15,6 +15,8 @@ interface AuthCtx {
   isSuperAdmin: boolean;
   /** 0.18: tem a flag can_create_meta_campaigns (atribuída só pelo SuperAdmin). O servidor também confere (403). */
   canMetaCampaigns: boolean;
+  /** 0.18.14: tem a flag can_use_cashflow (atribuída só pelo SuperAdmin). O servidor também confere (403). */
+  canCashflow: boolean;
   /** Pode usar o módulo? Vem de user.permissions (o servidor também confere e responde 403). */
   can: (cap: Capability) => boolean;
   login: (email: string, password: string) => Promise<User>;
@@ -46,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
   // Finance: Admin/SuperAdmin e sócios de alguma Empresa (o servidor confere de novo)
   const canFinance = user?.role === 'superadmin' || !!user?.companyIds?.length;   // 0.18.11: Admin só nas Empresas em que é sócio
-  return <Ctx.Provider value={{ user, loading, isAdmin, isSuperAdmin: user?.role === 'superadmin', canMetaCampaigns: !!user?.canCreateMetaCampaigns, canFinance, can, login, logout, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, loading, isAdmin, isSuperAdmin: user?.role === 'superadmin', canMetaCampaigns: !!user?.canCreateMetaCampaigns, canCashflow: !!user?.canUseCashflow, canFinance, can, login, logout, refresh }}>{children}</Ctx.Provider>;
 }
 export function useAuth() {
   const c = useContext(Ctx);
