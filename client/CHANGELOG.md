@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.18.17
+- **Fluxo de caixa (Etapa 4 · soma por origem)**: nova aba **Por origem** no Fluxo de caixa (`/fluxo-caixa?ver=origem`). Soma, no mês da data da compra, as despesas da **mesma origem** vindas de **faturas e cartões diferentes** — ex.: todas as "FACEBK *…" do mês somadas como despesas com campanhas no Facebook. Estornos subtraem; pagamentos de fatura e lançamentos "fora das somas" não entram.
+- Cada origem mostra o total do mês, o do mês anterior, quantos lançamentos, de quantas faturas/cartões veio (destaque quando soma mais de uma) e, ao expandir, os lançamentos com data, cartão e fatura de origem. Filtro "Só origens que somam mais de uma fatura ou cartão" e resumo do mês (total, mês anterior, nº de origens).
+- **Regras de origem** (por usuário): dão nome e juntam origens — **Origem exata** (ex.: `FACEBK` → "Facebook Ads (campanhas)"), **Começa com** (ex.: `UBER` → "Transporte") ou **Contém** (comparado também com a descrição original da fatura). Criadas pelo ícone de etiqueta de cada origem ou em "Regras de origem"; valem para todos os meses (inclusive os já importados) e não alteram os lançamentos. A lista mostra quantos lançamentos cada regra pega.
+- Rotas `GET /cashflow/origins?month&card`, `GET/POST/PUT/DELETE /cashflow/rules`; migration `028` cria `cashflow_merchant_rules`.
+- Ajuste: o mês no Fluxo de caixa aparece como "Novembro de 2026" (antes "Novembro De 2026").
+
+## 0.18.16
+- **Fluxo de caixa (Etapa 3 · faturas em PDF)**: nova tela **Faturas (PDF)** (`/faturas`, também pelo botão "Enviar fatura (PDF)" no Fluxo de caixa). O usuário envia a fatura do cartão (até 10 MB e 40 páginas, com campo para a senha do PDF, que não é guardada), os lançamentos são lidos e aparecem numa **revisão** — data da compra, descrição, origem, tipo e valor editáveis, marcar/desmarcar linhas, total impresso × soma dos marcados — e só entram no caixa ao **confirmar**.
+- **Privacidade**: o PDF não vai para a IA. O servidor extrai o texto em memória (biblioteca `unpdf`) e troca por marcadores nome do titular, CPF/CNPJ, número do cartão (fica só o final), endereço/CEP, e-mail, telefone e código de barras; só esse texto é lido pelo Claude. A revisão mostra quantos dados de cada tipo foram mascarados.
+- **PDF original guardado** no banco (nunca em disco) para consulta, com exclusão automática escolhida no envio: **7, 30, 60, 90, 365 dias ou nunca**. Dá para mudar o prazo ou apagar só o PDF depois; a fatura e os lançamentos continuam. A limpeza roda a cada 30 min no servidor.
+- **Sem duplicar**: o mesmo arquivo não é aceito duas vezes, e cada lançamento importado tem uma impressão digital (final do cartão + data + valor + tipo + origem + parcela). Lançamentos que já vieram de outra fatura aparecem como "já no caixa" e começam desmarcados. Excluir uma fatura exclui os lançamentos que vieram dela.
+- O cartão é reconhecido pelo final impresso na fatura (ou escolhido no envio/na revisão, com atalho para cadastrá-lo). Datas sem ano são completadas pela data de fechamento (virada dez/jan) e a parcela "n/N" é lida da descrição.
+- Rotas `POST/GET /cashflow/statements`, `GET /cashflow/statements/:id`, `POST …/:id/confirm`, `PUT …/:id/retention`, `GET/DELETE …/:id/pdf`, `DELETE …/:id` (limite de 30 envios por hora por usuário). Migration `027` cria `cashflow_statements` e liga `cashflow_entries.statement_id`. Requer `ANTHROPIC_API_KEY` no servidor (já usada pelas copies da Meta).
+- Nginx (`deploy/nginx-host.conf` e `client/nginx.conf`): a rota de envio `/api/cashflow/statements` aceita até 11 MB e espera até 300 s (o padrão da API é 2 MB / 60 s). **Recarregar o Nginx do host no deploy.**
+
 ## 0.18.15
 - **Fluxo de caixa (Etapa 2 · cartões e lançamentos)**: a tela `/fluxo-caixa` passa a funcionar com lançamentos manuais, organizados pelo **mês da data da compra**. Cada lançamento tem data, descrição, valor (R$), cartão, tipo (compra, estorno/crédito, tarifa/anuidade, IOF, juros/encargos, pagamento da fatura), parcela "n de N", valor/moeda originais (compras no exterior), categoria e observação.
 - Totais do mês: despesas, estornos/créditos, líquido e pagamentos de fatura — que ficam **fora da soma** para o mesmo gasto não contar duas vezes. Qualquer lançamento pode sair das somas sem ser apagado. Faixa com os últimos 12 meses (clique para abrir o mês) e filtro por cartão.

@@ -2,7 +2,7 @@
  * Um lugar só com TODAS as rotas que o servidor Node.js precisa expor.
  * A documentação completa (parâmetros e respostas) está em docs/API.md.
  */
-import { api } from './client';
+import { api, API_BASE } from './client';
 import type * as T from '@/types/api';
 import type { Payout, PayoutMethod } from '@/lib/financeOps';
 
@@ -199,4 +199,28 @@ export const cashflowApi = {
   updateEntry: (a: { id: string } & T.CashflowEntryInput) => { const { id, ...b } = a; return api.put<T.CashflowEntry>(`/cashflow/entries/${id}`, b); },
   deleteEntry: (id: string) => api.del<void>(`/cashflow/entries/${id}`),
   months: (to: string, n = 12) => api.get<{ months: T.CashflowMonthTotal[] }>('/cashflow/months', { to, n }),
+  /* 0.18.16 · faturas em PDF: o arquivo vai do navegador para a API em memória (nada em disco); a leitura pela IA leva até ~2 min */
+  statements: () => api.get<{ statements: T.CashflowStatement[] }>('/cashflow/statements'),
+  statement: (id: string) => api.get<T.CashflowStatementDetail>(`/cashflow/statements/${id}`),
+  uploadStatement: (a: { file: File; password?: string; retentionDays: string; cardId?: string }) => {
+    const fd = new FormData();
+    fd.append('retentionDays', a.retentionDays);
+    if (a.password) fd.append('password', a.password);
+    if (a.cardId) fd.append('cardId', a.cardId);
+    fd.append('pdf', a.file, a.file.name);   // o arquivo por último: os campos chegam antes dele no multipart
+    return api.post<T.CashflowStatementDetail>('/cashflow/statements', fd, { timeoutMs: 5 * MIN });
+  },
+  confirmStatement: (a: { id: string; cardId: string | null; items: T.CashflowConfirmItem[] }) =>
+    api.post<{ inserted: number; duplicates: number; statement: T.CashflowStatement }>(`/cashflow/statements/${a.id}/confirm`, { cardId: a.cardId, items: a.items }),
+  setRetention: (a: { id: string; retentionDays: T.CashflowRetention }) => api.put<T.CashflowStatement>(`/cashflow/statements/${a.id}/retention`, { retentionDays: a.retentionDays }),
+  deleteStatementPdf: (id: string) => api.del<void>(`/cashflow/statements/${id}/pdf`),
+  deleteStatement: (id: string) => api.del<void>(`/cashflow/statements/${id}`),
+  /** Abre o PDF guardado (mesma origem, cookie da sessão). */
+  pdfUrl: (id: string) => `${API_BASE}/cashflow/statements/${id}/pdf`,
+  /* 0.18.17 · soma mensal por origem e regras */
+  origins: (month: string, card?: string) => api.get<T.CashflowOrigins>('/cashflow/origins', { month, ...(card ? { card } : {}) }),
+  rules: () => api.get<{ rules: T.CashflowRule[] }>('/cashflow/rules'),
+  addRule: (r: T.CashflowRuleInput) => api.post<T.CashflowRule>('/cashflow/rules', r),
+  updateRule: (a: { id: string } & T.CashflowRuleInput) => { const { id, ...b } = a; return api.put<T.CashflowRule>(`/cashflow/rules/${id}`, b); },
+  deleteRule: (id: string) => api.del<void>(`/cashflow/rules/${id}`),
 };

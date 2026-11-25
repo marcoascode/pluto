@@ -12,8 +12,7 @@
  * Sinal dos valores (amount é sempre positivo no banco): purchase/fee/iof/interest somam como despesa,
  * refund subtrai (estorno/crédito) e payment (pagamento da fatura) fica fora das somas para não contar o gasto duas vezes.
  *
- * Próximas etapas: faturas (upload do PDF em memória, texto com dados pessoais mascarados antes de ir ao Claude)
- * e o agrupamento por origem/mês com regras do usuário.
+ * 0.18.16: faturas em PDF → routes/cashflowStatements.ts · 0.18.17: soma por origem e regras → routes/cashflowOrigins.ts.
  */
 import { Router, type Request } from 'express';
 import { z } from 'zod';
@@ -21,8 +20,14 @@ import { one, q } from '../db.js';
 import { conflict, notFound, parse } from '../lib/http.js';
 import { lastMonths, monthBounds, today } from '../lib/dates.js';
 import { merchantKey } from '../services/cashflowMerchant.js';
+import { cashflowStatementsRouter } from './cashflowStatements.js';
+import { cashflowOriginsRouter } from './cashflowOrigins.js';
 
 export const cashflowRouter = Router();
+/** 0.18.16: faturas em PDF (upload, revisão, confirmação, retenção do PDF) — routes/cashflowStatements.ts */
+cashflowRouter.use(cashflowStatementsRouter);
+/** 0.18.17: soma mensal por origem e regras de origem — routes/cashflowOrigins.ts */
+cashflowRouter.use(cashflowOriginsRouter);
 
 const ID = z.string().regex(/^\d+$/);
 const YM = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'use YYYY-MM');

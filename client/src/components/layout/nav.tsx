@@ -23,6 +23,7 @@ import ManageAccountsOutlinedIcon from '@mui/icons-material/ManageAccountsOutlin
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
 import CreditCardOutlinedIcon from '@mui/icons-material/CreditCardOutlined';
+import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined';
 
 export interface NavItem { to: string; label: string; icon: ReactElement; cap?: Capability; manager?: boolean; metaCampaigns?: boolean; /** 0.18.14: só com a flag do Fluxo de caixa */ cashflow?: boolean; /** 0.18.9: só para o Gerente (o Admin acessa pelo menu Administração) */ gerente?: boolean }
@@ -43,7 +44,10 @@ export const NAV_MAIN: { title: string | null; items: NavItem[] }[] = [
     { to: '/admin/usuarios', label: 'Gestores', icon: <GroupsOutlinedIcon />, gerente: true },
   ] },
   { title: 'Monetização', items: [{ to: '/ad-manager', label: 'Google Ad Manager', icon: <PaidOutlinedIcon />, cap: 'gam.view' }] },
-  { title: 'Fluxo de caixa', items: [{ to: '/fluxo-caixa', label: 'Fluxo de caixa', icon: <CreditCardOutlinedIcon />, cashflow: true }] },
+  { title: 'Fluxo de caixa', items: [
+    { to: '/fluxo-caixa', label: 'Fluxo de caixa', icon: <CreditCardOutlinedIcon />, cashflow: true },
+    { to: '/faturas', label: 'Faturas (PDF)', icon: <UploadFileOutlinedIcon />, cashflow: true },
+  ] },
   { title: 'Atribuição', items: [
     { to: '/atribuicao', label: 'Diagnóstico da atribuição', icon: <MonitorHeartOutlinedIcon />, cap: 'attribution.view' },
     { to: '/utm-debugger', label: 'UTM Debugger', icon: <BugReportOutlinedIcon />, cap: 'utm.debug' },

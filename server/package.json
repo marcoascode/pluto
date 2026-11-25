@@ -1,6 +1,6 @@
 {
   "name": "pluto-server",
-  "version": "0.18.15",
+  "version": "0.18.17",
   "private": true,
   "type": "module",
   "engines": {
@@ -24,6 +24,7 @@
     "multer": "^2.5.0",
     "nodemailer": "^10.0.13",
     "pg": "^8.23.1",
+    "unpdf": "^2.1.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

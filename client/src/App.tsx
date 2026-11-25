@@ -31,6 +31,7 @@ const AdminReports = lazy(() => import('@/pages/admin/AdminReports'));
 const MetaProfiles = lazy(() => import('@/pages/meta/MetaProfiles'));
 const MetaCampaignWizard = lazy(() => import('@/pages/meta/MetaCampaignWizard'));
 const CashFlow = lazy(() => import('@/pages/cashflow/CashFlow'));
+const CashflowStatements = lazy(() => import('@/pages/cashflow/Statements'));
 const FinanceCash = lazy(() => import('@/pages/finance/Cash'));
 const FinanceCosts = lazy(() => import('@/pages/finance/Costs'));
 const FinanceCommissions = lazy(() => import('@/pages/finance/Commissions'));
@@ -89,6 +90,7 @@ export default function App() {
         <Route path="criar-campanha-meta" element={M(<MetaCampaignWizard />)} />
         <Route path="perfis-meta" element={M(<MetaProfiles />)} />
         <Route path="fluxo-caixa" element={CF(<CashFlow />)} />
+        <Route path="faturas" element={CF(<CashflowStatements />)} />
         <Route path="empresas/:id" element={S(<CompanyOverview />)} />
         <Route path="placements" element={C('campaigns.google.view', <Placements />)} />
         <Route path="ad-manager" element={C('gam.view', <AdManager />)} />
