@@ -10,7 +10,7 @@ import { config } from './config.js';
 import { one, pool, q } from './db.js';
 import { migrate } from './migrate.js';
 import { errorHandler, HttpError, notFoundHandler } from './lib/http.js';
-import { requireAuth, requireMetaCampaigns } from './auth/session.js';
+import { requireAuth, requireCashflow, requireMetaCampaigns } from './auth/session.js';
 import { authRouter } from './routes/auth.js';
 import { meRouter } from './routes/me.js';
 import { metricsRouter } from './routes/metrics.js';
@@ -21,6 +21,7 @@ import { adminRouter } from './routes/admin/index.js';
 import { linksRouter } from './routes/links.js';
 import { teamRouter } from './routes/team.js';
 import { metaRouter, oauthCallbackErrors } from './routes/meta.js';
+import { cashflowRouter } from './routes/cashflow.js';
 import { collectRouter, flushCollect } from './routes/collect.js';
 import { backfillIfEmpty } from './services/fx.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
@@ -61,6 +62,7 @@ export function createApp() {
   app.use('/team', teamRouter);     // 0.18.9: Gerente atribui domínios e contas aos gestores
   app.use('/links', linksRouter);   // 0.17: Contas × Sites (gestor, gerente, admin)
   app.use('/meta', requireMetaCampaigns, metaRouter);   // 0.18: só com can_create_meta_campaigns
+  app.use('/cashflow', requireCashflow, cashflowRouter);   // 0.18.14: só com can_use_cashflow
   app.use('/meta/oauth/callback', oauthCallbackErrors);   // callback do Facebook Login: erro (até 401/403) volta para a tela de Perfis
   app.use(metricsRouter);
 

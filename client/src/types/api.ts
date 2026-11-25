@@ -97,6 +97,8 @@ export interface User {
   isMainAdmin?: boolean;
   /** 0.18: criação automatizada de campanhas Meta. Só o SuperAdmin atribui. */
   canCreateMetaCampaigns?: boolean;
+  /** 0.18.14: Fluxo de caixa (faturas de cartão). Só o SuperAdmin atribui. */
+  canUseCashflow?: boolean;
   /** 0.18.8: Gestor — comissão progressiva (faixas do painel de Comissões) ou fixa (commissionPct %). */
   commissionMode?: CommissionMode;
   commissionPct?: number | null;

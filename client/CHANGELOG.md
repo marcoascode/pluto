@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.14
+- **Fluxo de caixa (Etapa 1 · permissão)**: novo módulo **Fluxo de caixa**, por usuário (cada um vê só os próprios dados), que vai receber faturas de cartão de crédito em PDF, gerar lançamentos (data da compra, descrição, valor) e somar por mês as despesas da mesma origem vindas de faturas diferentes (ex.: "FACEBK *…" = campanhas no Facebook).
+- Assim como a criação automatizada de campanhas Meta, o módulo é liberado **só pelo SuperAdmin**, usuário a usuário: nova coluna **Fluxo de caixa** em Usuários & Squads (rota `PUT /admin/users/:id/cashflow`; Admin recebe 403). Migration `025` adiciona `can_use_cashflow`, `cashflow_granted_by` e `cashflow_granted_at` em `users`.
+- Menu lateral: grupo **Fluxo de caixa** (`/fluxo-caixa`), visível só para quem tem a permissão. O servidor também bloqueia `/cashflow/*` com 403 (`cashflow_disabled`).
+
 ## 0.18.13
 - **Dados de recebimento da comissão**: novo item **Dados de recebimento** no menu do usuário (avatar, canto superior direito). Cada usuário edita o próprio cadastro escolhendo o meio de recebimento — **Chave PIX**, **Dolafy** ou **Outro (especificar)** — e a identificação para recebimento (a chave PIX, o @ Dolafy ou outro dado). Rotas `GET/PUT /me/payout`; migration `024` adiciona `payout_method`, `payout_method_other` e `payout_key` em `users`.
 - **Comissões** (`/finance/comissoes`): o card de cada gestor mostra, em destaque numa linha acima do botão Aprovar, o meio e a identificação (ex.: "Chave PIX: 123.456.789-01"), com botão para copiar. Sem dados informados, o card avisa "Meio de recebimento não informado".

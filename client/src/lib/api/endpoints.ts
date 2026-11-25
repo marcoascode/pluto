@@ -122,6 +122,7 @@ export const adminApi = {
   createUser: (b: T.CreateUserRequest) => api.post<T.CreateUserResponse>('/admin/users', b),
   /** 0.18: só SuperAdmin (Admin recebe 403). */
   setMetaCampaigns: (a: { id: string; enabled: boolean }) => api.put<T.User>(`/admin/users/${a.id}/meta-campaigns`, { enabled: a.enabled }),
+  setCashflow: (a: { id: string; enabled: boolean }) => api.put<T.User>(`/admin/users/${a.id}/cashflow`, { enabled: a.enabled }),
   updateUser: (id: string, b: T.UpdateUserRequest) => api.patch<T.User>(`/admin/users/${id}`, b),
   deleteUser: (id: string) => api.del<void>(`/admin/users/${id}`),
   resendInvite: (id: string) => api.post<{ inviteSent: boolean }>(`/admin/users/${id}/resend-invite`),

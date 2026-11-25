@@ -65,6 +65,9 @@ function UsersTab() {
   // 0.18: flag da criação automatizada de campanhas Meta — só o SuperAdmin vê e altera (o servidor responde 403 para os demais)
   const metaFlag = useAdminMutation(adminApi.setMetaCampaigns, [qk.users]);
   const toggleMeta = (u: User, enabled: boolean) => metaFlag.mutate({ id: u.id, enabled }, { onSuccess: () => setToast(`${enabled ? 'Criação de campanhas Meta liberada para' : 'Criação de campanhas Meta removida de'} ${u.name}`), onError: (e) => setToast(e instanceof ApiError ? e.message : 'Não foi possível alterar a permissão.') });
+  // 0.18.14: flag do Fluxo de caixa — mesma regra (só o SuperAdmin vê e altera)
+  const cashFlag = useAdminMutation(adminApi.setCashflow, [qk.users]);
+  const toggleCash = (u: User, enabled: boolean) => cashFlag.mutate({ id: u.id, enabled }, { onSuccess: () => setToast(`${enabled ? 'Fluxo de caixa liberado para' : 'Fluxo de caixa removido de'} ${u.name}`), onError: (e) => setToast(e instanceof ApiError ? e.message : 'Não foi possível alterar a permissão.') });
   if (error) return <ErrorBox error={error} retry={() => refetch()} />;
   if (!data) return <PageSkeleton />;
   const access = (u: User) => {
@@ -82,7 +85,7 @@ function UsersTab() {
         <Typography variant="caption">O convite com a senha temporária é enviado pelo servidor.</Typography>
       </Stack>
       <TableContainer component={Card}><Table>
-        <TableHead><TableRow>{[...['Nome', 'E-mail', 'Permissão', 'Acesso', 'Sócio de', 'Status'], ...(isSuperAdmin ? ['Criação Automatizada de Campanhas Meta'] : []), ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
+        <TableHead><TableRow>{[...['Nome', 'E-mail', 'Permissão', 'Acesso', 'Sócio de', 'Status'], ...(isSuperAdmin ? ['Criação Automatizada de Campanhas Meta', 'Fluxo de caixa'] : []), ''].map((h) => <TableCell key={h}>{h}</TableCell>)}</TableRow></TableHead>
         <TableBody>{data.users.map((u) => (
           <TableRow key={u.id}>
             <TableCell><Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}><Avatar sx={avatarSx}>{initials(u.name)}</Avatar><span>{u.name}</span></Stack></TableCell>
@@ -96,6 +99,14 @@ function UsersTab() {
                 <Tooltip title={u.status === 'disabled' && !u.canCreateMetaCampaigns ? 'Usuário desativado não pode receber essa permissão' : 'Libera as telas “Criar campanhas Meta” e “Perfis & BMs” para este usuário'}>
                   <span><Switch size="small" checked={!!u.canCreateMetaCampaigns} disabled={metaFlag.isPending || (u.status === 'disabled' && !u.canCreateMetaCampaigns)}
                     onChange={(_, v) => toggleMeta(u, v)} slotProps={{ input: { 'aria-label': `Criação Automatizada de Campanhas Meta para ${u.name}` } }} /></span>
+                </Tooltip>
+              </TableCell>
+            )}
+            {isSuperAdmin && (
+              <TableCell>
+                <Tooltip title={u.status === 'disabled' && !u.canUseCashflow ? 'Usuário desativado não pode receber essa permissão' : 'Libera a tela “Fluxo de caixa” (faturas de cartão) para este usuário'}>
+                  <span><Switch size="small" checked={!!u.canUseCashflow} disabled={cashFlag.isPending || (u.status === 'disabled' && !u.canUseCashflow)}
+                    onChange={(_, v) => toggleCash(u, v)} slotProps={{ input: { 'aria-label': `Fluxo de caixa para ${u.name}` } }} /></span>
                 </Tooltip>
               </TableCell>
             )}
