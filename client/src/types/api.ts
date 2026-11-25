@@ -757,3 +757,17 @@ export interface CashflowStatementItem {
 export type CashflowMaskCounts = Record<'cpf' | 'cnpj' | 'card' | 'email' | 'phone' | 'cep' | 'address' | 'name' | 'barcode', number>;
 export interface CashflowStatementDetail extends CashflowStatement { warnings: string[]; maskCounts: CashflowMaskCounts; items: CashflowStatementItem[] }
 export interface CashflowConfirmItem { include: boolean; date: string; description: string; kind: CashflowKind; amount: number; category?: string | null }
+/* 0.18.17 · soma mensal por origem e regras de origem */
+export type CashflowRuleMatch = 'key' | 'starts' | 'contains';
+export interface CashflowRule { id: string; match: CashflowRuleMatch; pattern: string; name: string; category: string | null; matches?: number }
+export interface CashflowRuleInput { match: CashflowRuleMatch; pattern: string; name: string; category?: string | null }
+export interface CashflowOriginEntry {
+  id: string; date: string; description: string; merchantKey: string; kind: CashflowKind; amount: number; signedAmount: number;
+  cardId: string | null; statementId: string | null; category: string | null; installmentN: number | null; installmentTotal: number | null;
+}
+export interface CashflowOriginGroup {
+  key: string; name: string; ruleId: string | null; rule: { match: CashflowRuleMatch; pattern: string } | null; category: string | null;
+  merchantKeys: string[]; total: number; expenses: number; credits: number; count: number; prevTotal: number;
+  statements: { id: string; filename: string }[]; cardIds: string[]; manualCount: number; entries: CashflowOriginEntry[];
+}
+export interface CashflowOrigins { month: string; total: number; prevTotal: number; groupCount: number; multiSourceCount: number; groups: CashflowOriginGroup[] }

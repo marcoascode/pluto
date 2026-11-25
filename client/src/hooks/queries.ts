@@ -123,3 +123,5 @@ export function useCashflowEntries(month: string, card: string) { return useQuer
 export function useCashflowMonths(to: string) { return useQuery({ queryKey: qk.cashflowMonths(to), queryFn: () => cashflowApi.months(to, 12), ...opts }); }
 export function useCashflowStatements() { return useQuery({ queryKey: qk.cashflowStatements, queryFn: cashflowApi.statements, staleTime: 30_000 }); }
 export function useCashflowStatement(id: string | null) { return useQuery({ queryKey: qk.cashflowStatement(id ?? ''), queryFn: () => cashflowApi.statement(id!), enabled: !!id, staleTime: 0 }); }
+export function useCashflowOrigins(month: string, card: string) { return useQuery({ queryKey: qk.cashflowOrigins(month, card), queryFn: () => cashflowApi.origins(month, card || undefined), ...opts }); }
+export function useCashflowRules() { return useQuery({ queryKey: qk.cashflowRules, queryFn: cashflowApi.rules, staleTime: 30_000 }); }

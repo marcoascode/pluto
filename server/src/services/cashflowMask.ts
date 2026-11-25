@@ -9,7 +9,7 @@
 
 export type MaskCounts = Record<'cpf' | 'cnpj' | 'card' | 'email' | 'phone' | 'cep' | 'address' | 'name' | 'barcode', number>;
 
-const strip = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+const strip = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Palavras que não são nome de pessoa (nunca mascaradas sozinhas). */

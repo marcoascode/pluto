@@ -217,4 +217,10 @@ export const cashflowApi = {
   deleteStatement: (id: string) => api.del<void>(`/cashflow/statements/${id}`),
   /** Abre o PDF guardado (mesma origem, cookie da sessão). */
   pdfUrl: (id: string) => `${API_BASE}/cashflow/statements/${id}/pdf`,
+  /* 0.18.17 · soma mensal por origem e regras */
+  origins: (month: string, card?: string) => api.get<T.CashflowOrigins>('/cashflow/origins', { month, ...(card ? { card } : {}) }),
+  rules: () => api.get<{ rules: T.CashflowRule[] }>('/cashflow/rules'),
+  addRule: (r: T.CashflowRuleInput) => api.post<T.CashflowRule>('/cashflow/rules', r),
+  updateRule: (a: { id: string } & T.CashflowRuleInput) => { const { id, ...b } = a; return api.put<T.CashflowRule>(`/cashflow/rules/${id}`, b); },
+  deleteRule: (id: string) => api.del<void>(`/cashflow/rules/${id}`),
 };

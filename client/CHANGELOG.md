@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.17
+- **Fluxo de caixa (Etapa 4 · soma por origem)**: nova aba **Por origem** no Fluxo de caixa (`/fluxo-caixa?ver=origem`). Soma, no mês da data da compra, as despesas da **mesma origem** vindas de **faturas e cartões diferentes** — ex.: todas as "FACEBK *…" do mês somadas como despesas com campanhas no Facebook. Estornos subtraem; pagamentos de fatura e lançamentos "fora das somas" não entram.
+- Cada origem mostra o total do mês, o do mês anterior, quantos lançamentos, de quantas faturas/cartões veio (destaque quando soma mais de uma) e, ao expandir, os lançamentos com data, cartão e fatura de origem. Filtro "Só origens que somam mais de uma fatura ou cartão" e resumo do mês (total, mês anterior, nº de origens).
+- **Regras de origem** (por usuário): dão nome e juntam origens — **Origem exata** (ex.: `FACEBK` → "Facebook Ads (campanhas)"), **Começa com** (ex.: `UBER` → "Transporte") ou **Contém** (comparado também com a descrição original da fatura). Criadas pelo ícone de etiqueta de cada origem ou em "Regras de origem"; valem para todos os meses (inclusive os já importados) e não alteram os lançamentos. A lista mostra quantos lançamentos cada regra pega.
+- Rotas `GET /cashflow/origins?month&card`, `GET/POST/PUT/DELETE /cashflow/rules`; migration `028` cria `cashflow_merchant_rules`.
+- Ajuste: o mês no Fluxo de caixa aparece como "Novembro de 2026" (antes "Novembro De 2026").
+
 ## 0.18.16
 - **Fluxo de caixa (Etapa 3 · faturas em PDF)**: nova tela **Faturas (PDF)** (`/faturas`, também pelo botão "Enviar fatura (PDF)" no Fluxo de caixa). O usuário envia a fatura do cartão (até 10 MB e 40 páginas, com campo para a senha do PDF, que não é guardada), os lançamentos são lidos e aparecem numa **revisão** — data da compra, descrição, origem, tipo e valor editáveis, marcar/desmarcar linhas, total impresso × soma dos marcados — e só entram no caixa ao **confirmar**.
 - **Privacidade**: o PDF não vai para a IA. O servidor extrai o texto em memória (biblioteca `unpdf`) e troca por marcadores nome do titular, CPF/CNPJ, número do cartão (fica só o final), endereço/CEP, e-mail, telefone e código de barras; só esse texto é lido pelo Claude. A revisão mostra quantos dados de cada tipo foram mascarados.

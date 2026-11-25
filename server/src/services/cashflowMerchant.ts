@@ -12,7 +12,30 @@
 /** Intermediadores de pagamento: a origem real é o que vem depois do "*". */
 const ACQUIRERS = new Set(['PAG', 'PG', 'MP', 'MERCADOPAGO', 'PAGSEGURO', 'PAGSEG', 'EC', 'SUMUP', 'SUM', 'PICPAY', 'PP', 'PAYPAL', 'EBN', 'EBANX', 'DL', 'DLOCAL', 'ZP', 'STONE', 'CIELO', 'GETNET', 'IZ', 'SQ', 'HTM', 'LIV', 'PIX']);
 
-const stripAccents = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+const stripAccents = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+/** Maiúsculas, sem acento e com espaços simples — a forma usada nas regras de origem. */
+export const normText = (s: string) => stripAccents(s).toUpperCase().replace(/\s+/g, ' ').trim();
+
+/* ---------------- 0.18.17 · regras de origem ---------------- */
+export type RuleMatch = 'key' | 'starts' | 'contains';
+export interface MerchantRule { id: string; match: RuleMatch; pattern: string; name: string; category: string | null }
+
+/** Ordem de aplicação: origem exata primeiro; depois "começa com" e "contém", padrão mais longo (mais específico) primeiro. */
+export function sortRules<T extends MerchantRule>(rules: T[]): T[] {
+  const w: Record<RuleMatch, number> = { key: 0, starts: 1, contains: 2 };
+  return [...rules].sort((a, b) => w[a.match] - w[b.match] || b.pattern.length - a.pattern.length || Number(a.id) - Number(b.id));
+}
+
+/** Primeira regra (já ordenada por sortRules) que vale para o lançamento, olhando a origem e a descrição (original da fatura, se houver). */
+export function ruleFor<T extends MerchantRule>(sorted: T[], key: string, description: string): T | null {
+  const desc = normText(description);
+  for (const r of sorted) {
+    if (r.match === 'key' ? key === r.pattern
+      : r.match === 'starts' ? key.startsWith(r.pattern) || desc.startsWith(r.pattern)
+      : key.includes(r.pattern) || desc.includes(r.pattern)) return r;
+  }
+  return null;
+}
 
 /** Parcela no texto: "PARC 03/10", "PARCELA 3 DE 10", "3/10" no fim. */
 const INSTALLMENT_RE = /\b(?:PARC(?:ELA)?\.?\s*)?(\d{1,2})\s*(?:\/|DE)\s*(\d{1,2})\s*$/;
