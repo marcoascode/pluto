@@ -7,6 +7,7 @@
 - **Sem duplicar**: o mesmo arquivo não é aceito duas vezes, e cada lançamento importado tem uma impressão digital (final do cartão + data + valor + tipo + origem + parcela). Lançamentos que já vieram de outra fatura aparecem como "já no caixa" e começam desmarcados. Excluir uma fatura exclui os lançamentos que vieram dela.
 - O cartão é reconhecido pelo final impresso na fatura (ou escolhido no envio/na revisão, com atalho para cadastrá-lo). Datas sem ano são completadas pela data de fechamento (virada dez/jan) e a parcela "n/N" é lida da descrição.
 - Rotas `POST/GET /cashflow/statements`, `GET /cashflow/statements/:id`, `POST …/:id/confirm`, `PUT …/:id/retention`, `GET/DELETE …/:id/pdf`, `DELETE …/:id` (limite de 30 envios por hora por usuário). Migration `027` cria `cashflow_statements` e liga `cashflow_entries.statement_id`. Requer `ANTHROPIC_API_KEY` no servidor (já usada pelas copies da Meta).
+- Nginx (`deploy/nginx-host.conf` e `client/nginx.conf`): a rota de envio `/api/cashflow/statements` aceita até 11 MB e espera até 300 s (o padrão da API é 2 MB / 60 s). **Recarregar o Nginx do host no deploy.**
 
 ## 0.18.15
 - **Fluxo de caixa (Etapa 2 · cartões e lançamentos)**: a tela `/fluxo-caixa` passa a funcionar com lançamentos manuais, organizados pelo **mês da data da compra**. Cada lançamento tem data, descrição, valor (R$), cartão, tipo (compra, estorno/crédito, tarifa/anuidade, IOF, juros/encargos, pagamento da fatura), parcela "n de N", valor/moeda originais (compras no exterior), categoria e observação.
