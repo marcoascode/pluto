@@ -1,6 +1,6 @@
 /** Todos os hooks de dados. Cada tela usa só estes, nunca fetch direto. */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { metaCampaignsApi, meApi, searchApi, adminApi, companiesApi, attributionApi, campaignsApi, dashboardApi, domainsApi, financeApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
+import { cashflowApi, metaCampaignsApi, meApi, searchApi, adminApi, companiesApi, attributionApi, campaignsApi, dashboardApi, domainsApi, financeApi, fxApi, gamApi, integrationsApi, placementsApi, reportsApi, urlsApi } from '@/lib/api/endpoints';
 import { qk } from '@/lib/api/keys';
 import { useFilters } from '@/context/FiltersContext';
 import type { Platform, PlacementQuery, Provider } from '@/types/api';
@@ -116,3 +116,8 @@ export function useMetaConversionEvents(profileId: string, adAccountId: string, 
 export function useMetaDrafts() { return useQuery({ queryKey: qk.metaDrafts, queryFn: metaCampaignsApi.drafts }); }
 export function useMetaSuggestion(site: string, enabled: boolean) { return useQuery({ queryKey: qk.metaSuggestion(site), queryFn: () => metaCampaignsApi.suggestion(site), enabled: enabled && !!site, staleTime: 5 * 60_000, retry: false }); }
 export function useMetaTrackedUrl(site: string, url: string) { return useQuery({ queryKey: qk.metaTrackedUrl(site, url), queryFn: () => metaCampaignsApi.trackedUrl(site, url), enabled: !!site && /^https:\/\/\S+\.\S+/i.test(url), staleTime: 60_000, retry: false }); }
+
+/* ----- 0.18.15 · Fluxo de caixa ----- */
+export function useCashflowCards() { return useQuery({ queryKey: qk.cashflowCards, queryFn: cashflowApi.cards, staleTime: 60_000 }); }
+export function useCashflowEntries(month: string, card: string) { return useQuery({ queryKey: qk.cashflowEntries(month, card), queryFn: () => cashflowApi.entries(month, card || undefined), ...opts }); }
+export function useCashflowMonths(to: string) { return useQuery({ queryKey: qk.cashflowMonths(to), queryFn: () => cashflowApi.months(to, 12), ...opts }); }

@@ -707,3 +707,36 @@ export interface AdminReportResponse {
   platform: AdminReportPlatform; mode: 'account' | 'period'; from: string; to: string; currency: Currency;
   accounts: AdminReportAccount[]; rows: AdminReportRow[]; total: AdminReportMetrics;
 }
+
+/* ----- 0.18.15 · Fluxo de caixa por faturas de cartão (por usuário; só com a flag can_use_cashflow) ----- */
+export type CashflowKind = 'purchase' | 'refund' | 'fee' | 'iof' | 'interest' | 'payment';
+export interface CashflowCard { id: string; issuer: string; nickname: string | null; last4: string | null; entryCount: number }
+export interface CashflowCardInput { issuer: string; nickname?: string | null; last4?: string | null }
+export interface CashflowEntry {
+  id: string;
+  date: string;                 // data da compra (YYYY-MM-DD)
+  description: string;
+  descriptionRaw: string | null;
+  merchantKey: string;          // origem normalizada (agrupamento por mês)
+  kind: CashflowKind;
+  amount: number;               // sempre positivo (BRL)
+  signedAmount: number;         // + despesa · − estorno · 0 pagamento da fatura
+  amountOriginal: number | null;
+  currencyOriginal: string | null;
+  installmentN: number | null;
+  installmentTotal: number | null;
+  category: string | null;
+  note: string | null;
+  excluded: boolean;
+  source: 'manual' | 'import';
+  cardId: string | null;
+  createdAt: string;
+}
+export interface CashflowEntryInput {
+  date: string; description: string; kind: CashflowKind; amount: number; cardId?: string | null;
+  installmentN?: number | null; installmentTotal?: number | null; amountOriginal?: number | null; currencyOriginal?: string | null;
+  category?: string | null; note?: string | null; excluded?: boolean;
+}
+export interface CashflowTotals { expenses: number; credits: number; net: number; payments: number; count: number; excludedCount: number }
+export interface CashflowMonthEntries { month: string; entries: CashflowEntry[]; totals: CashflowTotals }
+export interface CashflowMonthTotal { month: string; expenses: number; credits: number; net: number; count: number }

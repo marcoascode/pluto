@@ -187,3 +187,16 @@ export const metaCampaignsApi = {
   updateDraft: (id: string, b: T.MetaDraftSave) => api.put<{ draft: T.MetaDraft }>(`/meta/campaigns/drafts/${id}`, b),
   deleteDraft: (id: string) => api.del<void>(`/meta/campaigns/drafts/${id}`),
 };
+
+/* ----- 0.18.15 · Fluxo de caixa (só com a flag can_use_cashflow; o servidor responde 403 sem ela) ----- */
+export const cashflowApi = {
+  cards: () => api.get<{ cards: T.CashflowCard[] }>('/cashflow/cards'),
+  addCard: (c: T.CashflowCardInput) => api.post<T.CashflowCard>('/cashflow/cards', c),
+  updateCard: (a: { id: string } & T.CashflowCardInput) => api.put<T.CashflowCard>(`/cashflow/cards/${a.id}`, { issuer: a.issuer, nickname: a.nickname, last4: a.last4 }),
+  deleteCard: (id: string) => api.del<void>(`/cashflow/cards/${id}`),
+  entries: (month: string, card?: string) => api.get<T.CashflowMonthEntries>('/cashflow/entries', { month, ...(card ? { card } : {}) }),
+  addEntry: (e: T.CashflowEntryInput) => api.post<T.CashflowEntry>('/cashflow/entries', e),
+  updateEntry: (a: { id: string } & T.CashflowEntryInput) => { const { id, ...b } = a; return api.put<T.CashflowEntry>(`/cashflow/entries/${id}`, b); },
+  deleteEntry: (id: string) => api.del<void>(`/cashflow/entries/${id}`),
+  months: (to: string, n = 12) => api.get<{ months: T.CashflowMonthTotal[] }>('/cashflow/months', { to, n }),
+};
