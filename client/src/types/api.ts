@@ -740,3 +740,20 @@ export interface CashflowEntryInput {
 export interface CashflowTotals { expenses: number; credits: number; net: number; payments: number; count: number; excludedCount: number }
 export interface CashflowMonthEntries { month: string; entries: CashflowEntry[]; totals: CashflowTotals }
 export interface CashflowMonthTotal { month: string; expenses: number; credits: number; net: number; count: number }
+/* 0.18.16 · faturas em PDF */
+export type CashflowRetention = 7 | 30 | 60 | 90 | 365 | null;   // null = nunca apagar o PDF
+export interface CashflowStatement {
+  id: string; status: 'review' | 'confirmed'; filename: string; size: number; pages: number | null; cardId: string | null;
+  issuer: string | null; cardLast4: string | null; closingDate: string | null; dueDate: string | null; totalAmount: number | null;
+  hasPdf: boolean; pdfRetentionDays: CashflowRetention; pdfPurgeAt: string | null; pdfPurgedAt: string | null;
+  model: string | null; inputTokens: number | null; outputTokens: number | null; createdAt: string; confirmedAt: string | null;
+  entryCount: number; itemCount: number; extractedSum: number;
+}
+export interface CashflowStatementItem {
+  date: string; description: string; kind: CashflowKind; amount: number;
+  installmentN: number | null; installmentTotal: number | null; amountOriginal: number | null; currencyOriginal: string | null;
+  merchantKey: string; duplicate: boolean;
+}
+export type CashflowMaskCounts = Record<'cpf' | 'cnpj' | 'card' | 'email' | 'phone' | 'cep' | 'address' | 'name' | 'barcode', number>;
+export interface CashflowStatementDetail extends CashflowStatement { warnings: string[]; maskCounts: CashflowMaskCounts; items: CashflowStatementItem[] }
+export interface CashflowConfirmItem { include: boolean; date: string; description: string; kind: CashflowKind; amount: number; category?: string | null }

@@ -7,6 +7,8 @@ export const qk = {
   cashflowCards: ['cashflow', 'cards'] as const,
   cashflowEntries: (month: string, card: string) => ['cashflow', 'entries', month, card] as const,
   cashflowMonths: (to: string) => ['cashflow', 'months', to] as const,
+  cashflowStatements: ['cashflow', 'statements'] as const,
+  cashflowStatement: (id: string) => ['cashflow', 'statement', id] as const,
   metaAdAccounts: (id: string) => ['metaAdAccounts', id] as const,
   metaPages: (id: string) => ['metaPages', id] as const,
   metaDatasets: (id: string, account: string) => ['metaDatasets', id, account] as const,

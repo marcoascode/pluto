@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.16
+- **Fluxo de caixa (Etapa 3 · faturas em PDF)**: nova tela **Faturas (PDF)** (`/faturas`, também pelo botão "Enviar fatura (PDF)" no Fluxo de caixa). O usuário envia a fatura do cartão (até 10 MB e 40 páginas, com campo para a senha do PDF, que não é guardada), os lançamentos são lidos e aparecem numa **revisão** — data da compra, descrição, origem, tipo e valor editáveis, marcar/desmarcar linhas, total impresso × soma dos marcados — e só entram no caixa ao **confirmar**.
+- **Privacidade**: o PDF não vai para a IA. O servidor extrai o texto em memória (biblioteca `unpdf`) e troca por marcadores nome do titular, CPF/CNPJ, número do cartão (fica só o final), endereço/CEP, e-mail, telefone e código de barras; só esse texto é lido pelo Claude. A revisão mostra quantos dados de cada tipo foram mascarados.
+- **PDF original guardado** no banco (nunca em disco) para consulta, com exclusão automática escolhida no envio: **7, 30, 60, 90, 365 dias ou nunca**. Dá para mudar o prazo ou apagar só o PDF depois; a fatura e os lançamentos continuam. A limpeza roda a cada 30 min no servidor.
+- **Sem duplicar**: o mesmo arquivo não é aceito duas vezes, e cada lançamento importado tem uma impressão digital (final do cartão + data + valor + tipo + origem + parcela). Lançamentos que já vieram de outra fatura aparecem como "já no caixa" e começam desmarcados. Excluir uma fatura exclui os lançamentos que vieram dela.
+- O cartão é reconhecido pelo final impresso na fatura (ou escolhido no envio/na revisão, com atalho para cadastrá-lo). Datas sem ano são completadas pela data de fechamento (virada dez/jan) e a parcela "n/N" é lida da descrição.
+- Rotas `POST/GET /cashflow/statements`, `GET /cashflow/statements/:id`, `POST …/:id/confirm`, `PUT …/:id/retention`, `GET/DELETE …/:id/pdf`, `DELETE …/:id` (limite de 30 envios por hora por usuário). Migration `027` cria `cashflow_statements` e liga `cashflow_entries.statement_id`. Requer `ANTHROPIC_API_KEY` no servidor (já usada pelas copies da Meta).
+
 ## 0.18.15
 - **Fluxo de caixa (Etapa 2 · cartões e lançamentos)**: a tela `/fluxo-caixa` passa a funcionar com lançamentos manuais, organizados pelo **mês da data da compra**. Cada lançamento tem data, descrição, valor (R$), cartão, tipo (compra, estorno/crédito, tarifa/anuidade, IOF, juros/encargos, pagamento da fatura), parcela "n de N", valor/moeda originais (compras no exterior), categoria e observação.
 - Totais do mês: despesas, estornos/créditos, líquido e pagamentos de fatura — que ficam **fora da soma** para o mesmo gasto não contar duas vezes. Qualquer lançamento pode sair das somas sem ser apagado. Faixa com os últimos 12 meses (clique para abrir o mês) e filtro por cartão.

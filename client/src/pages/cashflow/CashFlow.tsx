@@ -5,7 +5,9 @@ import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import CreditCardOutlinedIcon from '@mui/icons-material/CreditCardOutlined';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined';
+import { Link as RouterLink } from 'react-router-dom';
 import { useState } from 'react';
 import { useAdminMutation, useCashflowCards, useCashflowEntries, useCashflowMonths } from '@/hooks/queries';
 import { cashflowApi } from '@/lib/api/endpoints';
@@ -18,8 +20,8 @@ import type { CashflowCard, CashflowEntry, CashflowEntryInput, CashflowKind } fr
 
 /**
  * 0.18.15 · Fluxo de caixa por faturas de cartão (por usuário). Só com a flag can_use_cashflow (SuperAdmin atribui).
- * Etapa 2: cartões e lançamentos manuais, organizados pelo mês da DATA DA COMPRA.
- * Próximas etapas: upload das faturas em PDF e a soma mensal por origem (ex.: todas as "FACEBK *…").
+ * Etapa 2: cartões e lançamentos manuais, organizados pelo mês da DATA DA COMPRA. Etapa 3 (0.18.16): faturas em PDF → ./Statements.tsx.
+ * Próxima etapa: a soma mensal por origem (ex.: todas as "FACEBK *…").
  */
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
@@ -58,6 +60,7 @@ export default function CashFlow() {
       <PageHead title="Fluxo de caixa" sub="Lançamentos das faturas de cartão, organizados pelo mês da data da compra. Os dados são só seus."
         right={<>
           <Button variant="outlined" startIcon={<CreditCardOutlinedIcon />} onClick={() => setCardsOpen(true)}>Cartões</Button>
+          <Button variant="outlined" startIcon={<UploadFileRoundedIcon />} component={RouterLink} to="/faturas">Enviar fatura (PDF)</Button>
           <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => setEdit('new')}>Novo lançamento</Button>
         </>} />
 
@@ -87,7 +90,7 @@ export default function CashFlow() {
           <Typography sx={{ minWidth: 170, textAlign: 'center', fontWeight: 600, textTransform: 'capitalize' }}>{monthLabel(month)}</Typography>
           <IconButton aria-label="Próximo mês" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRightRoundedIcon /></IconButton>
         </Stack>
-        <TextField select size="small" label="Cartão" value={card} onChange={(e) => setCard(e.target.value)} sx={{ minWidth: 220 }}>
+        <TextField select size="small" label="Cartão" value={card} onChange={(e) => setCard(e.target.value)} sx={{ minWidth: 220 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
           <MenuItem value="">Todos os cartões</MenuItem>
           {(cards.data?.cards ?? []).map((c) => <MenuItem key={c.id} value={c.id}>{cardLabel(c)}</MenuItem>)}
           <MenuItem value="none">Sem cartão</MenuItem>
@@ -105,7 +108,7 @@ export default function CashFlow() {
             ].map(([l, v]) => <Grid key={l} size={{ xs: 6, md: 3 }}><Card><CardContent><Stat label={l} big>{v}</Stat></CardContent></Card></Grid>)}
           </Grid>
           {data.entries.length === 0 ? (
-            <Alert severity="info">Nenhum lançamento com compra em {monthLabel(month)}. Use <b>Novo lançamento</b>; o envio de faturas em PDF chega na próxima versão.</Alert>
+            <Alert severity="info">Nenhum lançamento com compra em {monthLabel(month)}. Envie a fatura em <b>Enviar fatura (PDF)</b> ou use <b>Novo lançamento</b>.</Alert>
           ) : (
             <TableContainer component={Card}><Table size="small">
               <TableHead><TableRow>{['Data', 'Descrição', 'Origem', 'Cartão', 'Tipo', 'Valor', ''].map((h, i) => <TableCell key={i} align={h === 'Valor' ? 'right' : 'left'}>{h}</TableCell>)}</TableRow></TableHead>
@@ -200,7 +203,7 @@ function EntryDialog({ entry, cards, defaultMonth, defaultCard, onClose, onSaved
             helperText="A origem (para somar o mês) sai da descrição: “FACEBK *2X8Y…” e “FACEBK *K7QW…” contam juntas." />
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
             <TextField size="small" label="Valor (R$)" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} inputMode="decimal" placeholder="0,00" sx={{ flex: 1 }} />
-            <TextField select size="small" label="Cartão" value={f.cardId} onChange={(e) => setF({ ...f, cardId: e.target.value })} sx={{ flex: 1.4 }}>
+            <TextField select size="small" label="Cartão" value={f.cardId} onChange={(e) => setF({ ...f, cardId: e.target.value })} sx={{ flex: 1.4 }} slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}>
               <MenuItem value="">Sem cartão</MenuItem>
               {cards.map((c) => <MenuItem key={c.id} value={c.id}>{cardLabel(c)}</MenuItem>)}
             </TextField>

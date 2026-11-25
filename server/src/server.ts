@@ -25,6 +25,7 @@ import { cashflowRouter } from './routes/cashflow.js';
 import { collectRouter, flushCollect } from './routes/collect.js';
 import { backfillIfEmpty } from './services/fx.js';
 import { startScheduler, stopScheduler } from './services/scheduler.js';
+import { purgeExpiredPdfs } from './services/cashflowRetention.js';
 
 export function createApp() {
   const app = express();
@@ -91,6 +92,10 @@ async function main() {
   const server = app.listen(config.port, () => console.log(`[api] ouvindo em :${config.port} (${config.isProd ? 'produção' : 'dev'})`));
   backfillIfEmpty().catch((e) => console.warn('[fx]', e.message));
   if (config.schedulerEnabled) startScheduler();
+  // 0.18.16: PDFs de fatura do Fluxo de caixa vencidos (retenção 7–365 dias) — roda mesmo sem o agendador do sync
+  const purge = () => purgeExpiredPdfs().catch((e) => console.warn('[cashflow] limpeza de PDFs', (e as Error).message));
+  setTimeout(purge, 30_000).unref();
+  setInterval(purge, 30 * 60_000).unref();
   const stop = (sig: string) => {
     console.log(`[api] ${sig}: encerrando…`);
     stopScheduler();

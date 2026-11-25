@@ -121,3 +121,5 @@ export function useMetaTrackedUrl(site: string, url: string) { return useQuery({
 export function useCashflowCards() { return useQuery({ queryKey: qk.cashflowCards, queryFn: cashflowApi.cards, staleTime: 60_000 }); }
 export function useCashflowEntries(month: string, card: string) { return useQuery({ queryKey: qk.cashflowEntries(month, card), queryFn: () => cashflowApi.entries(month, card || undefined), ...opts }); }
 export function useCashflowMonths(to: string) { return useQuery({ queryKey: qk.cashflowMonths(to), queryFn: () => cashflowApi.months(to, 12), ...opts }); }
+export function useCashflowStatements() { return useQuery({ queryKey: qk.cashflowStatements, queryFn: cashflowApi.statements, staleTime: 30_000 }); }
+export function useCashflowStatement(id: string | null) { return useQuery({ queryKey: qk.cashflowStatement(id ?? ''), queryFn: () => cashflowApi.statement(id!), enabled: !!id, staleTime: 0 }); }
